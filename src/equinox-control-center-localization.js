@@ -7,6 +7,24 @@ export function localeForLanguage(language) {
     return normalizeLanguage(language) === "tr" ? "tr-TR" : "en-US";
 }
 const TR_UI = Object.freeze({
+    "Update": "Güncelle",
+    "Updating…": "Güncelleniyor…",
+    "Updating Equinox Local": "Equinox Local güncelleniyor",
+    "The update has started. The app may close and reopen.": "Güncelleme başladı. Uygulama kapanıp yeniden açılabilir.",
+    "Updating": "Güncelleniyor",
+    "Update failed": "Güncelleme başarısız",
+    "The update could not start. Please try again.": "Güncelleme başlatılamadı. Tekrar deneyin.",
+    "Checking for updates": "Güncellemeler kontrol ediliyor",
+    "Starting update": "Güncelleme başlatılıyor",
+    "A new version of Equinox Local is available.": "Equinox Local için yeni bir güncelleme var.",
+    "You're using the latest version.": "En güncel sürümü kullanıyorsunuz.",
+    "Unable to check for updates": "Güncellemeler kontrol edilemedi",
+    "Please try again later.": "Lütfen daha sonra tekrar deneyin.",
+    "Update available.": "Güncelleme mevcut.",
+    "Equinox Local is up to date.": "Equinox Local güncel.",
+    "Unable to check for updates.": "Güncellemeler kontrol edilemedi.",
+    "Update started. Equinox Local may restart.": "Güncelleme başladı. Equinox Local yeniden başlatılabilir.",
+
     "Getting started": "Başlarken",
     "Setup": "Kurulum",
     "Setup Equinox Local": "Equinox Local’i kur",

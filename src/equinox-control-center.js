@@ -976,6 +976,52 @@ function renderUpdate() {
     renderSidebarUpdateNotice(update, main, mainChannel);
     const runningVersion = state.status?.server?.version;
     const runningSha = shortUpdateSha(main.currentSha || state.status?.installation?.sourceSha);
+  // Native Main uses the existing verified external installer; the UI only
+  // shows ordinary update status, not internal replacement mechanics.
+  if (signedNativeMain) {
+    const pending = Boolean(main.restartScheduledFor);
+    const busy = state.updateBusy || state.updateApplyBusy || Boolean(main.applying);
+    const updateAvailable = main.state === "behind" && main.applyAvailable === true && !main.applyError;
+    if (runningVersion) setText("sidebar-version", runningVersion);
+    mainMeta.hidden = true;
+    setText("update-version", current ? `Equinox Local ${current}` : "Version unavailable");
+    setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
+    if (pending) {
+      setText("update-title", "Updating Equinox Local");
+      setText("update-copy", "The update has started. The app may close and reopen.");
+      setBadge("update-badge", "Updating", "warn");
+    } else if (main.applyError) {
+      setText("update-title", "Update failed");
+      setText("update-copy", "The update could not start. Please try again.");
+      setBadge("update-badge", "Update failed", "bad");
+    } else if (busy) {
+      setText("update-title", state.updateBusy ? "Checking for updates" : "Starting update");
+      setText("update-copy", "");
+      setBadge("update-badge", state.updateBusy ? "Checking" : "Updating", "warn");
+    } else if (main.state === "behind") {
+      setText("update-title", "Update available");
+      setText("update-copy", "A new version of Equinox Local is available.");
+      setBadge("update-badge", "Update available", "good");
+    } else if (main.state === "up_to_date") {
+      setText("update-title", "Equinox Local is up to date");
+      setText("update-copy", "You're using the latest version.");
+      setBadge("update-badge", "Up to date", "good");
+    } else if (main.state === "unavailable") {
+      setText("update-title", "Unable to check for updates");
+      setText("update-copy", "Please try again later.");
+      setBadge("update-badge", "Check unavailable", "bad");
+    } else {
+      setText("update-title", "Check for updates");
+      setText("update-copy", "");
+      setBadge("update-badge", "Ready", "neutral");
+    }
+    checkButton.disabled = busy || pending;
+    checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : "Check for updates");
+    installButton.hidden = !updateAvailable && !busy && !pending;
+    installButton.disabled = busy || pending || !updateAvailable;
+    installButton.textContent = localizeUiText(busy || pending ? "Updating…" : "Update");
+    return;
+  }
     if (runningVersion)
         setText("sidebar-version", `${runningVersion}${mainChannel && runningSha ? ` - ${runningSha}` : ""}`);
     mainMeta.hidden = !mainChannel;
@@ -1058,40 +1104,6 @@ function renderUpdate() {
             setText("update-title", "Main snapshot channel ready");
             setText("update-copy", "Check the admitted Main snapshot without modifying this source checkout.");
             setBadge("update-badge", "Ready", "neutral");
-        }
-        if (signedNativeMain) {
-            // Native Main discovery is an original Ed25519 full-source-SHA check;
-            // only the original signed external script can be launched for Apply.
-            setText("update-main-distance", "Native source SHA comparison");
-            const entry = document.createElement("li");
-            entry.textContent = targetSha ? "Production-signed native Main SHA " + targetSha : "";
-            summaryNode.replaceChildren(...(snapshotAvailable ? [entry] : []));
-            if (main.restartScheduledFor) {
-                setText("update-title", "Original signed Main installer launched");
-                setText("update-copy", "The original Main installer is replacing program files while retaining your settings and personal data.");
-            }
-            else if (main.applyError) {
-                setText("update-title", "Original signed Main installer needs attention");
-                setText("update-copy", main.applyError);
-            }
-            else if (main.state === "behind") {
-                setText("update-title", "Production-signed Main " + (targetSha || "SHA") + " available");
-                setText("update-copy", main.applyAvailable
-                    ? "The latest Main source SHA is production-signed. Reinstall Main runs the same original installer used in Terminal or PowerShell, preserving personal settings."
-                    : "The signed Main installer is temporarily unavailable for this platform.");
-            }
-            else if (main.state === "up_to_date") {
-                setText("update-title", "Latest signed Main is installed");
-                setText("update-copy", "The current native source SHA exactly matches the original Ed25519-signed native selector.");
-            }
-            else if (main.state === "unavailable") {
-                setText("update-title", "Signed native Main check unavailable");
-                setText("update-copy", "The original Ed25519-signed native selector could not be verified. This is not an up-to-date result.");
-            }
-            else {
-                setText("update-title", "Signed native Main SHA check ready");
-                setText("update-copy", "Checking the original Ed25519-signed native selector is read-only.");
-            }
         }
         const mainLocked = state.updateBusy || state.updateApplyBusy || Boolean(main.applying) || Boolean(main.restartScheduledFor);
         checkButton.disabled = mainLocked;
@@ -3412,18 +3424,14 @@ async function checkForUpdates() {
         renderUpdate();
         if (mainChannel) {
             const main = state.update?.main || {};
-            if (main.state === "behind")
-                showToast(main.mode === "signed-native"
-                    ? main.applyAvailable
-                        ? "A new production-signed Main SHA is available through the original installer."
-                        : "A different production-signed native Main SHA is available; installation is gated on this platform."
-                    : "A verified Main snapshot update is available.");
-            else if (main.state === "up_to_date")
-                showToast("Main snapshot is up to date.");
-            else if (main.state === "unavailable")
-                showToast("Main update check is unavailable; no up-to-date result was assumed.");
-            else
-                showToast("Main source identity check finished.");
+            if (main.mode === "signed-native") {
+                if (main.state === "behind") showToast("Update available.");
+                else if (main.state === "up_to_date") showToast("Equinox Local is up to date.");
+                else if (main.state === "unavailable") showToast("Unable to check for updates.");
+            } else if (main.state === "behind") showToast("A verified Main snapshot update is available.");
+            else if (main.state === "up_to_date") showToast("Main snapshot is up to date.");
+            else if (main.state === "unavailable") showToast("Main update check is unavailable; no up-to-date result was assumed.");
+            else showToast("Main source identity check finished.");
         }
         else {
             if (state.update?.updateAvailable)
@@ -3488,7 +3496,7 @@ async function applyAvailableUpdate() {
         renderUpdate();
         renderActivity();
         showToast(signedNativeMain
-            ? "Signed Main installer started. Program files will be reinstalled; settings remain intact."
+            ? "Update started. Equinox Local may restart."
             : managedMain
                 ? `Main ${shortUpdateSha(scheduled.targetSha) || "snapshot"} is prepared. Restarting safely…`
                 : `Equinox Local ${scheduled.targetVersion || "update"} is prepared. Restarting safely…`);
