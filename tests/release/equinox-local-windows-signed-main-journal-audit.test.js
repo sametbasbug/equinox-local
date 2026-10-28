@@ -56,7 +56,7 @@ test("original Guardian independently binds Stable A or native Main A to exact d
  assert.match(s,/Signed-native Stable A conflicts with an existing native pointer/u);
 });
 
-test("original signed-native journal binds B immutable store fingerprint identity but does NOT mistake structural metadata for Ed25519 signature",async()=>{
+test("original signed-native journal binds immutable B to verified Ed25519 pointer AND independently rehashes the release",async()=>{
  const s=await read("MainNativeSignedJournalAudit.cs");
  assert.match(s,/native-store\.json/u);
  assert.match(s,/RequireExactKeys\(store, \["schemaVersion", "channel", "sourceSha", "target",/u);
@@ -64,8 +64,10 @@ test("original signed-native journal binds B immutable store fingerprint identit
  assert.match(s,/releaseFingerprint/u);
  assert.match(s,/RequireExactKeys\(fingerprint, \["schemaVersion", "sha256", "entries", "bytes"\]\)/u);
  assert.match(s,/Signed-native B stored manifest has inconsistent structural identity/u);
- assert.match(s,/NO claim of production Ed25519 signature, kernel ownership,/u);
- assert.match(s,/signed-native-journal-read-only-incomplete/u);
+ assert.match(s,/VerifyOriginalSignedNativeMainSelector/u);
+ assert.match(s,/FingerprintNativeMainRelease\(expected\.ReleaseDir\)/u);
+ assert.match(s,/signed-native-ed25519-verified-journal-read-only-incomplete/u);
+ assert.match(s,/OS HMAC\/journal authority or healthy B/u);
  const program=await read("Program.cs");
  assert.doesNotMatch(program,/args\[0\] == "--activate-signed-native"/u);
 });

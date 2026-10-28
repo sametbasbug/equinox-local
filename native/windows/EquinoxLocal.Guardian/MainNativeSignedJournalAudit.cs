@@ -30,7 +30,8 @@ internal static partial class Program
     // Separate READ-ONLY grammar for original production-signed, Git-free
     // Main records. NEVER call this from the original Git journal authority,
     // native journal lease, worker identity, shell quiesce or slot mutation.
-    // File identity and signer presence are NOT Ed25519 verification.
+    // Production Ed25519 is verified independently, but this read-only
+    // audit remains insufficient for a native OS Guardian mutation grant.
     private static void InspectOwnedSignedNativeJournalWithoutGrant()
     {
         InspectionPhase = "signed-native-journal-owned-guardian";
@@ -179,10 +180,48 @@ internal static partial class Program
             fingerprint.GetProperty("bytes").GetInt64() < 1)
             throw new InvalidDataException("Signed-native B stored manifest has inconsistent structural identity.");
 
-        // NO claim of production Ed25519 signature, kernel ownership,
-        // file fingerprint recomputation or journal HMAC is made here.
-        // Original WPF/Git Guardian authority cannot call this audit to
-        // gain a mutation token or suppress explicit crash reconciliation.
-        InspectionPhase = "signed-native-journal-read-only-incomplete";
+        // Verify the exact original production-root Ed25519 canonical
+        // four-target payload independently inside the signed Guardian.
+        // The immutable signed selector is NOT a user-supplied trust root.
+        var signed = VerifyOriginalSignedNativeMainSelector(Path.Combine(
+            payload, "signed-selector.json"), sha, target);
+        if (signed.Contract != contract ||
+            signed.ArtifactSha256 != store.GetProperty("artifactSha256").GetString() ||
+            signed.ArtifactBytes != store.GetProperty("artifactBytes").GetInt64() ||
+            signed.Version != store.GetProperty("payloadVersion").GetString())
+            throw new InvalidDataException(
+                "Original production Ed25519 Main B differs from its native-store contract.");
+
+        // B's release metadata must identify that same full signed SHA,
+        // version, native target and fixed server entry; an arbitrary store
+        // manifest alone cannot confer a loadable product identity.
+        using var releaseDoc = ReadOwnedTransitionRecord(Path.Combine(
+            expected.ReleaseDir, "release.json"), 16 * 1024);
+        var metadata = releaseDoc.RootElement;
+        if (metadata.ValueKind != JsonValueKind.Object ||
+            metadata.GetProperty("schemaVersion").GetInt32() != 1 ||
+            metadata.GetProperty("sourceSha").GetString() != sha ||
+            metadata.GetProperty("target").GetString() != target ||
+            metadata.GetProperty("version").GetString() != signed.Version ||
+            metadata.GetProperty("serverEntry").GetString() != "server.js")
+            throw new InvalidDataException(
+                "Original production-signed native B release metadata does not identify the admitted SHA.");
+
+        // The signed artifact digest identifies the archive; the native
+        // store fingerprint identifies the actual EXTRACTED B executable
+        // tree. Both must match, using the existing original Guardian
+        // full-tree hashing algorithm, not just a structurally valid claim.
+        var measured = FingerprintNativeMainRelease(expected.ReleaseDir);
+        if (measured.Sha256 != fingerprint.GetProperty("sha256").GetString() ||
+            measured.Entries != fingerprint.GetProperty("entries").GetInt32() ||
+            measured.Bytes != fingerprint.GetProperty("bytes").GetInt64())
+            throw new InvalidDataException(
+                "Original signed Main B full executable release fingerprint differs from immutable store.");
+
+        // Full SHA, Ed25519 signature, extracted release fingerprint and
+        // structural journal STILL do NOT prove an independent Guardian
+        // OS HMAC/journal authority or healthy B.
+        // Existing original WPF Git mutation lane remains DENIED to native.
+        InspectionPhase = "signed-native-ed25519-verified-journal-read-only-incomplete";
     }
 }
