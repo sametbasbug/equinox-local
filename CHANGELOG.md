@@ -7,7 +7,7 @@
 - Allow up to 90 seconds for a freshly installed Windows native runtime to become healthy, avoiding false rollback while WPF and its supervised Node process are still starting.
 - Treat race-related `taskkill` stderr as a nonterminal diagnostic: revalidate the exact product-owned processes before deciding whether installation or rollback can proceed. No foreign processes or user data are removed.
 - Preserve the existing Ed25519-signed Main SHA verification and fail-closed install/rollback behavior.
-- Fix the **Secure updates** Doctor status falsely warning about signed-native Main installations by recognizing the active verified Main source identity and available native update path, without weakening actual failure detection.
+- Fix the **Secure updates** Doctor status falsely warning about signed-native Main installations by recognizing the active verified Main source identity and available native update path, without weakening actual failure detection. Doctor now consumes the same combined update snapshot as the Control Center Update page.
 
 ## [6.3.0] - 2026-10-29
 

@@ -2932,7 +2932,9 @@ async function getControlCenterDoctorStatus({ probeTerminal = false } = {}) {
     },
     peekaboo: peekabooStatus,
     desktop: process.platform === "win32" ? await winappBridge.status().catch(() => ({ engine: "winapp", active: false })) : {},
-    update: equinoxLocalUpdateCoordinator.snapshot(),
+    // Doctor must inspect the same signed-native Main status as /api/v1/update.
+    // The legacy coordinator snapshot alone omits `main` entirely.
+    update: await getCombinedUpdateStatus(),
     onboarding,
     developmentTunnel,
     developmentPeekaboo,
