@@ -76,6 +76,9 @@ internal static partial class Program
             transactionId = id, sourceSha = sha, target,
             runtimeContractSha256 = contract, stage = "prepared", sequence = 0,
             workerPid, workerStartTimeUtcTicks = workerTicks,
+            guardianPid = Environment.ProcessId,
+            guardianStartTimeUtcTicks = Process.GetCurrentProcess().StartTime.ToUniversalTime()
+                .Ticks.ToString(CultureInfo.InvariantCulture),
             receiptSha256 = receiptSha, rollbackDescriptorSha256 = rollbackSha,
         });
         if (body.Length is < 128 or > 4096)
@@ -126,8 +129,8 @@ internal static partial class Program
         var j = document.RootElement;
         RequireExactKeys(j, ["schemaVersion", "channel", "kind", "transactionId",
             "sourceSha", "target", "runtimeContractSha256", "stage", "sequence",
-            "workerPid", "workerStartTimeUtcTicks", "receiptSha256",
-            "rollbackDescriptorSha256"]);
+            "workerPid", "workerStartTimeUtcTicks", "guardianPid", "guardianStartTimeUtcTicks",
+            "receiptSha256", "rollbackDescriptorSha256"]);
         if (j.GetProperty("schemaVersion").GetInt32() != 1 ||
             j.GetProperty("channel").GetString() != "main" ||
             j.GetProperty("kind").GetString() != "signed-native" ||
@@ -138,7 +141,10 @@ internal static partial class Program
             j.GetProperty("stage").GetString() != "prepared" ||
             j.GetProperty("sequence").GetInt32() != 0 ||
             j.GetProperty("workerPid").GetInt32() < 1 ||
-            !WorkerTicksPattern.IsMatch(j.GetProperty("workerStartTimeUtcTicks").GetString() ?? ""))
+            !WorkerTicksPattern.IsMatch(j.GetProperty("workerStartTimeUtcTicks").GetString() ?? "") ||
+            j.GetProperty("guardianPid").GetInt32() < 1 ||
+            j.GetProperty("guardianPid").GetInt32() == j.GetProperty("workerPid").GetInt32() ||
+            !WorkerTicksPattern.IsMatch(j.GetProperty("guardianStartTimeUtcTicks").GetString() ?? ""))
             throw new InvalidDataException("Original signed-native journal has an unknown stage/identity.");
         var receiptSha = HashOriginalBoundedSignedNativeFile(
             Path.Combine(root, "receipts", id + ".signed-native.json"));

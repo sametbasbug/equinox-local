@@ -29,7 +29,7 @@ internal static partial class Program
     {
         try
         {
-            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-signed-native-worker-pipe" or "--audit-signed-native-owner-lease" or "--prepare-signed-native-journal" or "--audit-signed-native-prepared-journal" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
+            if (args.Length > 1 || (args.Length == 1 && args[0] is not ("--inspect" or "--audit-native-identity" or "--audit-native-journal" or "--audit-signed-native-journal" or "--audit-signed-native-worker-argv" or "--audit-signed-native-worker-pipe" or "--audit-signed-native-owner-lease" or "--prepare-signed-native-journal" or "--audit-signed-native-prepared-journal" or "--reconcile-signed-native-prepared-orphan" or "--audit-native-worker" or "--audit-native-worker-ipc" or "--audit-native-worker-argv" or "--audit-native-wpf-owner" or "--hold-native-journal-lease" or "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--startup" or "--uninstall")))
                 throw new InvalidOperationException("Unsupported Guardian argument.");
             if (args.Length == 1 && args[0] == "--audit-native-identity")
             {
@@ -45,6 +45,11 @@ internal static partial class Program
             {
                 InspectOwnedSignedNativeJournalWithoutGrant();
                 return 0; // Structural B and original A only; no signature/Guardian grants.
+            }
+            if (args.Length == 1 && args[0] == "--reconcile-signed-native-prepared-orphan")
+            {
+                ReconcileSignedNativePreparedOrphanWithoutResuming();
+                return 0; // Durable quarantine evidence; orphan still blocks new admission.
             }
             if (args.Length == 1 && args[0] == "--audit-native-worker")
             {
@@ -147,7 +152,7 @@ internal static partial class Program
                 if (reason.Length > 120) reason = reason[..120];
                 Console.Error.WriteLine($"Guardian inspection refused: phase={InspectionPhase}; kind={ex.GetType().Name}; code=0x{ex.HResult:x8}; reason={reason}");
             }
-            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort")
+            else if (args.Length == 1 && args[0] is "--hold-native-journal-authority" or "--hold-native-prepared-abort" or "--hold-native-stage-b" or "--hold-native-stage-b-cancel" or "--hold-native-stable-shell-quiesce" or "--reconcile-native-prepared-abort" or "--reconcile-signed-native-prepared-orphan")
             {
                 // Bounded phase/type only: no worker token, paths, journal
                 // contents or dynamic exception reason enter CI diagnostics.

@@ -35,6 +35,8 @@ test("original signed-native journal prepared writer is create-only, durable on 
  assert.match(source,/HashOriginalBoundedSignedNativeFile\(descriptor\)/u);
  assert.match(source,/stage = "prepared", sequence = 0,/u);
  assert.match(source,/workerPid, workerStartTimeUtcTicks = workerTicks,/u);
+ assert.match(source,/guardianPid = Environment.ProcessId,/u);
+ assert.match(source,/guardianStartTimeUtcTicks = Process.GetCurrentProcess\(\)\.StartTime/u);
  assert.match(source,/FileMode\.CreateNew, FileAccess\.Write,\s*FileShare\.None/u);
  assert.match(source,/FileOptions\.WriteThrough/u);
  assert.match(source,/journal\.Flush\(flushToDisk: true\)/u);
@@ -72,9 +74,40 @@ test("same original Windows native B worker is NOT promoted to signed-native pre
 
 test("existing hosted Windows package smoke denies signed-native prepared write and crash audit for absent owner and legacy Git worker",async()=>{
  const smoke=await fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8");
- for(const cmd of ["--prepare-signed-native-journal","--audit-signed-native-prepared-journal"]){
+ for(const cmd of ["--prepare-signed-native-journal","--audit-signed-native-prepared-journal","--reconcile-signed-native-prepared-orphan"]){
   assert.ok(smoke.includes("Invoke-GuardianCheck '"+cmd+"'"));
   const count=smoke.split("Invoke-GuardianCheck '"+cmd+"'").length-1;
   assert.equal(count,2,"one absent owner and one Git owner negative case");
  }
+});
+
+test("original signed-native prepared orphan recovery is explicit, OS-guarded and durable-quarantine-only after exact original Stable A/WPF/Chrome NM proof",async()=>{
+ const [program,source,prepared,lease,smoke]=await Promise.all([
+  read("Program.cs"),read("MainSignedNativePreparedOrphanRecovery.cs"),
+  read("MainSignedNativePreparedJournal.cs"),read("MainSignedNativeOwnerLease.cs"),
+  fs.readFile(new URL("./windows-installer-real-package-smoke.ps1",import.meta.url),"utf8"),
+ ]);
+ assert.match(program,/args\[0\] == "--reconcile-signed-native-prepared-orphan"/u);
+ assert.match(program,/ReconcileSignedNativePreparedOrphanWithoutResuming\(\)/u);
+ assert.match(source,/ReadOwnedTransitionRecord\(Path\.Combine\(root, "active\.json"\), 8192\)/u);
+ assert.match(source,/using var pinnedJournal = new FileStream\(journalPath, FileMode\.Open, FileAccess\.Read,\s*FileShare\.Read/u);
+ assert.match(source,/journal\.GetProperty\("stage"\)\.GetString\(\) != "prepared"/u);
+ assert.match(source,/journal\.GetProperty\("sequence"\)\.GetInt32\(\) != 0/u);
+ assert.match(source,/OsProcessExists\(workerPid\) \|\| OsProcessExists\(guardianPid\)/u);
+ assert.match(source,/handoff\.GetProperty\("startTimeUtcTicks"\)/u);
+ assert.match(source,/AuditSignedNativePreparedJournalWithoutGrant\(\)/u);
+ assert.match(source,/InspectBaseline\(allowActiveOrphanForReconciliation: true\)/u);
+ assert.match(source,/RequireExactKeys\(previous, \["kind", "version"\]\)/u);
+ assert.match(source,/NativeMessagingRegistrySubkey/u);
+ assert.match(source,/RegistryValueKind\.String/u);
+ assert.match(source,/ExpectedChromeOrigin/u);
+ assert.match(source,/FileMode\.CreateNew, FileAccess\.Write,\s*FileShare\.None/u);
+ assert.match(source,/record\.Flush\(flushToDisk: true\)/u);
+ assert.match(source,/quarantined-no-resume/u);
+ assert.match(source,/The original PREPARED\/0 file\s*\/\/ stays intact/u);
+ assert.match(prepared,/guardianStartTimeUtcTicks/u);
+ assert.match(lease,/EndsWith\("\.signed-native\.json", StringComparison\.OrdinalIgnoreCase\)/u);
+ assert.doesNotMatch(source,/File\.Delete|File\.Move|FileMode\.Create\b|Kill\(|Process\.Start|SetValue\(|Registry\.CurrentUser\.CreateSubKey|QuiesceOwned|SwitchMainNative/u);
+ assert.doesNotMatch(program,/--hold-signed-native-journal-authority|--activate-signed-native/u);
+ assert.equal(smoke.split("Invoke-GuardianCheck '--reconcile-signed-native-prepared-orphan'").length-1,2);
 });
