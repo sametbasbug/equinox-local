@@ -1280,13 +1280,29 @@ jobs:
             xargs -0 -P 4 -I '{}' bash -euo pipefail -c '
               object="$1"
               name="$(basename "$object")"
-              aws s3api put-object \
+              key="snapshots/$TARGET_SHA/$name"
+              # Immutable means immutable even on a workflow rerun. If the
+              # original push already wrote this SHA, read back exact bytes;
+              # never silently overwrite a live installer dependency.
+              if aws s3api put-object \
                 --bucket equinox-local-main \
-                --key "snapshots/$TARGET_SHA/$name" \
+                --key "$key" \
+                --if-none-match "*" \
                 --body "$object" \
                 --endpoint-url "$R2_ENDPOINT" \
                 --cache-control "public,max-age=31536000,immutable" \
-                >/dev/null
+                >/dev/null; then
+                exit 0
+              fi
+              existing="$(mktemp "$RUNNER_TEMP/equinox-existing.XXXXXXXX")"
+              trap "rm -f \"$existing\"" EXIT
+              aws s3api get-object \
+                --bucket equinox-local-main --key "$key" "$existing" \
+                --endpoint-url "$R2_ENDPOINT" >/dev/null
+              cmp -s "$object" "$existing" || {
+                echo "R2 immutable object $key differs from original native artifact" >&2
+                exit 1
+              }
             ' _ '{}'
 
       - name: Verify public snapshot before moving tag

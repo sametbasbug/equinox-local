@@ -86,7 +86,7 @@ export async function scheduleEquinoxLocalSignedNativeMacInstaller({
      await fsImpl.realpath(installer)!==installer){
     throw new Error("Original native Main installer is not an owned, unchanged release file.");
   }
-  const handoffRoot=path.posix.join(root,"handoff");
+  const handoffRoot=path.posix.join(installation.installRoot,"installer-handoff");
   await fsImpl.mkdir(handoffRoot,{recursive:true,mode:0o700});
   const handoffStat=await fsImpl.lstat(handoffRoot);
   if(!handoffStat.isDirectory() || handoffStat.isSymbolicLink() ||
@@ -111,7 +111,7 @@ export async function scheduleEquinoxLocalSignedNativeMacInstaller({
     await launchHelperImpl({
       spawnImpl,command:"/bin/bash",args:[detachedScript],
       options:{
-        cwd:installation.releaseDir,detached:true,
+        cwd:handoffRoot,detached:true,
         stdio:["ignore",fd.fd,fd.fd],
         env:{
           HOME:homeDir,PATH:"/usr/bin:/bin:/usr/sbin:/sbin",

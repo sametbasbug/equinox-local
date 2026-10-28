@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { validateTrustedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
 
 const BUCKET = "equinox-local-main";
 const ENDPOINT = "https://c1ff8ccffcbffe46094cd3a2729a1c1f.r2.cloudflarestorage.com";
@@ -22,10 +23,11 @@ function expectedKeys(sha, signed = false) {
   }));
 }
 
-export function planEquinoxMainR2Retention(objects, { mainSha, snapshotSha, now = new Date() }) {
+export function planEquinoxMainR2Retention(objects, { mainSha, snapshotSha, signedMainSha = null, now = new Date() }) {
   assert.ok(Array.isArray(objects) && objects.length >= 8 && objects.length <= MAX_OBJECTS, "Complete bounded R2 inventory is required.");
   assert.match(mainSha, SHA);
   assert.match(snapshotSha, SHA);
+  if (signedMainSha !== null) assert.match(signedMainSha, SHA);
   assert.ok(now instanceof Date && !Number.isNaN(now.getTime()), "Current time is required.");
   const seen = new Set(), groups = new Map();
   for (const item of objects) {
@@ -50,7 +52,7 @@ export function planEquinoxMainR2Retention(objects, { mainSha, snapshotSha, now 
     group.keys.every((key) => expectedKeys(group.sha).has(key))) ||
     (group.keys.length === 12 &&
     group.keys.every((key) => expectedKeys(group.sha, true).has(key)));
-  const keep = new Set([mainSha, snapshotSha,
+  const keep = new Set([mainSha, snapshotSha, signedMainSha,
     ...ordered.filter(complete).slice(0, KEEP_LATEST).map((item) => item.sha)]);
   const protectedGroups = [];
   const deletingGroups = [];
@@ -111,9 +113,37 @@ function inventory() {
   throw new Error("R2 inventory page limit reached; no objects removed.");
 }
 
-function validateCurrentRefs(mainSha, snapshotSha) {
+// A delayed or failed publish can leave latest/main.json on an older SHA.
+// Never prune the archives that the still-live signed installer downloads.
+// Missing latest is allowed before initial Main publication; malformed or
+// inaccessible live metadata MUST stop deletion, never count as absent.
+function liveSignedMainSha() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "equinox-main-live-"));
+  try {
+    const destination = path.join(root, "main.json");
+    try {
+      cmd(["aws", "s3api", "get-object", "--bucket", BUCKET, "--key", "latest/main.json",
+        destination, "--endpoint-url", ENDPOINT, "--output", "json"]);
+    } catch (error) {
+      const message = String(error?.stderr ?? "") + " " + String(error?.message ?? "");
+      if (/NoSuchKey|Not Found: \(404\)|\(404\)/u.test(message)) return null;
+      throw new Error("Live signed Main pointer cannot be inspected; R2 pruning refused.");
+    }
+    const stats = fs.lstatSync(destination);
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.size < 200 || stats.size > 16 * 1024) {
+      throw new Error("Live signed Main pointer has invalid size or type.");
+    }
+    return validateTrustedMainInstallPointer(JSON.parse(fs.readFileSync(destination, "utf8"))).sourceSha;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function validateCurrentRefs(mainSha, snapshotSha, signedMainSha) {
   if (remoteSha("refs/heads/main") !== mainSha || remoteSha("refs/tags/main-snapshot") !== snapshotSha)
     throw new Error("Canonical Main/snapshot refs changed; refusing R2 deletion.");
+  if (liveSignedMainSha() !== signedMainSha)
+    throw new Error("Live signed Main SHA changed; refusing R2 deletion.");
 }
 
 function execute() {
@@ -123,22 +153,23 @@ function execute() {
   const apply = process.argv[2] === "--apply";
   const mainSha = remoteSha("refs/heads/main");
   const snapshotSha = remoteSha("refs/tags/main-snapshot");
+  const signedMainSha = liveSignedMainSha();
   const objects = inventory();
-  const plan = planEquinoxMainR2Retention(objects, { mainSha, snapshotSha });
+  const plan = planEquinoxMainR2Retention(objects, { mainSha, snapshotSha, signedMainSha });
   process.stdout.write(JSON.stringify({
     mode: apply ? "apply" : "dry-run",
-    mainSha, snapshotSha, inventory: plan.objectCount, commits: plan.snapshotCount,
+    mainSha, snapshotSha, signedMainSha, inventory: plan.objectCount, commits: plan.snapshotCount,
     keptCommits: plan.keepCount, removableCommits: plan.deleteCount,
     removableObjects: plan.deleteKeys.length, retainedGB: +(plan.keptBytes / 1e9).toFixed(3),
     reclaimableGB: +(plan.deleteBytes / 1e9).toFixed(3),
   }) + "\n");
   if (!apply || plan.deleteKeys.length === 0) return;
   assert.ok(plan.deleteKeys.length > 0 && plan.keepCount >= KEEP_LATEST, "Unsafe retention plan.");
-  validateCurrentRefs(mainSha, snapshotSha);
+  validateCurrentRefs(mainSha, snapshotSha, signedMainSha);
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "equinox-r2-prune-"));
   try {
     for (let start = 0; start < plan.deleteKeys.length; start += 1000) {
-      validateCurrentRefs(mainSha, snapshotSha);
+      validateCurrentRefs(mainSha, snapshotSha, signedMainSha);
       const keys = plan.deleteKeys.slice(start, start + 1000);
       const file = path.join(tempRoot, "delete-" + start + ".json");
       fs.writeFileSync(file, JSON.stringify({ Objects: keys.map((Key) => ({ Key })), Quiet: true }), { flag: "wx", mode: 0o600 });
