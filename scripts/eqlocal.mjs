@@ -17,7 +17,7 @@ const HELP = `eqlocal — Equinox Local agent CLI (JSON output by default)
   eqlocal tasks delete TASK_ID
   eqlocal tasks create --objective TEXT [--title TEXT]
   eqlocal tasks finish|cancel TASK_ID
-  eqlocal chat start --task TASK_ID [--wait]
+  eqlocal chat start --task TASK_ID [--wait] [--run-task]
   eqlocal chat send --task TASK_ID --message TEXT [--agent NAME] [--request-id ID] [--wait]
   eqlocal chat read|wait --task TASK_ID --receipt JSON [--timeout SECONDS]
 
@@ -36,6 +36,7 @@ function parseOptions(input) {
     const word = input[index];
     if (word === '--json') continue;
     if (word === '--wait') {options.wait = true; continue;}
+    if (word === '--run-task') {options.runTask = true; continue;}
     if (word === '--help' || word === '-h') {options.help = true; continue;}
     if (!word.startsWith('--')) {positional.push(word); continue;}
     const key = word.slice(2).replace(/-([a-z])/g, (_, char) => char.toUpperCase());
@@ -149,7 +150,7 @@ async function main() {
   else if (group === 'tasks' && ['finish', 'cancel'].includes(command)) result = await request({action: 'tools.call', domain: 'runtime', operation: command === 'finish' ? 'task_finish' : 'task_cancel', args: {task_id: required(third, 'task id')}});
   else if (group === 'chat' && command === 'start') {
     const task = required(opt.task, '--task');
-    const started = await request({action: 'chat.start', task});
+    const started = await request({action: 'chat.start', task, runTask: opt.runTask === true});
     if (opt.wait) {
       const receipt = await initialReceipt(task, started.initialTurn, opt.timeout || 120);
       result = receipt?.userEpoch ? await poll(task, receipt, opt.timeout || 120) : {status: 'waiting', task, receipt};

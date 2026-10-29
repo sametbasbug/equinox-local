@@ -33,6 +33,7 @@ $ eqlocal tasks create --title "Review" --objective "Review the architecture"
 $ eqlocal tasks list --status active
 $ eqlocal tasks read task-...
 $ eqlocal chat start --task task-... --wait
+$ eqlocal chat start --task task-... --run-task
 $ eqlocal chat send --task task-... --agent Nyx --message "Selene, feedback?" --wait
 $ eqlocal chat send --task task-... --message-file - --request-id 0123456789abcdef
 $ eqlocal chat wait --task task-... --receipt '{"userEpoch":"...","previousAssistantTurnKey":"..."}' --timeout 120
@@ -42,7 +43,7 @@ $ eqlocal tasks delete task-...
 
 `tasks delete` accepts only completed/cancelled Task Capsules; active tasks must be finished or cancelled first. This is the same store invariant as Control Center, not a separate deletion mechanism.
 
-New tasks are created first, then explicitly opened with `chat start`; existing bound tasks can be addressed through `chat send`. `chat start` reuses the Telegram Task Chat Browser primitives but does **not** send a Telegram message. Both use exact task/chat bindings.
+New tasks are created first, then explicitly opened with `chat start`; existing bound tasks can be addressed through `chat send`. By default, `chat start` sends a short, tool-free ready handshake rather than immediately executing the Task Capsule objective, avoiding recursive agent starts. Use `--run-task` to intentionally start executing the objective in the new chat (same existing behavior as Telegram task chat). `chat start` reuses the Telegram Task Chat Browser primitives but does **not** send a Telegram message. Both use exact task/chat bindings.
 
 `chat send` yields a receipt containing `userEpoch` and `previousAssistantTurnKey` upon confirmed delivery. `--wait` polls for the completed assistant response for up to 120 seconds by default (maximum 600). If no answer is ready, it returns a waiting status **with the original receipt**, which the caller can supply to `chat wait` to resume reading. Do not re-send a message simply because reading timed out. On an uncertain send failure, inspect the ChatGPT task conversation before repeating, using the same `--request-id` if an explicit retry is truly warranted; the extension suppresses duplicate delivery IDs.
 

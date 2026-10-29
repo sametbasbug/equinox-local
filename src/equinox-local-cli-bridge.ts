@@ -108,7 +108,12 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
       try {
         const task = await tasks.readInternal(id);
         if (task.status !== "active" || task.chatBinding) throw new Error("Task must be active and not already bound to ChatGPT.");
-        const started = await chat.startTaskChat({taskId: id, checkpointRevision: task.checkpointRevision});
+        // CLI chat creation is conversational by default. The Telegram Task
+        // starter still executes the original objective unless explicitly
+        // given a neutral initial message by this CLI surface.
+        const initialMessage = input.runTask === true ? undefined
+          : `Equinox Local CLI chat for ${id} is connected. Reply only EQL_CLI_READY. Do not run the Task Capsule objective yet or invoke tools; wait for the next CLI message.`;
+        const started = await chat.startTaskChat({taskId: id, checkpointRevision: task.checkpointRevision, ...(initialMessage ? {initialMessage} : {})});
         if (!started?.confirmed || !started.binding) throw new Error("Chat creation was not confirmed; inspect the task before retrying.");
         const updated = await tasks.bindChat({taskId: id, binding: started.binding});
         return {task: updated, initialTurn: {userEpoch: started.userEpoch, previousAssistantTurnKey: started.previousAssistantTurnKey}};
