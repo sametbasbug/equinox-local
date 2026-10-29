@@ -12,8 +12,10 @@ const PUBLIC_REPO = "https://github.com/sametbasbug/equinox-local.git";
 const SHA = /^[0-9a-f]{40}$/u;
 const ROOT_KEY = /^snapshots\/([0-9a-f]{40})\/(.+)$/u;
 const TARGETS = ["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"];
-const KEEP_LATEST = 8;
-const MIN_AGE_MS = 24 * 60 * 60 * 1000;
+const KEEP_LATEST = 3;
+// A failed upload can leave partial archives. Give in-flight writes a short grace
+// period, but never let stale, recognized partial sets accumulate forever.
+const INCOMPLETE_GRACE_MS = 6 * 60 * 60 * 1000;
 const MAX_OBJECTS = 20_000;
 
 function expectedKeys(sha, signed = false) {
@@ -52,15 +54,17 @@ export function planEquinoxMainR2Retention(objects, { mainSha, snapshotSha, sign
     group.keys.every((key) => expectedKeys(group.sha).has(key))) ||
     (group.keys.length === 12 &&
     group.keys.every((key) => expectedKeys(group.sha, true).has(key)));
+  const latestComplete = ordered.filter(complete).slice(0, KEEP_LATEST);
   const keep = new Set([mainSha, snapshotSha, signedMainSha,
-    ...ordered.filter(complete).slice(0, KEEP_LATEST).map((item) => item.sha)]);
+    ...latestComplete.map((item) => item.sha)]);
   const protectedGroups = [];
   const deletingGroups = [];
   let retainedBytes = 0, removedBytes = 0;
   for (const group of ordered) {
     const isComplete = complete(group);
-    const recent = now.getTime() - group.newest < MIN_AGE_MS;
-    if (!isComplete || recent || keep.has(group.sha)) {
+    const unknownKeys = group.keys.some((key) => !expectedKeys(group.sha, true).has(key));
+    const pending = !isComplete && now.getTime() - group.newest < INCOMPLETE_GRACE_MS;
+    if (unknownKeys || pending || keep.has(group.sha) || latestComplete.length < KEEP_LATEST) {
       protectedGroups.push(group);
       retainedBytes += group.bytes;
     } else {
@@ -70,7 +74,7 @@ export function planEquinoxMainR2Retention(objects, { mainSha, snapshotSha, sign
   }
   const deleteKeys = deletingGroups.flatMap((group) => group.keys);
   assert.ok(deleteKeys.length < objects.length, "Cannot delete every object.");
-  assert.ok(ordered.filter(complete).slice(0, KEEP_LATEST).every((item) => !deletingGroups.includes(item)), "Latest complete archives cannot be deleted.");
+  assert.ok(latestComplete.every((item) => !deletingGroups.includes(item)), "Latest complete archives cannot be deleted.");
   return Object.freeze({
     keepCount: protectedGroups.length,
     deleteCount: deletingGroups.length,

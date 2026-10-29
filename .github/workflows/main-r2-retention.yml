@@ -2,9 +2,12 @@ name: Prune Main R2 snapshots
 
 on:
   workflow_dispatch:
-  # Retention is independent housekeeping, not a signed release gate. Keeping
-  # it off the production critical path trims the publish latency and lets a
-  # transient R2 inventory failure be handled on the next daily run.
+  # Run after the complete signed Main CI pipeline, not during publication.
+  # The daily run is a fallback for cancelled/failed or missed event deliveries.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   schedule:
     - cron: '17 3 * * *'
 
@@ -17,6 +20,7 @@ concurrency:
 
 jobs:
   prune:
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success') }}
     name: Retain safe Main snapshots
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -40,5 +44,5 @@ jobs:
           test -n "${AWS_SECRET_ACCESS_KEY:-}"
           aws --version
           node scripts/release/prune-main-r2.mjs
-      - name: Prune only expired exact-SHA archives after revalidating Main references
+      - name: Prune obsolete exact-SHA archives after revalidating Main references
         run: node scripts/release/prune-main-r2.mjs --apply
