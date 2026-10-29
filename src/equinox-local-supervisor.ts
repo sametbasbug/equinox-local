@@ -150,8 +150,11 @@ export async function resolveSupervisorRelease(paths: SupervisorPaths, {
     const installation=await resolveManagedSourceImpl({
       baseInstallation:{
         kind:"managed",managed:true,selfUpdateSupported:true,
-        platform,arch,target:nativeTarget,installRoot:paths.installRoot,
-        releasesRoot:paths.releasesRoot,releaseDir,
+        // This SHA is derived only from the canonical, product-owned native
+        // store path. Pass it into the signed selector/pointer verifier:
+        // without it, a fresh Git-free Main is treated as unadmitted.
+        platform,arch,target:nativeTarget,mainNativeSha:nativeSha,
+        installRoot:paths.installRoot,releasesRoot:paths.releasesRoot,releaseDir,
       },
       platform,arch,homeDir:paths.homeDir,env:sourceEnv,
     });
