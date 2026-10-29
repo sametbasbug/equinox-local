@@ -143,7 +143,10 @@ prepare_verified_main() {
   printf '%s\n' "$receipt"
 }
 
-TEMP_ROOT="$(/usr/bin/mktemp -d /tmp/equinox-local-install.XXXXXX)" || fail "could not create a private temporary directory"
+# Node canonicalizes macOS /tmp to /private/tmp when evaluating import.meta.url.
+# The pinned verifier checks its entrypoint against process.argv[1]; staging
+# under the real path is required or it silently exits without downloading.
+TEMP_ROOT="$(/usr/bin/mktemp -d /private/tmp/equinox-local-install.XXXXXX)" || fail "could not create a private temporary directory"
 
 # Preserve the previous product-owned executable roots until the exact signed
 # replacement has returned its healthy completion receipt. This is failure
