@@ -8,6 +8,11 @@ const SECURITY_HEADERS = Object.freeze({
   "Cross-Origin-Resource-Policy": "same-origin",
 });
 
+const INSTALLER_PATHS = new Set([
+  "/downloads/updates/install-equinox-local.sh",
+  "/downloads/updates/install-equinox-local.ps1",
+]);
+
 const RELEASE_ASSET_PATTERN = /^\/downloads\/updates\/equinox-local-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))-(darwin-(?:arm64|x64)|win32-(?:arm64|x64))\.(tar\.gz|zip)$/u;
 
 export function releaseAssetOriginForPath(pathname) {
@@ -20,10 +25,13 @@ export function releaseAssetOriginForPath(pathname) {
   return `https://github.com/sametbasbug/equinox-local/releases/download/v${version}/equinox-local-${version}-${target}.${expectedSuffix}`;
 }
 
-function withSecurityHeaders(response, { immutable = false, privacy = false } = {}) {
+function withSecurityHeaders(response, { immutable = false, privacy = false, noStore = false } = {}) {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
-  if (immutable) {
+  if (noStore) {
+    // Installer bootstrap scripts must never be served stale after a repair.
+    headers.set("Cache-Control", "no-store");
+  } else if (immutable) {
     headers.set("Cache-Control", "public, max-age=31536000, immutable");
   } else if (privacy) {
     headers.set("Cache-Control", "public, max-age=300, must-revalidate");
@@ -67,6 +75,9 @@ export default {
     if (releaseAssetOrigin) return fetchReleaseAsset(request, releaseAssetOrigin);
 
     const response = await env.ASSETS.fetch(request);
-    return withSecurityHeaders(response, { privacy: url.pathname.startsWith("/privacy") });
+    return withSecurityHeaders(response, {
+      privacy: url.pathname.startsWith("/privacy"),
+      noStore: INSTALLER_PATHS.has(url.pathname),
+    });
   },
 };

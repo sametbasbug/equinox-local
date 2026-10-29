@@ -325,13 +325,21 @@ function Get-NormalExistingEntry([string]$Path) {
 # Never irreversibly delete a working installation before the new signed
 # release has started, passed health checks and returned its exact receipt.
 # Keep the old executable-only entries on the same volume so renames are fast.
-function Restore-PreviousEquinoxExecutables([string]$InstallRoot, [string]$SavedRoot) {
+function Restore-PreviousEquinoxExecutables([string]$InstallRoot, [string]$SavedRoot, [bool]$CleanNewOnly = $false) {
   $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
   Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
   foreach ($entry in @(Get-ExecutableReplacementPaths $InstallRoot)) {
     $saved = Join-Path $SavedRoot ([string]$entry.Name)
-    if ($null -eq (Get-NormalExistingEntry $saved)) { continue }
     $current = Get-NormalExistingEntry ([string]$entry.Path)
+    if ($null -eq (Get-NormalExistingEntry $saved)) {
+      # After B started, this is a product-only path absent in A; remove
+      # B's partial install. During a failed A preservation, however, entries
+      # not yet moved still belong to A and MUST be left untouched.
+      if ($CleanNewOnly -and $null -ne $current) {
+        Remove-Item -LiteralPath ([string]$entry.Path) -Recurse -Force -ErrorAction Stop
+      }
+      continue
+    }
     if ($null -ne $current) {
       Remove-Item -LiteralPath ([string]$entry.Path) -Recurse -Force -ErrorAction Stop
     }
@@ -341,6 +349,22 @@ function Restore-PreviousEquinoxExecutables([string]$InstallRoot, [string]$Saved
     Remove-Item -LiteralPath $SavedRoot -ErrorAction Stop
   }
 }
+# If a signed B fails, restoring old files is not enough when the previous
+# WPF shell was running before the installer stopped it. Relaunch ONLY that
+# exact, restored product-owned shell; do not start a previously closed app.
+function Resume-PreviousEquinoxShell([string]$ProgramRoot, [bool]$WasRunning) {
+  if (-not $WasRunning) { return }
+  $shellPath = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'EquinoxLocal.exe'))
+  Assert-NormalFile $shellPath 1 200000000 | Out-Null
+  $alreadyRunning = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction Stop | Where-Object {
+    [string]::Equals([string]$_.ExecutablePath, $shellPath, [StringComparison]::OrdinalIgnoreCase)
+  })
+  if ($alreadyRunning.Count -eq 0) {
+    Start-Process -FilePath $shellPath -ErrorAction Stop | Out-Null
+    Write-Info 'previous signed Equinox Local shell relaunch was requested after rollback'
+  }
+}
+
 function Preserve-ExistingEquinoxExecutables([string]$InstallRoot) {
   $savedRoot = Join-Path $InstallRoot '.equinox-main-reinstall-preserved'
   if ($null -ne (Get-NormalExistingEntry $savedRoot)) {
@@ -348,11 +372,20 @@ function Preserve-ExistingEquinoxExecutables([string]$InstallRoot) {
   }
   $entries = @(Get-ExecutableReplacementPaths $InstallRoot)
   foreach ($entry in $entries) { Get-NormalExistingEntry ([string]$entry.Path) | Out-Null }
-  $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
-  Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
-  $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry ([string]$_.Path)) })
-  if ($present.Count -eq 0) { return $null }
+  # Prepare recovery BEFORE stopping an otherwise healthy installed service.
+  # This directory can fail to be created (permissions, disk full, etc.).
+  # Even a fresh install with no A needs a marker to clean failed B programs.
   [IO.Directory]::CreateDirectory($savedRoot) | Out-Null
+  $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
+  try {
+    Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
+  } catch {
+    # No old program was moved yet. Avoid leaving an empty recovery marker
+    # that would otherwise block the next attempt.
+    Remove-Item -LiteralPath $savedRoot -Force -ErrorAction SilentlyContinue
+    throw
+  }
+  $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry ([string]$_.Path)) })
   try {
     foreach ($entry in $present) {
       Move-Item -LiteralPath ([string]$entry.Path) -Destination (Join-Path $savedRoot ([string]$entry.Name)) -ErrorAction Stop
@@ -398,6 +431,13 @@ function Invoke-EquinoxLocalInstall {
     # Reuse the exact original installer for fresh install and update.
     # Preserve old product binaries until the exact signed replacement is healthy.
     # No user settings, workspace or secrets are ever moved.
+    $programRoot = Join-Path ([IO.Path]::GetDirectoryName($installRoot)) 'Programs\Equinox Local'
+    $priorShellPath = [IO.Path]::GetFullPath((Join-Path $programRoot 'EquinoxLocal.exe'))
+    $priorShellWasRunning = @(
+      Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction Stop | Where-Object {
+        [string]::Equals([string]$_.ExecutablePath, $priorShellPath, [StringComparison]::OrdinalIgnoreCase)
+      }
+    ).Count -gt 0
     $suspendedHost = Suspend-OldEquinoxChromeHost $installRoot
     $savedRoot = $null
     try {
@@ -418,10 +458,12 @@ function Invoke-EquinoxLocalInstall {
       $failed = $_
       if ($null -ne $savedRoot) {
         Write-Info 'signed Main activation failed; restoring previous program files'
-        try { Restore-PreviousEquinoxExecutables $installRoot $savedRoot }
+        try { Restore-PreviousEquinoxExecutables $installRoot $savedRoot $true }
         catch { Fail "new install failed; original executable files remain under $savedRoot and must not be deleted" }
       }
       Restore-OldEquinoxChromeHost $suspendedHost
+      try { Resume-PreviousEquinoxShell $programRoot $priorShellWasRunning }
+      catch { Write-Warning ('old product files were recovered, but WPF relaunch failed: ' + $_.Exception.Message) }
       throw $failed
     }
     # Healthy, signed exact-SHA receipt is the sole commit point. A cleanup
