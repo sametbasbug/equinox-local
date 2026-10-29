@@ -8,7 +8,7 @@ import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { maybeScheduleMacStableMainBridge } from "./equinox-local-mac-main-bridge.js";
 import { pruneVerifiedMainLargeStorage, pruneDisenrolledWindowsMainLargeStorage } from "./equinox-local-main-storage-retention.js";
 import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
@@ -143,7 +143,7 @@ import {
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
 import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
-import { installEquinoxLocalCli } from "./equinox-local-cli-installation.js";
+import { installEquinoxLocalCli, installEquinoxLocalSourceCli } from "./equinox-local-cli-installation.js";
 import {
   registerAuthenticatedHttpTools,
 } from "./authenticated-http-tools.js";
@@ -3608,6 +3608,19 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   await cliBridge.start().catch(() => {
     console.error("[Equinox Local] Optional agent CLI bridge is unavailable; core runtime remains active.");
   });
+  // Factory/source checkout has no immutable signed release tree. Reconcile
+  // its user CLI launcher against this exact source file and running Node.
+  if (platform === "darwin" && equinoxLocalInstallation.kind === "source") {
+    await installEquinoxLocalSourceCli({
+      homeDir: runtimeHomeDir,
+      installRoot: runtimePlatformPaths.appDataRoot,
+      sourceCliPath: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "eqlocal.mjs"),
+      nodeExecutable: process.execPath,
+    }).catch((error:RuntimeBoundary) => {
+      console.error("[Equinox Local] Optional source CLI launcher setup failed: " +
+        (error instanceof Error ? error.message : String(error)));
+    });
+  }
   // A signed Main B activation (or exact A rollback) changes the immutable
   // release directory. Refresh the optional CLI launcher only after the
   // detached owner has released active.json and the signed selector/pointer
