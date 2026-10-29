@@ -58,6 +58,7 @@ The Browser response reader currently returns at most 12,000 characters of the l
 - Verified live: neutral `chat start --wait` returned exact `EQL_CLI_READY` without creating another Task. The temporary Task and tab were removed.
 - Verified isolated macOS native package lifecycle: bundled pinned Node v26.12.1, CLI launch, reinstall and PATH/uninstall cleanup. Candidate is unsigned, not a production install.
 - All four native candidate builds passed on [CI run #40891590509](https://github.com/sametbasbug/equinox-local/actions/runs/40891590509); production publication was skipped.
+- Verified on the actual Windows machine with the product-owned Node v26.12.1 copied into an isolated release layout: the source installer generated PowerShell/CMD launchers; zero/one/multiple args, JSON and Unicode passed in PowerShell 5.1 and 7, and reinstall/uninstall cleaned both launchers and the temporary user PATH entry. The installed public product was unchanged.
 - Still required: real macOS and Windows managed-install verification: status, dynamic tool catalog, Task Chat create/send/read/wait, refusal on stale identity, no double submit, native shell invocation, and update/reinstall preservation.
 - Check the independent browser extension's current Chat Bridge version; do not modify CWS packaging without a separate browser release.
 - Later: MCP transport for agent callers may delegate to this same local dispatcher without duplicating feature implementations.

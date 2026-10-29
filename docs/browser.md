@@ -1,8 +1,8 @@
 # Equinox Browser
 
-**Current Chrome Web Store release:** [`1.0.0`](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj) on the permanent Unlisted listing. Extension updates are delivered by Chrome Web Store, independently of Equinox Local Stable releases.
+**Chrome Web Store channel:** [Equinox Browser](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj) has a permanent Unlisted listing. Chrome Web Store alone delivers extension updates; Equinox Local does not replace or sideload Store-managed installs.
 
-**Next Browser update (not published yet):** 1.0.1 includes Browser-observed generation start timestamps for accurate Turn Budget timing. The package can be prepared with npm run browser:package, but the live Store item remains 1.0.0 until separately reviewed. Equinox Local does not replace installed Chrome Store extensions.
+**Release version check (2026-10-29):** The repository manifest and an observed Windows Chrome installation are both at `1.2.0`; the live publisher-dashboard version was not independently verified. The source includes the multiline Chat Bridge fix, but the older local `1.2.0` draft ZIP lacks it. Before a new Store publication, verify the currently published version in the developer dashboard, increment the manifest version above it (and above installed `1.2.0`), regenerate the allowlisted ZIP, and publish through the separate approved Chrome Web Store workflow. Do not treat an unpublished source change as an installed extension update.
 
 Equinox Browser is the only browser-automation transport exposed by Equinox Local.
 
