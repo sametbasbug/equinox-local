@@ -349,6 +349,22 @@ function Restore-PreviousEquinoxExecutables([string]$InstallRoot, [string]$Saved
     Remove-Item -LiteralPath $SavedRoot -ErrorAction Stop
   }
 }
+# If a signed B fails, restoring old files is not enough when the previous
+# WPF shell was running before the installer stopped it. Relaunch ONLY that
+# exact, restored product-owned shell; do not start a previously closed app.
+function Resume-PreviousEquinoxShell([string]$ProgramRoot, [bool]$WasRunning) {
+  if (-not $WasRunning) { return }
+  $shellPath = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'EquinoxLocal.exe'))
+  Assert-NormalFile $shellPath 1 200000000 | Out-Null
+  $alreadyRunning = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction Stop | Where-Object {
+    [string]::Equals([string]$_.ExecutablePath, $shellPath, [StringComparison]::OrdinalIgnoreCase)
+  })
+  if ($alreadyRunning.Count -eq 0) {
+    Start-Process -FilePath $shellPath -ErrorAction Stop | Out-Null
+    Write-Info 'previous signed Equinox Local shell relaunch was requested after rollback'
+  }
+}
+
 function Preserve-ExistingEquinoxExecutables([string]$InstallRoot) {
   $savedRoot = Join-Path $InstallRoot '.equinox-main-reinstall-preserved'
   if ($null -ne (Get-NormalExistingEntry $savedRoot)) {
@@ -415,6 +431,13 @@ function Invoke-EquinoxLocalInstall {
     # Reuse the exact original installer for fresh install and update.
     # Preserve old product binaries until the exact signed replacement is healthy.
     # No user settings, workspace or secrets are ever moved.
+    $programRoot = Join-Path ([IO.Path]::GetDirectoryName($installRoot)) 'Programs\Equinox Local'
+    $priorShellPath = [IO.Path]::GetFullPath((Join-Path $programRoot 'EquinoxLocal.exe'))
+    $priorShellWasRunning = @(
+      Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction Stop | Where-Object {
+        [string]::Equals([string]$_.ExecutablePath, $priorShellPath, [StringComparison]::OrdinalIgnoreCase)
+      }
+    ).Count -gt 0
     $suspendedHost = Suspend-OldEquinoxChromeHost $installRoot
     $savedRoot = $null
     try {
@@ -439,6 +462,8 @@ function Invoke-EquinoxLocalInstall {
         catch { Fail "new install failed; original executable files remain under $savedRoot and must not be deleted" }
       }
       Restore-OldEquinoxChromeHost $suspendedHost
+      try { Resume-PreviousEquinoxShell $programRoot $priorShellWasRunning }
+      catch { Write-Warning ('old product files were recovered, but WPF relaunch failed: ' + $_.Exception.Message) }
       throw $failed
     }
     # Healthy, signed exact-SHA receipt is the sole commit point. A cleanup
