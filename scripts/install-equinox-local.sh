@@ -140,6 +140,8 @@ prepare_verified_main() {
   /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector" --inspect-signed-main     --staged-release "$candidate" --source-sha "$signed_sha"     --version "$signed_version" --target "$TARGET" \
     --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" >/dev/null ||
     fail "Main native release metadata does not match the signed full SHA"
+  VERIFIED_MAIN_SHA="$signed_sha"
+  VERIFIED_MAIN_VERSION="$signed_version"
   printf '%s\n' "$receipt"
 }
 
@@ -271,11 +273,24 @@ MAIN_NODE="$TEMP_ROOT/node-v$MAIN_NODE_VERSION-$TARGET/bin/node"
 MAIN_INSTALLER="$TEMP_ROOT/main-extracted/release/equinox-local-first-install.js"
 MAIN_ARCHIVE="$TEMP_ROOT/main-native.tar.gz"
 MAIN_POINTER="$TEMP_ROOT/main-signed-pointer.json"
-/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER" \
-  TMPDIR="/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+# Exit code alone cannot prove installation: a prior pinned verifier once
+# silently returned success without executing its entrypoint. Require the
+# exact signed SHA/version/target completion receipt before retiring A.
+fresh_completion="$(/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER" \
+  TMPDIR="/private/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
   "$MAIN_NODE" "$MAIN_INSTALLER" --install-main-fresh \
-  --signed-pointer-file "$MAIN_POINTER" --archive "$MAIN_ARCHIVE" ||
+  --signed-pointer-file "$MAIN_POINTER" --archive "$MAIN_ARCHIVE")" ||
   fail "fresh signed Main installation failed; attempting to restore previous executables"
+printf '%s' "$fresh_completion" | /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$MAIN_NODE" -e '
+    const fs=require("node:fs");
+    const result=JSON.parse(fs.readFileSync(0,"utf8"));
+    if (!result || typeof result!=="object" || Array.isArray(result) ||
+        result.status!=="installed" || result.channel!=="main" ||
+        result.sourceSha!==process.argv[2] || result.version!==process.argv[3] ||
+        result.target!==process.argv[1]) process.exit(1);
+  ' "$TARGET" "$VERIFIED_MAIN_SHA" "$VERIFIED_MAIN_VERSION" ||
+  fail "signed Main completion receipt missing or differs from the admitted release; restoring previous executables"
 REINSTALL_COMMITTED=true
 # Cleanup failures never invalidate a healthy exact-SHA signed installation.
 /bin/rm -rf "$REINSTALL_BACKUP_ROOT" ||
