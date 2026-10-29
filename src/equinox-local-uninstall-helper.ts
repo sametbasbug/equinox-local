@@ -60,6 +60,7 @@ import {
   windowsNativeMessagingLauncherPath,
 } from "./equinox-browser-windows-native-messaging.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { removeEquinoxLocalCli } from "./equinox-local-cli-installation.js";
 import { readManagedCurrentRelease } from "./equinox-local-update-activation.js";
 import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
 
@@ -399,6 +400,7 @@ export async function runWindowsEquinoxLocalUninstall({
     platform: "win32", arch: installation.arch, homeDir: homeDir!, env, fsImpl,
   });
   if (!removeUserData) await verifyUninstallDirectoryIfPresent(layout.runtimeRoot, { fsImpl });
+  await removeEquinoxLocalCli({platform:"win32",homeDir:homeDir!,installRoot:installation.installRoot!,env});
   await cleanupShellRegistrationImpl({ programRoot: installation.programRoot!, execFileImpl, env });
   await unregisterStartupImpl({ expectedCommand: expectedStartupCommand, execFileImpl, env });
   const removedNativeHost = await unregisterNativeMessagingImpl({ manifestPath: ownership.manifestPath, launcherPath, fsImpl, env });
@@ -451,6 +453,7 @@ export async function runEquinoxLocalUninstallHelper({
     `gui/${uid}/${installation.launchAgentLabel}`,
   ], { timeout: 15_000, maxBuffer: 1024 * 1024 }).catch(() => ({ stdout: "", stderr: "" }));
 
+  await removeEquinoxLocalCli({platform:"darwin",homeDir:homeDir!,installRoot:installation.installRoot!});
   await removeOwnedNativeHostManifest({ homeDir: homeDir!, installRoot: installation.installRoot!, fsImpl });
   await removeIfExists(installation.launchAgentPath!, { fsImpl });
   await removeOwnedEquinoxLocalAppHost({ homeDir: homeDir!, fsImpl, execFileImpl });

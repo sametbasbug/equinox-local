@@ -54,6 +54,7 @@ const STATIC_RELEASE_FILES = Object.freeze([
   // Both platforms package these original scripts, not a second updater.
   "scripts/install-equinox-local.sh",
   "scripts/install-equinox-local.ps1",
+  "scripts/eqlocal.mjs",
 ]);
 const RELEASE_ENTRYPOINTS = Object.freeze([
   "src/equinox-control-center.js",

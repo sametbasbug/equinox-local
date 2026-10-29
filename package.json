@@ -1,5 +1,6 @@
 {
   "name": "equinox-local",
+  "bin": { "eqlocal": "./scripts/eqlocal.mjs" },
   "version": "0.0.0-development",
   "private": true,
   "description": "Local control plane for AI agents with bounded projects, browser automation, diagnostics, and human-visible controls.",

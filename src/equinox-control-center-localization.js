@@ -24,7 +24,6 @@ const TR_UI = Object.freeze({
     "Equinox Local is up to date.": "Equinox Local güncel.",
     "Unable to check for updates.": "Güncellemeler kontrol edilemedi.",
     "Update started. Equinox Local may restart.": "Güncelleme başladı. Equinox Local yeniden başlatılabilir.",
-
     "Getting started": "Başlarken",
     "Setup": "Kurulum",
     "Setup Equinox Local": "Equinox Local’i kur",

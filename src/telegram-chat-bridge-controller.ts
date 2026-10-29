@@ -47,7 +47,7 @@ type BridgeController = {
   inspectTurnIdentity: (args?: {binding?: Binding}) => Promise<unknown>;
   deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string}) => Promise<unknown>;
   readFinal: (args?: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null}) => Promise<unknown>;
-  startTaskChat: (args?: {taskId?: string; checkpointRevision?: number}) => Promise<unknown>;
+  startTaskChat: (args?: {taskId?: string; checkpointRevision?: number; initialMessage?: string}) => Promise<unknown>;
 };
 type CodedError = Error & {code: string};
 type ErrorWithCode = {code?: string};
@@ -210,10 +210,13 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
   };
 
 
-  const startTaskChat = async ({ taskId, checkpointRevision = 1 }: {taskId?: string; checkpointRevision?: number} = {}) => {
+  const startTaskChat = async ({ taskId, checkpointRevision = 1, initialMessage }: {taskId?: string; checkpointRevision?: number; initialMessage?: string} = {}) => {
     if (typeof taskId !== "string" || !/^task-[a-z0-9-]{6,80}$/u.test(taskId)) throw new Error("Telegram new-task id is invalid.");
     if (!Number.isInteger(checkpointRevision) || checkpointRevision < 1) throw new Error("Telegram new-task checkpoint revision is invalid.");
-    const prompt = `Start task ${taskId} from checkpoint ${checkpointRevision}. Read the latest Task Capsule from Equinox Local and carry out its objective.`;
+    if (initialMessage !== undefined && (typeof initialMessage !== "string" || !initialMessage.trim() || initialMessage.length > 1500 || /[\r\n]/u.test(initialMessage))) {
+      throw new Error("Task chat initial message must be a nonempty single line of at most 1500 characters.");
+    }
+    const prompt = initialMessage ?? `Start task ${taskId} from checkpoint ${checkpointRevision}. Read the latest Task Capsule from Equinox Local and carry out its objective.`;
 
     agentControl.assertMutationAllowed("telegram_task_chat_create");
     const bridgeSnapshot = browserBridge.snapshot();

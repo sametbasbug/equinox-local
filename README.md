@@ -66,6 +66,10 @@ Signed Stable bootstrap, explicit Main enrollment, exact-SHA health checks and r
 > [!IMPORTANT]
 > **Local-first is not a sandbox.** Enabling Terminal lets an agent run commands with your signed-in operating-system account's permissions, including outside selected project folders. Review agent access, use Emergency Stop when needed, and read the [security model](docs/security-model.md).
 
+## Agent CLI (in development)
+
+The forthcoming `eqlocal` CLI lets locally running AI agents send messages to exact ChatGPT Task conversations, read replies, manage Task Capsules and invoke the same live capabilities as ChatGPT itself. Its outputs are JSON-first for automated callers, and chat delivery reuses Equinox Browser's existing guarded Chat Bridge. It is **not part of the current public managed release**; see [CLI development docs](docs/cli.md) for the interface and pending managed-install work.
+
 ## Install Equinox Local
 
 <details open>
