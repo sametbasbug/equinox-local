@@ -34,14 +34,19 @@ async function windowsPath(ownedBin: string, add: boolean, env: NodeJS.ProcessEn
     "$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')",
     "if ($null -eq $key) { throw 'Cannot open current-user environment' }",
     "try {",
-    "  $old = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)",
+    "  $current = $key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)",
+    "  if ($null -eq $current -and $env:EQUINOX_LOCAL_CLI_PATH_ADD -ne '1') { return }",
+    "  $old = [string]$current",
     "  $parts = @($old.Split(';') | Where-Object { $_ -and $_.TrimEnd('\\') -ine $dir.TrimEnd('\\') })",
     "  if ($env:EQUINOX_LOCAL_CLI_PATH_ADD -eq '1') { $parts += $dir }",
     "  $newValue = $parts -join ';'",
     "  if ($newValue -cne $old) {",
     "    if ($newValue.Length -gt 30000) { throw 'User PATH is too long' }",
-    "    $kind = if ($null -eq $key.GetValue('Path', $null)) { [Microsoft.Win32.RegistryValueKind]::ExpandString } else { $key.GetValueKind('Path') }",
-    "    $key.SetValue('Path', $newValue, $kind)",
+    "    if ($newValue.Length -eq 0) { $key.DeleteValue('Path', $false) }",
+    "    else {",
+    "      $kind = if ($null -eq $current) { [Microsoft.Win32.RegistryValueKind]::ExpandString } else { $key.GetValueKind('Path') }",
+    "      $key.SetValue('Path', $newValue, $kind)",
+    "    }",
     "  }",
     "} finally { $key.Dispose() }",
   ].join("\n");
@@ -85,10 +90,18 @@ export async function installEquinoxLocalCli({platform = process.platform,homeDi
     const cliArg = `%LOCALAPPDATA%\\Equinox Local\\${api.relative(installRoot,cliPath)}`;
     if (/[\r\n"%!^]/u.test(api.relative(installRoot,nodePath) + api.relative(installRoot,cliPath))) throw new Error("Unsupported Windows CLI release path characters.");
     const launcher = api.join(bin,"eqlocal.cmd");
+    const pwshLauncher = api.join(bin,"eqlocal.ps1");
     await normalFileOrAbsent(launcher);
+    await normalFileOrAbsent(pwshLauncher);
     await fs.writeFile(launcher, `@echo off\r\n"${nodeArg}" "${cliArg}" %*\r\nexit /b %ERRORLEVEL%\r\n`,{mode:0o600});
+    // PowerShell prioritizes .ps1 over .cmd. Passing @args directly to the
+    // pinned native Node preserves embedded JSON quotes and Unicode input.
+    // CMD callers retain the .cmd shim and can use --args-file for JSON.
+    const scriptNode = `$env:LOCALAPPDATA\\Equinox Local\\${api.relative(installRoot,nodePath)}`;
+    const scriptCli = `$env:LOCALAPPDATA\\Equinox Local\\${api.relative(installRoot,cliPath)}`;
+    await fs.writeFile(pwshLauncher, `& "${scriptNode}" "${scriptCli}" @args\r\nexit $LASTEXITCODE\r\n`,{mode:0o600});
     await windowsPath(bin,true,env);
-    return {installed:true,launcher};
+    return {installed:true,launcher,pwshLauncher};
   }
   if (platform !== "darwin") throw new Error("Unsupported CLI installation platform.");
   const launcher = api.join(bin,"eqlocal");
@@ -110,9 +123,10 @@ export async function removeEquinoxLocalCli({platform = process.platform,homeDir
   const api = platform === "win32" ? path.win32 : path.posix;
   const bin = api.join(installRoot,"bin");
   if (platform === "win32") {
-    const launcher = api.join(bin,"eqlocal.cmd");
-    const stat = await normalFileOrAbsent(launcher);
-    if (stat) await fs.unlink(launcher);
+    for (const name of ["eqlocal.cmd","eqlocal.ps1"]) {
+      const launcher = api.join(bin,name);
+      if (await normalFileOrAbsent(launcher)) await fs.unlink(launcher);
+    }
     await windowsPath(bin,false,env);
   } else if (platform === "darwin") {
     const launcher = api.join(bin,"eqlocal");

@@ -37,3 +37,11 @@ Known constraints: browser context must be connected and user-consented, Chrome/
 - Remaining: real macOS and Windows managed install CLI acceptance and live ChatGPT Browser-backed turn, plus runtime/package/Windows PowerShell validation, final docs/commit.
 
 - Final packaging audit: generated `scripts/release/package-managed-release.mjs` was initially stale. Regenerated tooling and verified all 150 signed-release source files include `scripts/eqlocal.mjs`, `src/equinox-local-cli-bridge.js` and `src/equinox-local-cli-installation.js`. Mac temporary-home launcher/reinstall/uninstall proof succeeded; Windows tool session currently unavailable.
+
+## Progress — Windows compatibility audit (checkpoint 3)
+
+- Windows Equinox Local connection returned. Current installed Windows public runtime is not this development build; no `eqlocal` installed, so this is not a signed-release acceptance.
+- A real PowerShell 7.6 CLI-shim experiment showed that passing `--args '{"hello":1}'` through `.cmd` loses JSON quote characters. Confirmed PowerShell resolves `eqlocal.ps1` before `.cmd`. Added both launchers: PowerShell `.ps1` forwards `@args` unchanged to the pinned Node; `.cmd` remains available for CMD and accepts `--args-file` stdin for JSON.
+- On the Windows device, native `.ps1` argument forwarding retained JSON quote characters and Unicode bytes; observed a nested PowerShell output-decoding artifact, verified original UTF-8 bytes were correct. Confirmed `exit` from `.ps1` does not terminate the calling PowerShell session. All temporary files removed.
+- Added task-level serialization for Chat start/send and rejected excess positional CLI arguments. Refined Windows PATH uninstall to avoid adding an empty registry value if user PATH was absent.
+- Still required: actual signed native Windows + macOS install, live Browser-backed ChatGPT turn, verify after version update. No publication or live EL restart performed.

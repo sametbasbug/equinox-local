@@ -125,7 +125,8 @@ async function initialReceipt(task, candidate, timeoutSeconds = 120) {
 
 async function main() {
   const {positional: pos, options: opt} = parseOptions(args);
-  const [group, command, third] = pos;
+  const [group, command, third, fourth] = pos;
+  if (fourth !== undefined) throw new Error('Too many positional arguments. Run eqlocal --help.');
   if (!group || group === 'help' || opt.help) {process.stdout.write(HELP); return;}
   let result;
   if (group === 'status' && !command) result = await request({action: 'status'});

@@ -101,14 +101,22 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
         if (action === "chat.start") {
             assertMutationAllowed("cli_chat_start");
             const id = taskId(input);
-            const task = await tasks.read(id);
-            if (task.status !== "active" || task.chatBinding)
-                throw new Error("Task must be active and not already bound to ChatGPT.");
-            const started = await chat.startTaskChat({ taskId: id, checkpointRevision: task.checkpointRevision });
-            if (!started?.confirmed || !started.binding)
-                throw new Error("Chat creation was not confirmed; inspect the task before retrying.");
-            const updated = await tasks.bindChat({ taskId: id, binding: started.binding });
-            return { task: updated, initialTurn: { userEpoch: started.userEpoch, previousAssistantTurnKey: started.previousAssistantTurnKey } };
+            if (inflight.has(id))
+                throw new Error("A CLI chat operation is in progress for this task.");
+            inflight.add(id);
+            try {
+                const task = await tasks.read(id);
+                if (task.status !== "active" || task.chatBinding)
+                    throw new Error("Task must be active and not already bound to ChatGPT.");
+                const started = await chat.startTaskChat({ taskId: id, checkpointRevision: task.checkpointRevision });
+                if (!started?.confirmed || !started.binding)
+                    throw new Error("Chat creation was not confirmed; inspect the task before retrying.");
+                const updated = await tasks.bindChat({ taskId: id, binding: started.binding });
+                return { task: updated, initialTurn: { userEpoch: started.userEpoch, previousAssistantTurnKey: started.previousAssistantTurnKey } };
+            }
+            finally {
+                inflight.delete(id);
+            }
         }
         if (action === "chat.send") {
             assertMutationAllowed("cli_chat_send");
