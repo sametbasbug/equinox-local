@@ -48,6 +48,7 @@ import { createEquinoxLocalControlApi, } from "./equinox-local-control-api.js";
 import { cancelTelegramPairing, configureTelegramIntegration, confirmTelegramPairing, defaultTelegramTaskStatePath, disconnectTelegramIntegration, getTelegramDownloadSettings, getTelegramIntegrationStatus, setTelegramRemoteControlEnabled, sendTelegramTyping, pollTelegramPairing, registerTelegramSendTool, sendTelegramMessage, setTelegramDownloadLocation, startTelegramPairing, syncTelegramBotCommands, testTelegramIntegration, } from "./telegram-integration.js";
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
+import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
 import { registerAuthenticatedHttpTools, } from "./authenticated-http-tools.js";
 import { authenticatedHttpRequest, deleteAuthenticatedHttpProfile, getAuthenticatedHttpProfiles, setAuthenticatedHttpAgentManagement, upsertAuthenticatedHttpProfileFromControlCenter, } from "./authenticated-http-integration.js";
 import { resolveEquinoxLocalInstallation, } from "./equinox-local-installation.js";
@@ -2469,9 +2470,14 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
             },
         }),
     });
+    let cliDesktopInvocation = null;
     const desktopCapabilityProvider = registerDesktopGatewayTools(({
         registerTextTool,
-        registerRawTool,
+        registerRawTool: (name, config, handler, options) => {
+            if (name === "desktop_call")
+                cliDesktopInvocation = handler;
+            return registerRawTool(name, config, handler, options);
+        },
         z,
         agentAccess: AGENT_ACCESS,
         desktopBridge,
@@ -2536,6 +2542,24 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         externalDomains: { desktop: desktopCapabilityProvider },
         turnBudgetController,
     });
+    const cliBridge = createEquinoxLocalCliBridge({
+        stateRoot: runtimePlatformPaths.stateRoot,
+        platform,
+        namespace: runtimeEnv.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
+        registry: capabilityRegistry,
+        desktop: {
+            catalog: () => desktopCapabilityProvider.catalog(),
+            describe: (name) => desktopCapabilityProvider.describe(name),
+            invoke: async (operation, args) => {
+                if (!cliDesktopInvocation)
+                    throw new Error("Desktop capability is not registered.");
+                return cliDesktopInvocation({ operation, arguments: args });
+            },
+        },
+        tasks: taskCapsuleStore,
+        chat: telegramChatBridgeController,
+        assertMutationAllowed: (name) => agentControl.assertMutationAllowed(name),
+    });
     let localShutdownStarted = false;
     async function shutdownLocalResources({ reason = "api" } = {}) {
         if (localShutdownStarted) {
@@ -2561,6 +2585,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         await autoContinueController.shutdown();
         await workflowManager.shutdown();
         await Promise.all([
+            cliBridge.close(),
             equinoxLocalControlApi?.close() ?? Promise.resolve(),
             equinoxBrowserBridge.close(),
             peekabooBridge.close(),
@@ -2661,6 +2686,9 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         if (EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
             await equinoxLocalControlApi.start();
         }
+        await cliBridge.start().catch(() => {
+            console.error("[Equinox Local] Optional agent CLI bridge is unavailable; core runtime remains active.");
+        });
         if (process.platform === "win32" && process.env.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
             process.stderr.write("[Equinox Windows supervisor] state=local-only-control-" +
                 (EQUINOX_LOCAL_CONFIG.controlCenter.enabled ? "ready" : "disabled") + ".\n");

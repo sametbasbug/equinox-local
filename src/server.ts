@@ -142,6 +142,7 @@ import {
 } from "./telegram-integration.js";
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
+import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
 import {
   registerAuthenticatedHttpTools,
 } from "./authenticated-http-tools.js";
@@ -3376,9 +3377,13 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     },
   }),
 });
+let cliDesktopInvocation: ((input: RuntimeBoundary) => Promise<unknown>) | null = null;
 const desktopCapabilityProvider = registerDesktopGatewayTools(({
   registerTextTool,
-  registerRawTool,
+  registerRawTool: (name: string, config: RuntimeBoundary, handler: (input: RuntimeBoundary) => Promise<unknown>, options: RuntimeBoundary) => {
+    if (name === "desktop_call") cliDesktopInvocation = handler;
+    return registerRawTool(name, config, handler, options);
+  },
   z,
   agentAccess: AGENT_ACCESS,
   desktopBridge,
@@ -3449,6 +3454,24 @@ registerStableCapabilityGateways({
   turnBudgetController,
 });
 
+const cliBridge = createEquinoxLocalCliBridge({
+  stateRoot: runtimePlatformPaths.stateRoot,
+  platform,
+  namespace: runtimeEnv.EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE || null,
+  registry: capabilityRegistry,
+  desktop: {
+    catalog: () => desktopCapabilityProvider.catalog(),
+    describe: (name: string) => desktopCapabilityProvider.describe(name),
+    invoke: async (operation: string, args: Record<string, unknown>) => {
+      if (!cliDesktopInvocation) throw new Error("Desktop capability is not registered.");
+      return cliDesktopInvocation({operation, arguments: args});
+    },
+  },
+  tasks: taskCapsuleStore,
+  chat: telegramChatBridgeController,
+  assertMutationAllowed: (name: string) => agentControl.assertMutationAllowed(name),
+});
+
 let localShutdownStarted = false;
 
 async function shutdownLocalResources({ reason = "api" } = {}) {
@@ -3479,6 +3502,7 @@ async function shutdownLocalResources({ reason = "api" } = {}) {
   await workflowManager.shutdown();
 
   await Promise.all([
+    cliBridge.close(),
     equinoxLocalControlApi?.close() ?? Promise.resolve(),
     equinoxBrowserBridge.close(),
     peekabooBridge.close(),
@@ -3580,6 +3604,9 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   if (EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
     await equinoxLocalControlApi.start();
   }
+  await cliBridge.start().catch(() => {
+    console.error("[Equinox Local] Optional agent CLI bridge is unavailable; core runtime remains active.");
+  });
   if (process.platform === "win32" && process.env.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
     process.stderr.write("[Equinox Windows supervisor] state=local-only-control-" +
       (EQUINOX_LOCAL_CONFIG.controlCenter.enabled ? "ready" : "disabled") + ".\n");

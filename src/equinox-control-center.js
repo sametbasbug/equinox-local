@@ -976,52 +976,59 @@ function renderUpdate() {
     renderSidebarUpdateNotice(update, main, mainChannel);
     const runningVersion = state.status?.server?.version;
     const runningSha = shortUpdateSha(main.currentSha || state.status?.installation?.sourceSha);
-  // Native Main uses the existing verified external installer; the UI only
-  // shows ordinary update status, not internal replacement mechanics.
-  if (signedNativeMain) {
-    const pending = Boolean(main.restartScheduledFor);
-    const busy = state.updateBusy || state.updateApplyBusy || Boolean(main.applying);
-    const updateAvailable = main.state === "behind" && main.applyAvailable === true && !main.applyError;
-    if (runningVersion) setText("sidebar-version", `${runningVersion}${runningSha ? ` - ${runningSha}` : ""}`);
-    mainMeta.hidden = true;
-    setText("update-version", current ? `Equinox Local ${current}${runningSha ? ` - ${runningSha}` : ""}` : "Version unavailable");
-    setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
-    if (pending) {
-      setText("update-title", "Updating Equinox Local");
-      setText("update-copy", "The update has started. The app may close and reopen.");
-      setBadge("update-badge", "Updating", "warn");
-    } else if (main.applyError) {
-      setText("update-title", "Update failed");
-      setText("update-copy", "The update could not start. Please try again.");
-      setBadge("update-badge", "Update failed", "bad");
-    } else if (busy) {
-      setText("update-title", state.updateBusy ? "Checking for updates" : "Starting update");
-      setText("update-copy", "");
-      setBadge("update-badge", state.updateBusy ? "Checking" : "Updating", "warn");
-    } else if (main.state === "behind") {
-      setText("update-title", "Update available");
-      setText("update-copy", "A new version of Equinox Local is available.");
-      setBadge("update-badge", "Update available", "good");
-    } else if (main.state === "up_to_date") {
-      setText("update-title", "Equinox Local is up to date");
-      setText("update-copy", "You're using the latest version.");
-      setBadge("update-badge", "Up to date", "good");
-    } else if (main.state === "unavailable") {
-      setText("update-title", "Unable to check for updates");
-      setText("update-copy", "Please try again later.");
-      setBadge("update-badge", "Check unavailable", "bad");
-    } else {
-      setText("update-title", "Check for updates");
-      setText("update-copy", "");
-      setBadge("update-badge", "Ready", "neutral");
+    // Native Main uses the existing verified external installer; the UI only
+    // shows ordinary update status, not internal replacement mechanics.
+    if (signedNativeMain) {
+        const pending = Boolean(main.restartScheduledFor);
+        const busy = state.updateBusy || state.updateApplyBusy || Boolean(main.applying);
+        const updateAvailable = main.state === "behind" && main.applyAvailable === true && !main.applyError;
+        if (runningVersion)
+            setText("sidebar-version", `${runningVersion}${runningSha ? ` - ${runningSha}` : ""}`);
+        mainMeta.hidden = true;
+        setText("update-version", current ? `Equinox Local ${current}${runningSha ? ` - ${runningSha}` : ""}` : "Version unavailable");
+        setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
+        if (pending) {
+            setText("update-title", "Updating Equinox Local");
+            setText("update-copy", "The update has started. The app may close and reopen.");
+            setBadge("update-badge", "Updating", "warn");
+        }
+        else if (main.applyError) {
+            setText("update-title", "Update failed");
+            setText("update-copy", "The update could not start. Please try again.");
+            setBadge("update-badge", "Update failed", "bad");
+        }
+        else if (busy) {
+            setText("update-title", state.updateBusy ? "Checking for updates" : "Starting update");
+            setText("update-copy", "");
+            setBadge("update-badge", state.updateBusy ? "Checking" : "Updating", "warn");
+        }
+        else if (main.state === "behind") {
+            setText("update-title", "Update available");
+            setText("update-copy", "A new version of Equinox Local is available.");
+            setBadge("update-badge", "Update available", "good");
+        }
+        else if (main.state === "up_to_date") {
+            setText("update-title", "Equinox Local is up to date");
+            setText("update-copy", "You're using the latest version.");
+            setBadge("update-badge", "Up to date", "good");
+        }
+        else if (main.state === "unavailable") {
+            setText("update-title", "Unable to check for updates");
+            setText("update-copy", "Please try again later.");
+            setBadge("update-badge", "Check unavailable", "bad");
+        }
+        else {
+            setText("update-title", "Check for updates");
+            setText("update-copy", "");
+            setBadge("update-badge", "Ready", "neutral");
+        }
+        checkButton.disabled = busy || pending;
+        checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : "Check for updates");
+        installButton.hidden = !updateAvailable && !busy && !pending;
+        installButton.disabled = busy || pending || !updateAvailable;
+        installButton.textContent = localizeUiText(busy || pending ? "Updating…" : "Update");
+        return;
     }
-    checkButton.disabled = busy || pending;
-    checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : "Check for updates");
-    installButton.hidden = !updateAvailable && !busy && !pending;
-    installButton.disabled = busy || pending || !updateAvailable;
-    installButton.textContent = localizeUiText(busy || pending ? "Updating…" : "Update");
-    return;
-  }
     if (runningVersion)
         setText("sidebar-version", `${runningVersion}${mainChannel && runningSha ? ` - ${runningSha}` : ""}`);
     mainMeta.hidden = !mainChannel;
@@ -3425,13 +3432,21 @@ async function checkForUpdates() {
         if (mainChannel) {
             const main = state.update?.main || {};
             if (main.mode === "signed-native") {
-                if (main.state === "behind") showToast("Update available.");
-                else if (main.state === "up_to_date") showToast("Equinox Local is up to date.");
-                else if (main.state === "unavailable") showToast("Unable to check for updates.");
-            } else if (main.state === "behind") showToast("A verified Main snapshot update is available.");
-            else if (main.state === "up_to_date") showToast("Main snapshot is up to date.");
-            else if (main.state === "unavailable") showToast("Main update check is unavailable; no up-to-date result was assumed.");
-            else showToast("Main source identity check finished.");
+                if (main.state === "behind")
+                    showToast("Update available.");
+                else if (main.state === "up_to_date")
+                    showToast("Equinox Local is up to date.");
+                else if (main.state === "unavailable")
+                    showToast("Unable to check for updates.");
+            }
+            else if (main.state === "behind")
+                showToast("A verified Main snapshot update is available.");
+            else if (main.state === "up_to_date")
+                showToast("Main snapshot is up to date.");
+            else if (main.state === "unavailable")
+                showToast("Main update check is unavailable; no up-to-date result was assumed.");
+            else
+                showToast("Main source identity check finished.");
         }
         else {
             if (state.update?.updateAvailable)
