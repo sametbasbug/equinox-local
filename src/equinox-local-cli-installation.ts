@@ -99,7 +99,16 @@ export async function installEquinoxLocalCli({platform = process.platform,homeDi
     // CMD callers retain the .cmd shim and can use --args-file for JSON.
     const scriptNode = `$env:LOCALAPPDATA\\Equinox Local\\${api.relative(installRoot,nodePath)}`;
     const scriptCli = `$env:LOCALAPPDATA\\Equinox Local\\${api.relative(installRoot,cliPath)}`;
-    await fs.writeFile(pwshLauncher, `& "${scriptNode}" "${scriptCli}" @args\r\nexit $LASTEXITCODE\r\n`,{mode:0o600});
+    const psScript = [
+      // Windows PowerShell 5.1 strips literal nested JSON quotes when passing
+      // native arguments; PowerShell 7+ already preserves them via @args.
+      '$nativeArgs = if ($PSVersionTable.PSVersion.Major -lt 7) {',
+      `  @($args | ForEach-Object { $_.Replace('"', '\\"') })`,
+      '} else { $args }',
+      `& "${scriptNode}" "${scriptCli}" @nativeArgs`,
+      'exit $LASTEXITCODE',
+    ].join("\r\n") + "\r\n";
+    await fs.writeFile(pwshLauncher, psScript,{mode:0o600});
     await windowsPath(bin,true,env);
     return {installed:true,launcher,pwshLauncher};
   }

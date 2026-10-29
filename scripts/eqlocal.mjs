@@ -125,6 +125,11 @@ async function initialReceipt(task, candidate, timeoutSeconds = 120) {
 
 async function main() {
   const {positional: pos, options: opt} = parseOptions(args);
+  // Reject bad waits BEFORE any browser mutation; the caller must not get a
+  // validation error after the message was already sent successfully.
+  if (opt.timeout !== undefined && (!/^[0-9]+$/.test(opt.timeout) || Number(opt.timeout) < 1 || Number(opt.timeout) > 600)) {
+    throw new Error('Timeout must be between 1 and 600 seconds.');
+  }
   const [group, command, third, fourth] = pos;
   if (fourth !== undefined) throw new Error('Too many positional arguments. Run eqlocal --help.');
   if (!group || group === 'help' || opt.help) {process.stdout.write(HELP); return;}
@@ -155,7 +160,7 @@ async function main() {
     const requestId = opt.requestId || randomBytes(12).toString('hex');
     pendingRequestId = requestId;
     const receipt = await request({action: 'chat.send', task: required(opt.task, '--task'), message, requestId, ...(opt.agent ? {agent: opt.agent} : {})});
-    result = opt.wait ? await poll(opt.task, receipt, opt.timeout || 120) : receipt;
+    result = opt.wait && receipt?.confirmed ? await poll(opt.task, receipt, opt.timeout || 120) : receipt;
   } else if (group === 'chat' && ['read', 'wait'].includes(command)) {
     const receipt = opt.receipt ? JSON.parse(opt.receipt) : {userEpoch: required(opt.userEpoch, '--user-epoch'), previousAssistantTurnKey: opt.previousTurn === 'null' ? null : required(opt.previousTurn, '--previous-turn')};
     result = command === 'wait' ? await poll(required(opt.task, '--task'), receipt, opt.timeout || 120)
