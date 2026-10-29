@@ -55,6 +55,9 @@ The Browser response reader currently returns at most 12,000 characters of the l
 
 - Completed in source: signed Main install writes `eqlocal` shims that invoke **the product-owned pinned Node**, not global Node/npm; uninstall removes the exact owned shims. macOS installs `~/.local/bin/eqlocal` and a marked PATH line in `~/.zprofile`; Windows installs `<LOCALAPPDATA>\Equinox Local\bin\eqlocal.cmd` and adds that directory to current-user PATH. Newly opened terminals pick up the PATH update.
 - Verified in development: an unsigned darwin-arm64 native release archive was built by the product packager from `7658433`, validated with all 150 source files, and its temporary artifacts removed. This is not equivalent to a signed native install or Windows acceptance.
+- Verified live: neutral `chat start --wait` returned exact `EQL_CLI_READY` without creating another Task. The temporary Task and tab were removed.
+- Verified isolated macOS native package lifecycle: bundled pinned Node v26.12.1, CLI launch, reinstall and PATH/uninstall cleanup. Candidate is unsigned, not a production install.
+- All four native candidate builds passed on [CI run #40891590509](https://github.com/sametbasbug/equinox-local/actions/runs/40891590509); production publication was skipped.
 - Still required: real macOS and Windows managed-install verification: status, dynamic tool catalog, Task Chat create/send/read/wait, refusal on stale identity, no double submit, native shell invocation, and update/reinstall preservation.
 - Check the independent browser extension's current Chat Bridge version; do not modify CWS packaging without a separate browser release.
 - Later: MCP transport for agent callers may delegate to this same local dispatcher without duplicating feature implementations.

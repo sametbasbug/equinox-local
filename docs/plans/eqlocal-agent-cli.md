@@ -76,3 +76,11 @@ Known constraints: browser context must be connected and user-consented, Chrome/
 - Built an actual unsigned **darwin-arm64 native managed release** from clean commit `7658433b76cc51f8087814d861aaf4fffd597f9e` using the production packager in an OS-temp directory. Packager passed its complete native release validation; 150 source files; archive 145,611,874 bytes; SHA-256 `f55fe6861d939ca986a863610c66ce96f2e7aadda51ed2fc5e23a977a430b507`. Temporary archive and directory deleted automatically. This is NOT a signed release, installed public copy, or macOS clean-install acceptance.
 - Examined the existing exact-SHA candidate-only CI path: manually dispatched `ci.yml` on a feature branch can compile all four native targets (darwin-arm64/x64 + win32-arm64/x64) without publishing; production deployment jobs explicitly require a push to `main`. A single consolidated native candidate gate is preferable to running Actions on every change.
 - Still pending: actual Windows/macOS signed managed **install** verification (not just packaging), source-restart verification of neutral CLI chat start, CWS extension multiline update, and production publish only after validated delivery.
+
+## Checkpoint 8: live acceptance
+
+- Mac Factory restart verified: 6.3.1 healthy (10/10), 131 capabilities, source SHA `9ae5f46`.
+- Isolated task `task-dbe7a19f-5`: `eqlocal chat start --wait` received exact `EQL_CLI_READY`, ready and untruncated; no recursive tasks. The task was finished/deleted and its sole test tab closed.
+- From a real unsigned darwin-arm64 native package, bundled Node v26.12.1 successfully ran the CLI launcher. Isolated install, reinstall, uninstall and PATH cleanup passed. All temporary files removed.
+- Four-target candidate build #40891590509 passed; production publishers skipped. Draft PR #315 CodeQL/security and docs checks passed.
+- Actual signed installer acceptance on both platforms, plus separate Chrome Web Store release of multiline Browser fix, remain outstanding.
