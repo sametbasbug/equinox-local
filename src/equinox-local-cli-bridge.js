@@ -44,6 +44,7 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
     let socketPath = null;
     let session = null;
     const inflight = new Set();
+    const connections = new Set();
     async function summary() {
         const base = registry.summary();
         let extra;
@@ -185,6 +186,8 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
             }
         }
         const instance = net.createServer((socket) => {
+            connections.add(socket);
+            socket.once("close", () => connections.delete(socket));
             socket.setTimeout(150_000, () => socket.destroy());
             socket.setEncoding("utf8");
             let input = "";
@@ -250,6 +253,10 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
         if (!instance)
             return;
         server = null;
+        // Shutdown must not wait for a long-running CLI request. Its client
+        // receives a disconnect and can recover with its recorded receipt.
+        for (const connection of connections)
+            connection.destroy();
         await new Promise((resolve) => instance.close(() => resolve()));
         const snapshot = await fs.readFile(discoveryPath, "utf8").catch(() => "");
         try {

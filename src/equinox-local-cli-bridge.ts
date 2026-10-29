@@ -48,6 +48,7 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
   let socketPath: string | null = null;
   let session: string | null = null;
   const inflight = new Set<string>();
+  const connections = new Set<net.Socket>();
 
   async function summary() {
     const base = registry.summary() as {operationCount?: number;domains?: Array<Record<string, unknown>>};
@@ -165,6 +166,8 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
       }
     }
     const instance = net.createServer((socket) => {
+      connections.add(socket);
+      socket.once("close", () => connections.delete(socket));
       socket.setTimeout(150_000, () => socket.destroy());
       socket.setEncoding("utf8");
       let input = "";
@@ -209,6 +212,9 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
     const instance = server;
     if (!instance) return;
     server = null;
+    // Shutdown must not wait for a long-running CLI request. Its client
+    // receives a disconnect and can recover with its recorded receipt.
+    for (const connection of connections) connection.destroy();
     await new Promise<void>((resolve) => instance.close(() => resolve()));
     const snapshot = await fs.readFile(discoveryPath, "utf8").catch(() => "");
     try {if (snapshot && JSON.parse(snapshot).token === session) await fs.unlink(discoveryPath);} catch {}
