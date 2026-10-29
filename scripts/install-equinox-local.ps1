@@ -356,12 +356,20 @@ function Preserve-ExistingEquinoxExecutables([string]$InstallRoot) {
   }
   $entries = @(Get-ExecutableReplacementPaths $InstallRoot)
   foreach ($entry in $entries) { Get-NormalExistingEntry ([string]$entry.Path) | Out-Null }
-  $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
-  Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
-  $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry ([string]$_.Path)) })
-  # Even a fresh install with no previous A needs an owned recovery marker:
-  # otherwise a failed first B installation leaves partial executables.
+  # Prepare recovery BEFORE stopping an otherwise healthy installed service.
+  # This directory can fail to be created (permissions, disk full, etc.).
+  # Even a fresh install with no A needs a marker to clean failed B programs.
   [IO.Directory]::CreateDirectory($savedRoot) | Out-Null
+  $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
+  try {
+    Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
+  } catch {
+    # No old program was moved yet. Avoid leaving an empty recovery marker
+    # that would otherwise block the next attempt.
+    Remove-Item -LiteralPath $savedRoot -Force -ErrorAction SilentlyContinue
+    throw
+  }
+  $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry ([string]$_.Path)) })
   try {
     foreach ($entry in $present) {
       Move-Item -LiteralPath ([string]$entry.Path) -Destination (Join-Path $savedRoot ([string]$entry.Name)) -ErrorAction Stop
