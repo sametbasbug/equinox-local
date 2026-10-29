@@ -143,6 +143,7 @@ import {
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
 import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
+import { installEquinoxLocalCli } from "./equinox-local-cli-installation.js";
 import {
   registerAuthenticatedHttpTools,
 } from "./authenticated-http-tools.js";
@@ -3607,6 +3608,49 @@ async function start({ transport = new StdioServerTransport() } = {}) {
   await cliBridge.start().catch(() => {
     console.error("[Equinox Local] Optional agent CLI bridge is unavailable; core runtime remains active.");
   });
+  // A signed Main B activation (or exact A rollback) changes the immutable
+  // release directory. Refresh the optional CLI launcher only after the
+  // detached owner has released active.json and the signed selector/pointer
+  // still authenticates THIS running process. Never participate in A/B
+  // switching or let a PATH/launcher failure block the healthy runtime.
+  if (equinoxLocalInstallation.kind === "managed-main") {
+    const refreshManagedCli = async (attempt = 0): Promise<void> => {
+      try {
+        const transactionRoot = equinoxLocalInstallation.mainTransactionRoot as string;
+        const marker = await fs.lstat(path.join(transactionRoot, "active.json")).catch((error:NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        if (marker) throw new Error("Signed Main update is still owned by its active handoff.");
+        const current = await resolveEquinoxLocalManagedSourceInstallation({
+          baseInstallation: equinoxLocalBaseInstallation,
+          platform, arch, homeDir: runtimeHomeDir, env: runtimeEnv,
+        });
+        if (current?.kind !== "managed-main" ||
+            current.mainNativeSha !== equinoxLocalInstallation.mainNativeSha ||
+            current.releaseDir !== equinoxLocalInstallation.releaseDir) {
+          throw new Error("Running Main release no longer matches the signed native pointer.");
+        }
+        // A new update can begin during the async signed-identity check.
+        if (await fs.lstat(path.join(transactionRoot, "active.json")).then(() => true,
+          (error:NodeJS.ErrnoException) => error.code === "ENOENT" ? false : Promise.reject(error))) {
+          throw new Error("Signed Main handoff began while checking the CLI launcher.");
+        }
+        await installEquinoxLocalCli({
+          platform, homeDir: runtimeHomeDir,
+          installRoot: equinoxLocalBaseInstallation.installRoot!, releaseDir: current.releaseDir!, env: runtimeEnv,
+        });
+      } catch (error) {
+        if (attempt < 5) {
+          setTimeout(() => { void refreshManagedCli(attempt + 1); }, 45_000).unref?.();
+        } else {
+          console.error("[Equinox Local] Optional CLI launcher reconciliation could not verify the active signed Main release: " +
+            (error instanceof Error ? error.message : String(error)));
+        }
+      }
+    };
+    setTimeout(() => { void refreshManagedCli(); }, 15_000).unref?.();
+  }
   if (process.platform === "win32" && process.env.EQUINOX_LOCAL_SUPERVISOR_MODE === "local-only") {
     process.stderr.write("[Equinox Windows supervisor] state=local-only-control-" +
       (EQUINOX_LOCAL_CONFIG.controlCenter.enabled ? "ready" : "disabled") + ".\n");
