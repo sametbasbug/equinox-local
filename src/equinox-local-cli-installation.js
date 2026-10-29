@@ -109,9 +109,10 @@ export async function installEquinoxLocalCli({ platform = process.platform, home
         const psScript = [
             // Windows PowerShell 5.1 strips literal nested JSON quotes when passing
             // native arguments; PowerShell 7+ already preserves them via @args.
-            '$nativeArgs = if ($PSVersionTable.PSVersion.Major -lt 7) {',
-            `  @($args | ForEach-Object { $_.Replace('"', '\\"') })`,
-            '} else { $args }',
+            '$nativeArgs = @($args)',
+            'if ($PSVersionTable.PSVersion.Major -lt 7) {',
+            `  $nativeArgs = @($args | ForEach-Object { $_.Replace('"', '\\"') })`,
+            '}',
             `& "${scriptNode}" "${scriptCli}" @nativeArgs`,
             'exit $LASTEXITCODE',
         ].join("\r\n") + "\r\n";
