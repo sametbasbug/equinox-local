@@ -145,7 +145,45 @@ prepare_verified_main() {
 
 TEMP_ROOT="$(/usr/bin/mktemp -d /tmp/equinox-local-install.XXXXXX)" || fail "could not create a private temporary directory"
 
+# Preserve the previous product-owned executable roots until the exact signed
+# replacement has returned its healthy completion receipt. This is failure
+# recovery for the SAME installer, not a separate updater or version rollback.
+REINSTALL_BACKUP_ROOT=""
+REINSTALL_BACKUP_OWNED=false
+REINSTALL_COMMITTED=false
+# These are only the product-owned executables/launchers that the signed
+# bootstrap rewrites. User configuration, TCC grants and download data stay.
+owned_executable_path() {
+  case "$1" in
+    current|releases|runtime|main-update|equinox-local-app-runtime|equinox-browser-native-host)
+      printf '%s/%s' "$INSTALL_ROOT" "$1" ;;
+    control-center-app) printf '%s' "$CONTROL_CENTER_APP" ;;
+    launch-agent) printf '%s' "$HOME_DIR/Library/LaunchAgents/dev.equinox.local.plist" ;;
+    native-host-manifest) printf '%s' "$HOME_DIR/Library/Application Support/Google/Chrome/NativeMessagingHosts/dev.equinox.browser.json" ;;
+    *) return 1 ;;
+  esac
+}
+REINSTALL_EXECUTABLES=(current releases runtime main-update control-center-app equinox-local-app-runtime launch-agent equinox-browser-native-host native-host-manifest)
 cleanup() {
+  if [ "$REINSTALL_COMMITTED" != true ] && [ "$REINSTALL_BACKUP_OWNED" = true ] &&
+     [ -n "$REINSTALL_BACKUP_ROOT" ] &&
+     [ -d "$REINSTALL_BACKUP_ROOT" ] && [ ! -L "$REINSTALL_BACKUP_ROOT" ]; then
+    # The new launchd process may be running even if its health check failed.
+    /bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+    for entry in "${REINSTALL_EXECUTABLES[@]}"; do
+      saved="$REINSTALL_BACKUP_ROOT/$entry"
+      if [ -e "$saved" ] || [ -L "$saved" ]; then
+        current="$(owned_executable_path "$entry")"
+        /bin/rm -rf "$current" && /bin/mv "$saved" "$current" ||
+          printf 'Equinox Local installer: recovery failed; preserved %s at %s\n' "$entry" "$saved" >&2
+      fi
+    done
+    if [ -z "$(/bin/ls -A "$REINSTALL_BACKUP_ROOT" 2>/dev/null)" ]; then
+      /bin/rmdir "$REINSTALL_BACKUP_ROOT" || true
+      /bin/launchctl bootstrap "gui/$CURRENT_UID" "$HOME_DIR/Library/LaunchAgents/dev.equinox.local.plist" >/dev/null 2>&1 || true
+      /bin/launchctl kickstart "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+    fi
+  fi
   /bin/rm -rf "$TEMP_ROOT" 2>/dev/null || true
 }
 
@@ -161,19 +199,37 @@ prepare_verified_main
 info "replacing product executables with signed Main (settings preserved)"
 INSTALL_ROOT="$HOME_DIR/Library/Application Support/Equinox Local"
 require_private_directory "$INSTALL_ROOT"
-# Stop only the product's launchd service; never interrupt other processes.
-/bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
 # Never remove user state/config, workspace, secrets, downloads or logs.
-# The immutable native store and old Git source are executable caches too.
-for entry in current releases runtime main-update; do
-  old="$INSTALL_ROOT/$entry"
+# Native executable roots are retained by same-volume rename. If the new
+# signed installer or its health receipt fails, the EXIT handler restores A.
+REINSTALL_BACKUP_ROOT="$INSTALL_ROOT/.equinox-main-reinstall-preserved"
+if [ -e "$REINSTALL_BACKUP_ROOT" ] || [ -L "$REINSTALL_BACKUP_ROOT" ]; then
+  fail "previous interrupted installation may be recoverable; refusing to replace $REINSTALL_BACKUP_ROOT"
+fi
+# Reject unsafe prior entries BEFORE stopping the currently healthy service.
+for entry in "${REINSTALL_EXECUTABLES[@]}"; do
+  old="$(owned_executable_path "$entry")"
+  if [ -L "$old" ] && [ "$entry" != "current" ]; then
+    fail "unsafe prior executable entry: $entry"
+  fi
+  if [ -e "$old" ] || [ -L "$old" ]; then
+    [ "$(/usr/bin/stat -f '%u' "$old" 2>/dev/null)" = "$CURRENT_UID" ] ||
+      fail "prior executable belongs to another user: $entry"
+  fi
+done
+# Stop only the product's launchd service after the above fail-closed checks.
+/bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+/bin/mkdir -m 700 "$REINSTALL_BACKUP_ROOT" || fail "cannot preserve previous executable roots"
+REINSTALL_BACKUP_OWNED=true
+for entry in "${REINSTALL_EXECUTABLES[@]}"; do
+  old="$(owned_executable_path "$entry")"
   if [ -L "$old" ] && [ "$entry" != "current" ]; then
     fail "unsafe prior executable directory: $entry"
   fi
   if [ -e "$old" ] || [ -L "$old" ]; then
     [ "$(/usr/bin/stat -f '%u' "$old" 2>/dev/null)" = "$CURRENT_UID" ] ||
       fail "prior executable belongs to another user: $entry"
-    /bin/rm -rf "$old" || fail "could not retire previous executable: $entry"
+    /bin/mv "$old" "$REINSTALL_BACKUP_ROOT/$entry" || fail "could not preserve previous executable: $entry"
   fi
 done
 MAIN_NODE="$TEMP_ROOT/node-v$MAIN_NODE_VERSION-$TARGET/bin/node"
@@ -184,7 +240,11 @@ MAIN_POINTER="$TEMP_ROOT/main-signed-pointer.json"
   TMPDIR="/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
   "$MAIN_NODE" "$MAIN_INSTALLER" --install-main-fresh \
   --signed-pointer-file "$MAIN_POINTER" --archive "$MAIN_ARCHIVE" ||
-  fail "fresh signed Main installation failed; settings retained, rerun the same installer"
+  fail "fresh signed Main installation failed; attempting to restore previous executables"
+REINSTALL_COMMITTED=true
+# Cleanup failures never invalidate a healthy exact-SHA signed installation.
+/bin/rm -rf "$REINSTALL_BACKUP_ROOT" ||
+  info "old executable cleanup deferred: $REINSTALL_BACKUP_ROOT"
 info "signed Main installation is healthy; opening Equinox Local"
 if [ -d "$CONTROL_CENTER_APP" ] && [ ! -L "$CONTROL_CENTER_APP" ]; then
   /usr/bin/open "$CONTROL_CENTER_APP" >/dev/null 2>&1 || true
