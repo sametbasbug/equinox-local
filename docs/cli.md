@@ -1,6 +1,6 @@
 # `eqlocal` — agent-first local CLI (development)
 
-`eqlocal` is a JSON-first command-line client for the **existing running** Equinox Local runtime. It does not launch a second agent or provide a new ChatGPT API. The current implementation is on the development branch; managed-install PATH launcher and real macOS/Windows acceptance are separate pending distribution work. It is not a released user feature yet.
+`eqlocal` is a JSON-first command-line client for the **existing running** Equinox Local runtime. It does not launch a second agent or provide a new ChatGPT API. The current implementation is on the development branch; managed-install PATH launcher is implemented but real macOS/Windows acceptance remains pending. It is not a released user feature yet.
 
 ## Contract
 
@@ -22,7 +22,7 @@ $ eqlocal call runtime.terminal_exec --args '{"project":"home","command":"pwd","
 $ eqlocal call runtime.task_list --args-file -
 ```
 
-`tools list <domain>` and `tools describe domain.operation` use the **live** capability catalog, including input JSON Schemas. The generic `call` command delegates to the same tool handler as ChatGPT; operation errors retain their existing boundaries. For cross-platform commands, use the `shell` and argument schema returned by the connected host rather than assuming POSIX syntax on Windows.
+`tools list` also discovers the `desktop` domain when available. `tools list <domain>` and `tools describe domain.operation` use the **live** capability catalog, including input JSON Schemas. The generic `call` command delegates to the same tool handler as ChatGPT; operation errors retain their existing boundaries. For cross-platform commands, use the `shell` and argument schema returned by the connected host rather than assuming POSIX syntax on Windows.
 
 ## Tasks & Chat
 
@@ -45,7 +45,7 @@ The Browser response reader currently returns at most 12,000 characters of the l
 
 ## Roadmap / acceptance still needed
 
-- Publish platform-specific PATH launchers that invoke **the product-owned pinned Node**, not a user-installed global Node/npm. Include them in the signed OS installers and remove only the owned shims on uninstall.
-- Real macOS and Windows managed-install verification: status, dynamic tool catalog, Task Chat create/send/read/wait, refusal on stale identity, no double submit, native shell invocation, and update/reinstall preservation.
+- Completed in source: signed Main install writes `eqlocal` shims that invoke **the product-owned pinned Node**, not global Node/npm; uninstall removes the exact owned shims. macOS installs `~/.local/bin/eqlocal` and a marked PATH line in `~/.zprofile`; Windows installs `<LOCALAPPDATA>\Equinox Local\bin\eqlocal.cmd` and adds that directory to current-user PATH. Newly opened terminals pick up the PATH update.
+- Still required: real macOS and Windows managed-install verification: status, dynamic tool catalog, Task Chat create/send/read/wait, refusal on stale identity, no double submit, native shell invocation, and update/reinstall preservation.
 - Check the independent browser extension's current Chat Bridge version; do not modify CWS packaging without a separate browser release.
 - Later: MCP transport for agent callers may delegate to this same local dispatcher without duplicating feature implementations.

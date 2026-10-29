@@ -83,7 +83,7 @@ async function request(payload) {
     socket.on('data', (data) => {
       if (settled) return;
       buffer += data.toString('utf8');
-      if (buffer.length > 512 * 1024) {fail(new Error('CLI response exceeds 512 KiB.')); return;}
+      if (buffer.length > 8 * 1024 * 1024) {fail(new Error('CLI response exceeds 8 MiB.')); return;}
       const newline = buffer.indexOf('\n');
       if (newline < 0) return;
       try {

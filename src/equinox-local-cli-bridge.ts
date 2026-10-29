@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import { equinoxBrowserSocketDirectory, prepareEquinoxBrowserSocketDirectory } from "./equinox-browser-socket.js";
+import { prepareEquinoxBrowserSocketDirectory } from "./equinox-browser-socket.js";
 
 type JsonRecord = Record<string, any>;
 type Dependencies = {
@@ -16,7 +16,7 @@ type Dependencies = {
   assertMutationAllowed: (operation: string) => void;
 };
 const MAX_REQUEST_BYTES = 128 * 1024;
-const MAX_RESPONSE_BYTES = 512 * 1024;
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const TASK_ID = /^task-[a-z0-9-]{6,80}$/u;
 const OPERATION = /^[a-z][a-z0-9_.-]{0,159}$/u;
 
@@ -49,11 +49,23 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
   let session: string | null = null;
   const inflight = new Set<string>();
 
+  async function summary() {
+    const base = registry.summary() as {operationCount?: number;domains?: Array<Record<string, unknown>>};
+    let extra: Record<string, unknown>;
+    try {
+      const catalog = await desktop.catalog() as {label?: string;count?: number};
+      extra = {domain:"desktop",label:catalog.label || "Desktop",count:catalog.count || 0,callTool:"desktop_call"};
+    } catch {
+      extra = {domain:"desktop",label:"Desktop",count:0,callTool:"desktop_call",available:false};
+    }
+    return {...base,operationCount:(base.operationCount || 0) + Number(extra.count || 0),domains:[...(base.domains || []),extra]};
+  }
+
   async function dispatch(input: JsonRecord): Promise<unknown> {
     const action = requiredString(input.action, "action", 64);
-    if (action === "status") return {connected: true, protocol: 1, capabilities: registry.summary()};
+    if (action === "status") return {connected: true, protocol: 1, capabilities: await summary()};
     if (action === "tools.list") {
-      if (input.domain === undefined) return registry.summary();
+      if (input.domain === undefined) return summary();
       const domain = requiredString(input.domain, "domain", 32);
       return domain === "desktop" ? desktop.catalog() : registry.catalog(domain);
     }
@@ -170,7 +182,7 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
             response = {ok: false, error: {code: typeof (error as any)?.code === "string" ? (error as any).code : "CLI_ERROR", message: error instanceof Error ? error.message.slice(0, 800) : "CLI request failed."}};
           }
           const data = JSON.stringify(response);
-          if (Buffer.byteLength(data) > MAX_RESPONSE_BYTES) socket.end(JSON.stringify({ok: false, error: {code: "RESPONSE_TOO_LARGE", message: "CLI response exceeds 512 KiB."}}) + "\n");
+          if (Buffer.byteLength(data) > MAX_RESPONSE_BYTES) socket.end(JSON.stringify({ok: false, error: {code: "RESPONSE_TOO_LARGE", message: "CLI response exceeds 8 MiB."}}) + "\n");
           else socket.end(data + "\n");
         })();
       });

@@ -29,3 +29,11 @@ Known constraints: browser context must be connected and user-consented, Chrome/
 - Implemented: shared private IPC JSON protocol, machine-first `scripts/eqlocal.mjs` parser, live tools catalogue/describe/invoke (including desktop via its existing handler), Tasks create/list/read/finish/cancel, exact Task Chat start/send/read/wait, `--request-id`, agent attribution, response receipts and polling, README/architecture/CLI docs, release source packaging inclusion.
 - Validated: Node syntax, TypeScript typecheck, generated runtime pairing and static JavaScript/shell source check. No tests were added or run.
 - Remaining: signed-install PATH wrappers using pinned Node on macOS/Windows; real device integration and lifecycle checks; source/runtime + browser update acceptance; public PR/release if authorized. The existing live installation has **not** been updated.
+
+## Progress — native launchers implemented (checkpoint 2)
+
+- Main installer now creates an owned `eqlocal` launcher pointing at the pinned Node and bundled CLI entrypoint after the new signed runtime is verified healthy. macOS uses `~/.local/bin/eqlocal` plus a marked zprofile PATH line; Windows uses a current-user PATH registry entry and `eqlocal.cmd` under the product install root. Same reinstall path refreshes launcher; uninstall removes owned entries. CLI launcher failures are reported without invalidating a healthy main runtime.
+- Manual temporary-home, isolated IPC proof succeeded for status, tools describe/call, task create, chat start/send/wait and JSON response; temporary artifacts removed.
+- Remaining: real macOS and Windows managed install CLI acceptance and live ChatGPT Browser-backed turn, plus runtime/package/Windows PowerShell validation, final docs/commit.
+
+- Final packaging audit: generated `scripts/release/package-managed-release.mjs` was initially stale. Regenerated tooling and verified all 150 signed-release source files include `scripts/eqlocal.mjs`, `src/equinox-local-cli-bridge.js` and `src/equinox-local-cli-installation.js`. Mac temporary-home launcher/reinstall/uninstall proof succeeded; Windows tool session currently unavailable.

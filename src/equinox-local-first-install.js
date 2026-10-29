@@ -17,6 +17,7 @@ import { inspectEquinoxLocalMainNativeStoredRelease } from "./equinox-local-main
 import { validateManagedSourceInstallStamp } from "./equinox-local-main-update.js";
 import { readEquinoxLocalMainNativePointer, writeEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { createEquinoxLocalMainMacCurrentLinkTransition } from "./equinox-local-main-native-pointer-transition.js";
+import { installEquinoxLocalCli } from "./equinox-local-cli-installation.js";
 import { validateTrustedMainInstallPointer } from "./equinox-local-main-install-pointer.js";
 import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-pointer.js";
 import { reconcileWindowsClassicRepairJournal, writeWindowsClassicRepairJournal, } from "./equinox-local-windows-classic-repair-journal.js";
@@ -1949,9 +1950,16 @@ export async function installFreshSignedMainRelease({ signedPointer, sourceArchi
         // Keep the bound: 180 polls x 500ms = at most 90s for fresh installs.
         attempts: platform === "win32" ? 180 : 40,
     });
+    const cliInstalled = await installEquinoxLocalCli({ homeDir, platform, installRoot: paths.installRoot, releaseDir: staged.releaseDir, env })
+        .then(() => true).catch((error) => {
+        // A CLI PATH registration failure must not turn a healthy signed Main
+        // install into a failed/partially reinstalled application.
+        console.error(`[Equinox Local] CLI launcher unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+    });
     return Object.freeze({ status: "installed", channel: "main",
         version: signed.version, sourceSha: signed.sourceSha, target,
-        configCreated: bootstrap.configCreated });
+        configCreated: bootstrap.configCreated, cliInstalled });
 }
 function parseCli(argv) {
     if ((argv.length !== 2 && argv.length !== 3) || argv[0] !== "--staged-release" || !path.isAbsolute(argv[1]) ||
