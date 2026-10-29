@@ -73,6 +73,42 @@ async function updateMacProfile(homeDir, add) {
         return;
     await fs.writeFile(profile, source, { mode: stat ? stat.mode & 0o777 : 0o600 });
 }
+// Source-checkout/Factory runtimes already host the authenticated local CLI
+// bridge, but have no signed native release tree. Bind the launcher to the
+// exact running source script and running Node binary, not to ambient PATH.
+export async function installEquinoxLocalSourceCli({ homeDir, installRoot, sourceCliPath, nodeExecutable }) {
+    if (process.platform !== "darwin" || !path.posix.isAbsolute(installRoot) ||
+        !path.posix.isAbsolute(sourceCliPath) || !path.posix.isAbsolute(nodeExecutable)) {
+        throw new Error("Source CLI installation requires absolute macOS runtime paths.");
+    }
+    const cliPath = await fs.realpath(sourceCliPath);
+    const nodePath = await fs.realpath(nodeExecutable);
+    if (cliPath !== sourceCliPath || !await normalFileOrAbsent(cliPath) ||
+        !await normalFileOrAbsent(nodePath)) {
+        throw new Error("Source CLI entrypoint or running Node is not a normal file.");
+    }
+    return installMacCliLauncher({ homeDir, installRoot, nodePath, cliPath });
+}
+async function installMacCliLauncher({ homeDir, installRoot, nodePath, cliPath }) {
+    const bin = path.posix.join(installRoot, "bin");
+    await normalDir(bin);
+    const launcher = path.posix.join(bin, "eqlocal");
+    await normalFileOrAbsent(launcher);
+    await fs.writeFile(launcher, `#!/bin/sh\nexec ${quoteShell(nodePath)} ${quoteShell(cliPath)} "$@"\n`, { mode: 0o700 });
+    await fs.chmod(launcher, 0o700);
+    const userBin = path.posix.join(homeDir, ".local", "bin");
+    await normalDir(userBin);
+    const userCommand = path.posix.join(userBin, "eqlocal");
+    const stat = await fs.lstat(userCommand).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error));
+    if (stat) {
+        if (!stat.isSymbolicLink() || await fs.readlink(userCommand) !== launcher)
+            throw new Error("Another application owns ~/.local/bin/eqlocal.");
+    }
+    else
+        await fs.symlink(launcher, userCommand);
+    await updateMacProfile(homeDir, true);
+    return { installed: true, launcher: userCommand };
+}
 export async function installEquinoxLocalCli({ platform = process.platform, homeDir, installRoot, releaseDir, env = process.env }) {
     if (!releaseDir)
         throw new Error("Signed release directory is required for CLI installation.");
@@ -84,8 +120,8 @@ export async function installEquinoxLocalCli({ platform = process.platform, home
             throw new Error(`Signed CLI release component is unavailable: ${api.basename(file)}`);
     }
     const bin = api.join(installRoot, "bin");
-    await normalDir(bin);
     if (platform === "win32") {
+        await normalDir(bin);
         // Avoid embedding Unicode usernames in a CMD file (legacy code-page decoding).
         // The installed native release is always below the signed-in user's LOCALAPPDATA.
         const prefix = `${api.normalize(installRoot)}\\`;
@@ -122,22 +158,7 @@ export async function installEquinoxLocalCli({ platform = process.platform, home
     }
     if (platform !== "darwin")
         throw new Error("Unsupported CLI installation platform.");
-    const launcher = api.join(bin, "eqlocal");
-    await normalFileOrAbsent(launcher);
-    await fs.writeFile(launcher, `#!/bin/sh\nexec ${quoteShell(nodePath)} ${quoteShell(cliPath)} "$@"\n`, { mode: 0o700 });
-    await fs.chmod(launcher, 0o700);
-    const userBin = api.join(homeDir, ".local", "bin");
-    await normalDir(userBin);
-    const userCommand = api.join(userBin, "eqlocal");
-    const stat = await fs.lstat(userCommand).catch((error) => error.code === "ENOENT" ? null : Promise.reject(error));
-    if (stat) {
-        if (!stat.isSymbolicLink() || await fs.readlink(userCommand) !== launcher)
-            throw new Error("Another application owns ~/.local/bin/eqlocal.");
-    }
-    else
-        await fs.symlink(launcher, userCommand);
-    await updateMacProfile(homeDir, true);
-    return { installed: true, launcher: userCommand };
+    return installMacCliLauncher({ homeDir, installRoot, nodePath, cliPath });
 }
 export async function removeEquinoxLocalCli({ platform = process.platform, homeDir, installRoot, env = process.env }) {
     const api = platform === "win32" ? path.win32 : path.posix;
