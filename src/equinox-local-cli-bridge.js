@@ -106,7 +106,7 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
                 throw new Error("A CLI chat operation is in progress for this task.");
             inflight.add(id);
             try {
-                const task = await tasks.read(id);
+                const task = await tasks.readInternal(id);
                 if (task.status !== "active" || task.chatBinding)
                     throw new Error("Task must be active and not already bound to ChatGPT.");
                 const started = await chat.startTaskChat({ taskId: id, checkpointRevision: task.checkpointRevision });
@@ -124,7 +124,7 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
             const id = taskId(input);
             if (inflight.has(id))
                 throw new Error("A CLI delivery is in progress for this task.");
-            const task = await tasks.read(id);
+            const task = await tasks.readInternal(id);
             if (task.status !== "active" || !task.chatBinding)
                 throw new Error("An active task with a verified ChatGPT binding is required.");
             const agent = input.agent === undefined ? null : requiredString(input.agent, "agent", 80);
@@ -143,14 +143,14 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
             }
         }
         if (action === "chat.initial") {
-            const task = await tasks.read(taskId(input));
+            const task = await tasks.readInternal(taskId(input));
             if (!task.chatBinding)
                 throw new Error("Task does not have a ChatGPT binding.");
             const state = await chat.inspectTurnIdentity({ binding: task.chatBinding });
             return { status: state.status, userEpoch: state.userEpoch, previousAssistantTurnKey: null };
         }
         if (action === "chat.read") {
-            const task = await tasks.read(taskId(input));
+            const task = await tasks.readInternal(taskId(input));
             if (!task.chatBinding)
                 throw new Error("Task does not have a ChatGPT binding.");
             const userEpoch = requiredString(input.userEpoch, "userEpoch", 200);

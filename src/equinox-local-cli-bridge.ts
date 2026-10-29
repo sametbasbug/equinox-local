@@ -11,7 +11,7 @@ type Dependencies = {
   namespace?: string | null;
   registry: {summary: () => unknown;catalog: (domain: string) => unknown;describe: (domain: string, operation: string) => unknown;invoke: (domain: string, operation: string, args: unknown) => Promise<unknown>};
   desktop: {catalog: () => Promise<unknown>;describe: (name: string) => Promise<unknown>;call?: (operation: string, args: JsonRecord) => Promise<unknown>;invoke?: (operation: string, args: JsonRecord) => Promise<unknown>};
-  tasks: {checkpoint: (args: JsonRecord) => Promise<any>;list: (args: JsonRecord) => Promise<unknown>;read: (id: string) => Promise<any>;bindChat: (args: JsonRecord) => Promise<unknown>};
+  tasks: {checkpoint: (args: JsonRecord) => Promise<any>;list: (args: JsonRecord) => Promise<unknown>;read: (id: string) => Promise<any>;readInternal: (id: string) => Promise<any>;bindChat: (args: JsonRecord) => Promise<unknown>};
   chat: {inspectTurnIdentity: (args: JsonRecord) => Promise<any>;startTaskChat: (args: JsonRecord) => Promise<any>;deliverText: (args: JsonRecord) => Promise<any>;readFinal: (args: JsonRecord) => Promise<any>};
   assertMutationAllowed: (operation: string) => void;
 };
@@ -102,7 +102,7 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
       if (inflight.has(id)) throw new Error("A CLI chat operation is in progress for this task.");
       inflight.add(id);
       try {
-        const task = await tasks.read(id);
+        const task = await tasks.readInternal(id);
         if (task.status !== "active" || task.chatBinding) throw new Error("Task must be active and not already bound to ChatGPT.");
         const started = await chat.startTaskChat({taskId: id, checkpointRevision: task.checkpointRevision});
         if (!started?.confirmed || !started.binding) throw new Error("Chat creation was not confirmed; inspect the task before retrying.");
@@ -114,7 +114,7 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
       assertMutationAllowed("cli_chat_send");
       const id = taskId(input);
       if (inflight.has(id)) throw new Error("A CLI delivery is in progress for this task.");
-      const task = await tasks.read(id);
+      const task = await tasks.readInternal(id);
       if (task.status !== "active" || !task.chatBinding) throw new Error("An active task with a verified ChatGPT binding is required.");
       const agent = input.agent === undefined ? null : requiredString(input.agent, "agent", 80);
       const rawMessage = requiredString(input.message, "message", 3800);
@@ -128,13 +128,13 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
       } finally { inflight.delete(id); }
     }
     if (action === "chat.initial") {
-      const task = await tasks.read(taskId(input));
+      const task = await tasks.readInternal(taskId(input));
       if (!task.chatBinding) throw new Error("Task does not have a ChatGPT binding.");
       const state = await chat.inspectTurnIdentity({binding: task.chatBinding});
       return {status: state.status, userEpoch: state.userEpoch, previousAssistantTurnKey: null};
     }
     if (action === "chat.read") {
-      const task = await tasks.read(taskId(input));
+      const task = await tasks.readInternal(taskId(input));
       if (!task.chatBinding) throw new Error("Task does not have a ChatGPT binding.");
       const userEpoch = requiredString(input.userEpoch, "userEpoch", 200);
       const previousAssistantTurnKey = input.previousAssistantTurnKey === null ? null : requiredString(input.previousAssistantTurnKey, "previousAssistantTurnKey", 200);
