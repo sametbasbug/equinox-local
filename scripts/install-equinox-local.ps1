@@ -325,13 +325,21 @@ function Get-NormalExistingEntry([string]$Path) {
 # Never irreversibly delete a working installation before the new signed
 # release has started, passed health checks and returned its exact receipt.
 # Keep the old executable-only entries on the same volume so renames are fast.
-function Restore-PreviousEquinoxExecutables([string]$InstallRoot, [string]$SavedRoot) {
+function Restore-PreviousEquinoxExecutables([string]$InstallRoot, [string]$SavedRoot, [bool]$CleanNewOnly = $false) {
   $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
   Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
   foreach ($entry in @(Get-ExecutableReplacementPaths $InstallRoot)) {
     $saved = Join-Path $SavedRoot ([string]$entry.Name)
-    if ($null -eq (Get-NormalExistingEntry $saved)) { continue }
     $current = Get-NormalExistingEntry ([string]$entry.Path)
+    if ($null -eq (Get-NormalExistingEntry $saved)) {
+      # After B started, this is a product-only path absent in A; remove
+      # B's partial install. During a failed A preservation, however, entries
+      # not yet moved still belong to A and MUST be left untouched.
+      if ($CleanNewOnly -and $null -ne $current) {
+        Remove-Item -LiteralPath ([string]$entry.Path) -Recurse -Force -ErrorAction Stop
+      }
+      continue
+    }
     if ($null -ne $current) {
       Remove-Item -LiteralPath ([string]$entry.Path) -Recurse -Force -ErrorAction Stop
     }
@@ -351,7 +359,8 @@ function Preserve-ExistingEquinoxExecutables([string]$InstallRoot) {
   $programRoot = Join-Path ([IO.Path]::GetDirectoryName($InstallRoot)) 'Programs\Equinox Local'
   Stop-ExistingEquinoxExecutables $InstallRoot $programRoot
   $present = @($entries | Where-Object { $null -ne (Get-NormalExistingEntry ([string]$_.Path)) })
-  if ($present.Count -eq 0) { return $null }
+  # Even a fresh install with no previous A needs an owned recovery marker:
+  # otherwise a failed first B installation leaves partial executables.
   [IO.Directory]::CreateDirectory($savedRoot) | Out-Null
   try {
     foreach ($entry in $present) {
@@ -418,7 +427,7 @@ function Invoke-EquinoxLocalInstall {
       $failed = $_
       if ($null -ne $savedRoot) {
         Write-Info 'signed Main activation failed; restoring previous program files'
-        try { Restore-PreviousEquinoxExecutables $installRoot $savedRoot }
+        try { Restore-PreviousEquinoxExecutables $installRoot $savedRoot $true }
         catch { Fail "new install failed; original executable files remain under $savedRoot and must not be deleted" }
       }
       Restore-OldEquinoxChromeHost $suspendedHost
