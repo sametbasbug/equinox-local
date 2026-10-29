@@ -150,6 +150,9 @@ TEMP_ROOT="$(/usr/bin/mktemp -d /tmp/equinox-local-install.XXXXXX)" || fail "cou
 # recovery for the SAME installer, not a separate updater or version rollback.
 REINSTALL_BACKUP_ROOT=""
 REINSTALL_BACKUP_OWNED=false
+REINSTALL_SERVICE_STOPPED=false
+REINSTALL_HAD_OLD_AGENT=false
+REINSTALL_NEW_INSTALL_STARTED=false
 REINSTALL_COMMITTED=false
 # These are only the product-owned executables/launchers that the signed
 # bootstrap rewrites. User configuration, TCC grants and download data stay.
@@ -168,20 +171,38 @@ cleanup() {
   if [ "$REINSTALL_COMMITTED" != true ] && [ "$REINSTALL_BACKUP_OWNED" = true ] &&
      [ -n "$REINSTALL_BACKUP_ROOT" ] &&
      [ -d "$REINSTALL_BACKUP_ROOT" ] && [ ! -L "$REINSTALL_BACKUP_ROOT" ]; then
-    # The new launchd process may be running even if its health check failed.
-    /bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+    # Never stop a still-healthy old service merely because preservation
+    # failed before the installer took ownership of the service.
+    if [ "$REINSTALL_SERVICE_STOPPED" = true ]; then
+      /bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+    fi
+    local recovery_ok=true
     for entry in "${REINSTALL_EXECUTABLES[@]}"; do
       saved="$REINSTALL_BACKUP_ROOT/$entry"
       if [ -e "$saved" ] || [ -L "$saved" ]; then
         current="$(owned_executable_path "$entry")"
-        /bin/rm -rf "$current" && /bin/mv "$saved" "$current" ||
+        if ! { /bin/rm -rf "$current" && /bin/mv "$saved" "$current"; }; then
+          recovery_ok=false
           printf 'Equinox Local installer: recovery failed; preserved %s at %s\n' "$entry" "$saved" >&2
+        fi
+      elif [ "$REINSTALL_NEW_INSTALL_STARTED" = true ]; then
+        # No prior entry existed. Remove only the product-owned entry the
+        # failed fresh installer may have created; never touch user state.
+        if ! /bin/rm -rf "$(owned_executable_path "$entry")"; then
+          recovery_ok=false
+          printf 'Equinox Local installer: failed to clean new executable: %s\n' "$entry" >&2
+        fi
       fi
     done
-    if [ -z "$(/bin/ls -A "$REINSTALL_BACKUP_ROOT" 2>/dev/null)" ]; then
+    if [ "$recovery_ok" = true ] && [ -z "$(/bin/ls -A "$REINSTALL_BACKUP_ROOT" 2>/dev/null)" ]; then
       /bin/rmdir "$REINSTALL_BACKUP_ROOT" || true
-      /bin/launchctl bootstrap "gui/$CURRENT_UID" "$HOME_DIR/Library/LaunchAgents/dev.equinox.local.plist" >/dev/null 2>&1 || true
-      /bin/launchctl kickstart "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+      if [ "$REINSTALL_SERVICE_STOPPED" = true ] && [ "$REINSTALL_HAD_OLD_AGENT" = true ]; then
+        if ! /bin/launchctl bootstrap "gui/$CURRENT_UID" "$HOME_DIR/Library/LaunchAgents/dev.equinox.local.plist" >/dev/null 2>&1; then
+          printf 'Equinox Local installer: old executable files restored, but launchd bootstrap failed; restart the old service manually.\n' >&2
+        elif ! /bin/launchctl kickstart "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1; then
+          printf 'Equinox Local installer: old executable files restored, but launchd kickstart failed; restart the old service manually.\n' >&2
+        fi
+      fi
     fi
   fi
   /bin/rm -rf "$TEMP_ROOT" 2>/dev/null || true
@@ -207,6 +228,8 @@ if [ -e "$REINSTALL_BACKUP_ROOT" ] || [ -L "$REINSTALL_BACKUP_ROOT" ]; then
   fail "previous interrupted installation may be recoverable; refusing to replace $REINSTALL_BACKUP_ROOT"
 fi
 # Reject unsafe prior entries BEFORE stopping the currently healthy service.
+# `mv` must be a same-volume rename, not a slow copy-and-delete of a live app.
+REINSTALL_VOLUME="$(/usr/bin/stat -f '%d' "$INSTALL_ROOT")" || fail "cannot identify installer volume"
 for entry in "${REINSTALL_EXECUTABLES[@]}"; do
   old="$(owned_executable_path "$entry")"
   if [ -L "$old" ] && [ "$entry" != "current" ]; then
@@ -215,12 +238,18 @@ for entry in "${REINSTALL_EXECUTABLES[@]}"; do
   if [ -e "$old" ] || [ -L "$old" ]; then
     [ "$(/usr/bin/stat -f '%u' "$old" 2>/dev/null)" = "$CURRENT_UID" ] ||
       fail "prior executable belongs to another user: $entry"
+    [ "$(/usr/bin/stat -f '%d' "$old" 2>/dev/null)" = "$REINSTALL_VOLUME" ] ||
+      fail "prior executable is not on the installation volume: $entry"
   fi
 done
-# Stop only the product's launchd service after the above fail-closed checks.
-/bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+# Make the recovery directory BEFORE touching the running service. Failure
+# here must leave the previous healthy installation running.
 /bin/mkdir -m 700 "$REINSTALL_BACKUP_ROOT" || fail "cannot preserve previous executable roots"
 REINSTALL_BACKUP_OWNED=true
+if [ -f "$(owned_executable_path launch-agent)" ]; then REINSTALL_HAD_OLD_AGENT=true; fi
+# Stop only the product's launchd service after the above fail-closed checks.
+REINSTALL_SERVICE_STOPPED=true
+/bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
 for entry in "${REINSTALL_EXECUTABLES[@]}"; do
   old="$(owned_executable_path "$entry")"
   if [ -L "$old" ] && [ "$entry" != "current" ]; then
@@ -232,6 +261,9 @@ for entry in "${REINSTALL_EXECUTABLES[@]}"; do
     /bin/mv "$old" "$REINSTALL_BACKUP_ROOT/$entry" || fail "could not preserve previous executable: $entry"
   fi
 done
+# Every old entry has now been moved; a failed replacement may safely remove
+# new product-owned entries that did not exist before this installation.
+REINSTALL_NEW_INSTALL_STARTED=true
 MAIN_NODE="$TEMP_ROOT/node-v$MAIN_NODE_VERSION-$TARGET/bin/node"
 MAIN_INSTALLER="$TEMP_ROOT/main-extracted/release/equinox-local-first-install.js"
 MAIN_ARCHIVE="$TEMP_ROOT/main-native.tar.gz"
