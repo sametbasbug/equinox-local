@@ -93,6 +93,10 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
             return tasks.list({ limit: Number.isInteger(input.limit) ? input.limit : 50, ...(input.status ? { status: input.status } : {}) });
         if (action === "tasks.read")
             return tasks.read(taskId(input));
+        if (action === "tasks.delete") {
+            assertMutationAllowed("cli_task_delete");
+            return tasks.remove(taskId(input));
+        }
         if (action === "tasks.create") {
             assertMutationAllowed("cli_task_create");
             const objective = requiredString(input.objective, "objective", 12 * 1024);
@@ -129,7 +133,7 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
                 throw new Error("An active task with a verified ChatGPT binding is required.");
             const agent = input.agent === undefined ? null : requiredString(input.agent, "agent", 80);
             const rawMessage = requiredString(input.message, "message", 3800);
-            const message = agent ? `[Equinox Local CLI · Agent: ${agent}]\n${rawMessage}` : rawMessage;
+            const message = agent ? `[Equinox Local CLI · Agent: ${agent}] ${rawMessage}` : rawMessage;
             const idempotency = input.requestId === undefined ? randomBytes(12).toString("hex") : requiredString(input.requestId, "requestId", 64);
             if (!/^[a-z0-9-]{8,64}$/u.test(idempotency))
                 throw new Error("requestId must contain 8–64 lowercase alphanumeric/hyphen characters.");

@@ -1843,7 +1843,15 @@ async function deliverChatBridgeMessage({
         // Chat Bridge coordinate-free submit: focus the trusted Send button.
         const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
         const button = document.querySelector(${JSON.stringify(chatBridgeSendSelector)});
-        if (!composer || String(composer.textContent || '') !== ${JSON.stringify(message)}) return { focused: false, reason: "composer_changed" };
+        // Input.insertText turns line breaks into sibling <p> nodes in
+        // ChatGPT's contenteditable composer. textContent silently drops the
+        // paragraph boundaries, so exact multi-line delivery must restore
+        // those separators before matching the staged source message.
+        const children = composer ? Array.from(composer.children) : [];
+        const stagedText = children.length && children.every((node) => node.tagName === 'P')
+          ? children.map((node) => String(node.textContent || '')).join('\n')
+          : String(composer?.textContent || '');
+        if (!composer || stagedText !== ${JSON.stringify(message)}) return { focused: false, reason: "composer_changed" };
         if (!button || !button.isConnected || button.type !== 'submit') return { focused: false, reason: "send_button_missing" };
         const form = composer.closest('form');
         if (!form || button.closest('form') !== form) return { focused: false, reason: "send_button_scope_changed" };

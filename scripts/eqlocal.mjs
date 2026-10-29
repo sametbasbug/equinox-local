@@ -14,6 +14,7 @@ const HELP = `eqlocal — Equinox Local agent CLI (JSON output by default)
   eqlocal call domain.operation [--args JSON | --args-file PATH]
   eqlocal tasks list [--status active|completed|cancelled] [--limit N]
   eqlocal tasks read TASK_ID
+  eqlocal tasks delete TASK_ID
   eqlocal tasks create --objective TEXT [--title TEXT]
   eqlocal tasks finish|cancel TASK_ID
   eqlocal chat start --task TASK_ID [--wait]
@@ -143,6 +144,7 @@ async function main() {
     result = await request({action: 'tools.call', ...operationName(command), args: JSON.parse(raw)});
   } else if (group === 'tasks' && command === 'list') result = await request({action: 'tasks.list', ...(opt.status ? {status: opt.status} : {}), ...(opt.limit ? {limit: Number(opt.limit)} : {})});
   else if (group === 'tasks' && command === 'read') result = await request({action: 'tasks.read', task: required(third, 'task id')});
+  else if (group === 'tasks' && command === 'delete') result = await request({action: 'tasks.delete', task: required(third, 'task id')});
   else if (group === 'tasks' && command === 'create') result = await request({action: 'tasks.create', objective: required(opt.objective, '--objective'), ...(opt.title ? {title: opt.title} : {})});
   else if (group === 'tasks' && ['finish', 'cancel'].includes(command)) result = await request({action: 'tools.call', domain: 'runtime', operation: command === 'finish' ? 'task_finish' : 'task_cancel', args: {task_id: required(third, 'task id')}});
   else if (group === 'chat' && command === 'start') {

@@ -37,11 +37,16 @@ $ eqlocal chat send --task task-... --agent Nyx --message "Selene, feedback?" --
 $ eqlocal chat send --task task-... --message-file - --request-id 0123456789abcdef
 $ eqlocal chat wait --task task-... --receipt '{"userEpoch":"...","previousAssistantTurnKey":"..."}' --timeout 120
 $ eqlocal tasks finish task-...
+$ eqlocal tasks delete task-...
 ```
+
+`tasks delete` accepts only completed/cancelled Task Capsules; active tasks must be finished or cancelled first. This is the same store invariant as Control Center, not a separate deletion mechanism.
 
 New tasks are created first, then explicitly opened with `chat start`; existing bound tasks can be addressed through `chat send`. `chat start` reuses the Telegram Task Chat Browser primitives but does **not** send a Telegram message. Both use exact task/chat bindings.
 
 `chat send` yields a receipt containing `userEpoch` and `previousAssistantTurnKey` upon confirmed delivery. `--wait` polls for the completed assistant response for up to 120 seconds by default (maximum 600). If no answer is ready, it returns a waiting status **with the original receipt**, which the caller can supply to `chat wait` to resume reading. Do not re-send a message simply because reading timed out. On an uncertain send failure, inspect the ChatGPT task conversation before repeating, using the same `--request-id` if an explicit retry is truly warranted; the extension suppresses duplicate delivery IDs.
+
+**Browser extension compatibility:** The installed Chat Bridge v9 has an exact-composer comparison issue with multiline messages: ChatGPT renders separate `<p>` paragraphs and `textContent` concatenates them. A source fix is included in the browser extension and must reach users through the normal Chrome Web Store update path before multiline CLI sends are reliable; use a single-line message until that update is published. CLI agent attribution stays on the first line for compatibility with the currently installed extension. Ambiguous delivery means **do not automatically retry**: inspect the exact task chat before sending again.
 
 The Browser response reader currently returns at most 12,000 characters of the latest completed assistant turn; `truncated` signals when the browser output exceeded that limit. This is not a transcript export API.
 

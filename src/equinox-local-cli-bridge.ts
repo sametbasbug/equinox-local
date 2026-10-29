@@ -11,7 +11,7 @@ type Dependencies = {
   namespace?: string | null;
   registry: {summary: () => unknown;catalog: (domain: string) => unknown;describe: (domain: string, operation: string) => unknown;invoke: (domain: string, operation: string, args: unknown) => Promise<unknown>};
   desktop: {catalog: () => Promise<unknown>;describe: (name: string) => Promise<unknown>;call?: (operation: string, args: JsonRecord) => Promise<unknown>;invoke?: (operation: string, args: JsonRecord) => Promise<unknown>};
-  tasks: {checkpoint: (args: JsonRecord) => Promise<any>;list: (args: JsonRecord) => Promise<unknown>;read: (id: string) => Promise<any>;readInternal: (id: string) => Promise<any>;bindChat: (args: JsonRecord) => Promise<unknown>};
+  tasks: {checkpoint: (args: JsonRecord) => Promise<any>;list: (args: JsonRecord) => Promise<unknown>;read: (id: string) => Promise<any>;readInternal: (id: string) => Promise<any>;remove: (id: string) => Promise<any>;bindChat: (args: JsonRecord) => Promise<unknown>};
   chat: {inspectTurnIdentity: (args: JsonRecord) => Promise<any>;startTaskChat: (args: JsonRecord) => Promise<any>;deliverText: (args: JsonRecord) => Promise<any>;readFinal: (args: JsonRecord) => Promise<any>};
   assertMutationAllowed: (operation: string) => void;
 };
@@ -90,6 +90,10 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
     }
     if (action === "tasks.list") return tasks.list({limit: Number.isInteger(input.limit) ? input.limit : 50, ...(input.status ? {status: input.status} : {})});
     if (action === "tasks.read") return tasks.read(taskId(input));
+    if (action === "tasks.delete") {
+      assertMutationAllowed("cli_task_delete");
+      return tasks.remove(taskId(input));
+    }
     if (action === "tasks.create") {
       assertMutationAllowed("cli_task_create");
       const objective = requiredString(input.objective, "objective", 12 * 1024);
@@ -118,7 +122,7 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
       if (task.status !== "active" || !task.chatBinding) throw new Error("An active task with a verified ChatGPT binding is required.");
       const agent = input.agent === undefined ? null : requiredString(input.agent, "agent", 80);
       const rawMessage = requiredString(input.message, "message", 3800);
-      const message = agent ? `[Equinox Local CLI · Agent: ${agent}]\n${rawMessage}` : rawMessage;
+      const message = agent ? `[Equinox Local CLI · Agent: ${agent}] ${rawMessage}` : rawMessage;
       const idempotency = input.requestId === undefined ? randomBytes(12).toString("hex") : requiredString(input.requestId, "requestId", 64);
       if (!/^[a-z0-9-]{8,64}$/u.test(idempotency)) throw new Error("requestId must contain 8–64 lowercase alphanumeric/hyphen characters.");
       inflight.add(id);
