@@ -14,9 +14,10 @@ $MainVerifyUrl = 'https://local.sametbasbug.dev/downloads/updates/install-main-v
 $MainVerifySha256 = '7a34d70e65c5b641c63baba1b5bd00f6b64ab9237d47f01fabce67702c4f99a5'
 $MainVerifyBytes = 9728
 $MainNodeVersion = '26.12.1'
+$script:InstallClock = [Diagnostics.Stopwatch]::StartNew()
 
 function Fail([string]$Message) { throw "Equinox Local installer: $Message" }
-function Write-Info([string]$Message) { Write-Host "Equinox Local installer: $Message" }
+function Write-Info([string]$Message) { Write-Host ("Equinox Local installer: {0} (+{1:N1}s)" -f $Message, $script:InstallClock.Elapsed.TotalSeconds) }
 function Get-Sha256([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function Get-NativeWindowsTarget {
   if (-not [Environment]::Is64BitProcess) { Fail 'native 64-bit Windows PowerShell is required' }
@@ -95,14 +96,33 @@ function Invoke-PinnedMainNode([string]$Executable, [string[]]$Parameters) {
     }
   }
 }
+# The installed Main package already contains the official pinned Node runtime.
+# Reuse it only after an exact independently pinned executable SHA-256 check.
+# On first install, missing/mismatched/unknown previous state falls back to the
+# original HTTPS ZIP + pinned ZIP digest, never to an ambient PATH executable.
+function Get-VerifiedInstalledMainNode([string]$ExpectedDigest) {
+  try {
+    $root = Join-Path $env:LOCALAPPDATA 'Equinox Local\state\main-update'
+    $pointerPath = Join-Path $root 'current-native.json'
+    Assert-NormalFile $pointerPath 50 8192 | Out-Null
+    $pointer = Get-Content -LiteralPath $pointerPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $sha = [string]$pointer.sourceSha
+    if ($sha -cnotmatch '^[a-f0-9]{40}$' -or [string]$pointer.target -cne $Target) { return $null }
+    $node = Join-Path (Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $root 'native-store') $Target) $sha) 'release') 'runtime') 'node\bin\node.exe'
+    Assert-NormalFile $node 1 200000000 | Out-Null
+    if ((Get-Sha256 $node) -cne $ExpectedDigest) { return $null }
+    return $node
+  } catch { return $null }
+}
 # The original production-signed Main ZIP verifier shared with the macOS
 # external installer. HTTPS alone is never a signature trust root.
 function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $nodeBytes = [long]0
   $nodeSha = ''
+  $nodeExeSha = ''
   switch ($Target) {
-    'win32-arm64' { $nodeBytes = 37275911; $nodeSha = '34567581ee63967b37afb6b7a0cc63a2d550a43d5d838adb75982d7e356f2e2c' }
-    'win32-x64' { $nodeBytes = 41901456; $nodeSha = 'b3efd5c70cba3308ed46e7e699a9b8aac075bbc6b027fcb39c84c31acc25e2b4' }
+    'win32-arm64' { $nodeBytes = 37275911; $nodeSha = '34567581ee63967b37afb6b7a0cc63a2d550a43d5d838adb75982d7e356f2e2c'; $nodeExeSha = '7384299eeb99f419acaa4142771689fbca72e1c942f8da02b7928ffe1744e3ff' }
+    'win32-x64' { $nodeBytes = 41901456; $nodeSha = 'b3efd5c70cba3308ed46e7e699a9b8aac075bbc6b027fcb39c84c31acc25e2b4'; $nodeExeSha = '1c63f1417e2e26d83ca9a9ec1d548524ab1305bc7209d90ebca56257ff0d84ed' }
     default { Fail 'unsupported Main verification architecture' }
   }
   $architecture = if ($Target -ceq 'win32-arm64') { 'arm64' } else { 'x64' }
@@ -115,19 +135,31 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   Save-BoundedHttpsFile $MainVerifyUrl $source $MainVerifyBytes
   Assert-NormalFile $source $MainVerifyBytes $MainVerifyBytes | Out-Null
   if ((Get-Sha256 $source) -cne $MainVerifySha256) { Fail 'Main verifier code digest is invalid' }
-  $nodeUrl = 'https://nodejs.org/dist/v' + $MainNodeVersion + '/' + $nodeBase + '.zip'
-  Write-Info "checking pinned Node $MainNodeVersion ($Target)"
-  Save-BoundedHttpsFile $nodeUrl $nodeZip $nodeBytes
-  Assert-NormalFile $nodeZip $nodeBytes $nodeBytes | Out-Null
-  if ((Get-Sha256 $nodeZip) -cne $nodeSha) { Fail 'pinned Node SHA-256 is invalid' }
-  [IO.Directory]::CreateDirectory($nodeStage) | Out-Null
-  # Windows ships native bsdtar; avoid slow PowerShell ZIP expansion and PATH discovery.
+  $node = Join-Path (Join-Path $nodeStage $nodeBase) 'node.exe'
+  $installedNode = Get-VerifiedInstalledMainNode $nodeExeSha
+  if ($null -ne $installedNode) {
+    Write-Info "reusing independently SHA-256 verified installed Node $MainNodeVersion ($Target)"
+    [IO.Directory]::CreateDirectory((Join-Path $nodeStage $nodeBase)) | Out-Null
+    [IO.File]::Copy($installedNode, $node, $false)
+    Assert-NormalFile $node 1 200000000 | Out-Null
+    if ((Get-Sha256 $node) -cne $nodeExeSha) { Fail 'staged installed Node digest is invalid' }
+  } else {
+    $nodeUrl = 'https://nodejs.org/dist/v' + $MainNodeVersion + '/' + $nodeBase + '.zip'
+    Write-Info "downloading pinned Node $MainNodeVersion ($Target)"
+    Save-BoundedHttpsFile $nodeUrl $nodeZip $nodeBytes
+    Assert-NormalFile $nodeZip $nodeBytes $nodeBytes | Out-Null
+    if ((Get-Sha256 $nodeZip) -cne $nodeSha) { Fail 'pinned Node SHA-256 is invalid' }
+    [IO.Directory]::CreateDirectory($nodeStage) | Out-Null
+    # Windows ships native bsdtar; avoid slow PowerShell ZIP expansion and PATH discovery.
+    $nativeTar = Join-Path $env:WINDIR 'System32\tar.exe'
+    Assert-NormalFile $nativeTar 1 5000000 | Out-Null
+    $tarOutput = @(& $nativeTar '-xf' $nodeZip '-C' $nodeStage 2>&1)
+    if ($LASTEXITCODE -ne 0) { Fail 'verified pinned Node ZIP extraction failed' }
+    Assert-NormalFile $node 1 200000000 | Out-Null
+    if ((Get-Sha256 $node) -cne $nodeExeSha) { Fail 'pinned Node executable digest is invalid' }
+  }
   $nativeTar = Join-Path $env:WINDIR 'System32\tar.exe'
   Assert-NormalFile $nativeTar 1 5000000 | Out-Null
-  $tarOutput = @(& $nativeTar '-xf' $nodeZip '-C' $nodeStage 2>&1)
-  if ($LASTEXITCODE -ne 0) { Fail 'verified pinned Node ZIP extraction failed' }
-  $node = Join-Path (Join-Path $nodeStage $nodeBase) 'node.exe'
-  Assert-NormalFile $node 1 200000000 | Out-Null
   # HTTPS/download/Node/content verification precede all execution.
   Write-Info 'verifying signed Main archive before changing the existing installation'
   $receipt = @(Invoke-PinnedMainNode $node @($source, '--target', $Target, '--output', $verifiedArchive, '--pointer-output', (Join-Path $PrivateTemp 'main-signed-pointer.json')))
