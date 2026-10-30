@@ -48,13 +48,19 @@ curl -fsSL https://local.sametbasbug.dev/downloads/updates/install-equinox-local
 
 ### Windows — ARM64 & x64
 
-Download and inspect the [official PowerShell installer](https://local.sametbasbug.dev/downloads/updates/install-equinox-local.ps1), then run it in PowerShell as your normal user. See the [Windows installation guide](https://local.sametbasbug.dev/install/) for step-by-step instructions.
+Run in **native 64-bit Windows PowerShell** as your normal user (**no Administrator elevation**):
+
+```powershell
+irm https://local.sametbasbug.dev/downloads/updates/install-equinox-local.ps1 | iex
+```
+
+You can [inspect the official PowerShell installer](https://github.com/sametbasbug/equinox-local/blob/main/scripts/install-equinox-local.ps1) before running it, or follow the [Windows installation guide](https://local.sametbasbug.dev/install/).
 
 Both installers download the **latest production-signed Main** for your platform, validate its signed identity and archive, and install only the product's program files. You do **not** need to preinstall Node, Git, Homebrew or compiler tools. Running the installer again is also the supported repair/reinstall path; existing user settings and personal data are preserved. The **Control Center Update** action uses the same signed OS installer; no separate Stable/Main enrollment is required.
 
-After installing, open **Setup** to configure an OpenAI Secure MCP Tunnel and its restricted runtime key, connect that tunnel in ChatGPT, then install/enable Equinox Browser in Chrome. The onboarding flow checks the connection and access settings.
+After installing, open **Setup** to configure an OpenAI Secure MCP Tunnel and its restricted runtime key. Then open **ChatGPT → Plugins**, add your own custom MCP plugin using **Tunnel**, and install/enable Equinox Browser in Chrome. The onboarding flow checks the connection and access settings.
 
-**Requirements:** macOS or Windows on ARM64/x64, Chrome, internet access, and a ChatGPT plan or workspace that supports the necessary MCP connection. Telegram is optional. Read the [tunnel](docs/tunnel.md) and [browser setup](docs/browser.md) guides.
+**Requirements:** macOS or Windows on ARM64/x64, Chrome, internet access, and a ChatGPT account. **Free and paid ChatGPT users can add custom MCP plugins directly from Plugins — no developer mode, extra setting or paid ChatGPT plan is required.** Equinox Local also needs a Secure MCP Tunnel and a restricted OpenAI Platform runtime key to connect. Telegram is optional. Read the [tunnel](docs/tunnel.md) and [browser setup](docs/browser.md) guides.
 
 ### Equinox Browser is installed separately
 

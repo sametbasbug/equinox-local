@@ -4,7 +4,7 @@ Equinox Local is a local MCP runtime. ChatGPT does not connect directly to `loca
 
 ## What you need
 
-Before configuring Local, make sure your OpenAI/ChatGPT plan and workspace support the custom MCP app or connector flow you intend to use.
+**Free and paid ChatGPT users can add their own custom MCP plugin directly under [Plugins](https://chatgpt.com/plugins).** There is no developer mode or separate ChatGPT setting to enable first. Equinox Local still needs a Secure MCP Tunnel and a restricted OpenAI Platform runtime key to connect the local computer.
 
 You will need two separate OpenAI Platform values:
 
@@ -56,22 +56,21 @@ Equinox Local stores the runtime key in its per-user Application Support area wi
 
 The transport configuration stores the Tunnel ID separately and Local schedules a controlled restart. If tunnel startup fails, the supervisor falls back to local-only Control Center mode instead of exposing a different transport.
 
-On a genuinely fresh managed install, this is only the tunnel step of the dedicated **Setup Mode**. Setup then requires the human to add the same Tunnel ID to the Equinox Local MCP connector in ChatGPT, install/consent/enable **Equinox Browser** in the personal Chrome profile, and send the provided verification prompt. Control Center stays locked to Setup (plus uninstall) until a real ChatGPT MCP tool call reaches the Mac. Successful completion is persisted so later tunnel/browser outages are ordinary attention states rather than another first-run lock.
+On a genuinely fresh managed install, this is only the tunnel step of the dedicated **Setup Mode**. Setup then requires the human to add a custom Equinox Local MCP plugin through ChatGPT Plugins using the corresponding tunnel, install/consent/enable **Equinox Browser** in the personal Chrome profile, and send the provided verification prompt. Control Center stays locked to Setup (plus uninstall) until a real ChatGPT MCP tool call reaches the Mac. Successful completion is persisted so later tunnel/browser outages are ordinary attention states rather than another first-run lock.
 
 ## 4. Connect the same tunnel in ChatGPT
 
-Open ChatGPT's app/connector settings and use the custom MCP app flow available to your plan/workspace.
+Open **[ChatGPT → Plugins](https://chatgpt.com/plugins)** and choose **Add custom MCP server** (**Özel MCP sunucusu ekle**). No developer mode or account setting needs to be enabled first.
 
-When configuring the connection:
+1. Select **Tunnel** (**Tünel**). The Tunnel ID is populated automatically in this flow; **do not paste it a second time**.
+2. Choose **Authentication → No authentication** (**Kimlik doğrulama → Kimlik doğrulama yok**) and save your custom plugin.
+3. Scan or refresh its MCP tools once Equinox Local has connected.
 
-1. choose **Connection: Tunnel**;
-2. select the tunnel from the picker or paste the same Tunnel ID used in Equinox Local;
-3. create/save the app;
-4. scan or refresh the MCP tools after the Local runtime is connected.
+The restricted Runtime API key stays **only in Equinox Local Setup**, not in the ChatGPT plugin form.
 
 The Local runtime and the ChatGPT app must point to the same tunnel.
 
-ChatGPT plan availability, developer-mode location, app publishing controls, and write/modify support are OpenAI product features and can change independently of this repository.
+ChatGPT provides custom MCP plugin creation to both Free and paid users. Plugin publishing and individual tool permissions are separate from the local tunnel credentials and may change with the ChatGPT product; adding a private plugin requires no paid upgrade or developer-mode toggle.
 
 ## Network model
 
@@ -109,7 +108,3 @@ Confirm that Equinox Local has restarted into tunnel mode, then refresh the Chat
 - OpenAI runtime API keys: <https://platform.openai.com/settings/organization/api-keys>
 - ChatGPT app/connector settings: <https://chatgpt.com/plugins>
 - OpenAI Secure MCP Tunnel client: <https://github.com/openai/tunnel-client>
-
-### Connecting from ChatGPT Plugins
-
-Open [ChatGPT Plugins](https://chatgpt.com/plugins), choose **Add custom MCP server** (**Özel MCP sunucusu ekle**), then select **Tunnel** (**Tünel**). The Tunnel ID is populated automatically in this flow; **do not enter it a second time**. Set **Authentication → No authentication** (**Kimlik doğrulama → Kimlik doğrulama yok**) and save. The Runtime API key belongs only in your local Equinox Local Setup, never in the ChatGPT MCP server form.
