@@ -1,4 +1,4 @@
-# `eqlocal` — agent-first local CLI (development)
+# `eqlocal` — local agent CLI
 
 `eqlocal` is a JSON-first command-line client for the **existing running** Equinox Local runtime. On macOS Factory/source checkouts, startup installs `~/.local/bin/eqlocal` as a user-owned launcher bound to the running source checkout and the running Node executable; no signed managed-release layout or ambient PATH Node is required. You can also invoke `node scripts/eqlocal.mjs` from the checkout. It does not launch a second agent or provide a new ChatGPT API. Managed signed releases use their own pinned Node and managed launchers. This CLI shares the existing local authenticated bridge; it is not a second server or independent agent.
 
@@ -51,7 +51,7 @@ New tasks are created first, then explicitly opened with `chat start`; existing 
 
 The Browser response reader currently returns at most 12,000 characters of the latest completed assistant turn; `truncated` signals when the browser output exceeded that limit. This is not a transcript export API.
 
-## Roadmap / acceptance still needed
+## Implementation and verification notes
 
 - Completed in source: signed Main install writes `eqlocal` shims that invoke **the product-owned pinned Node**, not global Node/npm; uninstall removes the exact owned shims. macOS installs `~/.local/bin/eqlocal` and a marked PATH line in `~/.zprofile`; Windows installs `<LOCALAPPDATA>\Equinox Local\bin\eqlocal.cmd` and adds that directory to current-user PATH. Newly opened terminals pick up the PATH update.
 - Verified in development: an unsigned darwin-arm64 native release archive was built by the product packager from `7658433`, validated with all 150 source files, and its temporary artifacts removed. This is not equivalent to a signed native install or Windows acceptance.
@@ -60,7 +60,7 @@ The Browser response reader currently returns at most 12,000 characters of the l
 - All four native candidate builds passed on [CI run #40891590509](https://github.com/sametbasbug/equinox-local/actions/runs/40891590509); production publication was skipped.
 - Signed Main installed runtimes automatically reconcile the owned `eqlocal` launcher to the **currently authenticated native release** shortly after startup, after the A/B owner marker is released. The same reconciliation applies after a successful update or an authenticated A rollback; Factory/source runtimes reconcile their own `~/.local/bin/eqlocal` on macOS startup to the exact running source CLI and Node, using the same ownership checks and marked profile block; they do not impersonate a signed managed release. Launcher refresh failures are optional and never roll back a healthy Equinox Local runtime. This startup path still requires signed update/rollback device acceptance before production.
 - Verified on the actual Windows machine with the product-owned Node v26.12.1 copied into an isolated release layout: the source installer generated PowerShell/CMD launchers; zero/one/multiple args, JSON and Unicode passed in PowerShell 5.1 and 7, and reinstall/uninstall cleaned both launchers and the temporary user PATH entry. The installed public product was unchanged.
-- Still required: real macOS and Windows managed-install verification: status, dynamic tool catalog, Task Chat create/send/read/wait, refusal on stale identity, no double submit, native shell invocation, and update/reinstall preservation.
+- Installed public Windows and macOS environments have been exercised separately. Public macOS VM installation and the independent native-SHA admission fix were confirmed after signed Main publication; actual device diagnostics and settings preservation should still be checked when investigating a new install failure. CLI and Browser chat operations are guarded by the same underlying runtime rather than a new agent process.
 - Check the independent browser extension's current Chat Bridge version; do not modify CWS packaging without a separate browser release.
 - Later: MCP transport for agent callers may delegate to this same local dispatcher without duplicating feature implementations.
 

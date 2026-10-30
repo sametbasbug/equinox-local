@@ -10,7 +10,7 @@ Private factory/ops tooling consumes accepted canonical source for maintainer-au
 
 ## Before you start
 
-Equinox Local targets macOS and Windows on ARM64/x64. Use the pinned **Node.js 26.11.1** for development (see `src/equinox-local-runtime-versions.js` for release toolchain contracts). Windows native-shell work may additionally require the platform SDKs/tooling exercised in CI; ordinary users do not need those tools installed.
+Equinox Local targets macOS and Windows on ARM64/x64. Use the current pinned Node.js toolchain (see [`src/equinox-local-runtime-versions.ts`](src/equinox-local-runtime-versions.ts) for its authoritative version and native distribution contracts). Windows native-shell work may additionally require the platform SDKs/tooling exercised in CI; ordinary users do not need those tools installed.
 
 ```bash
 npm ci
@@ -52,16 +52,16 @@ Contributions must not quietly weaken these rules:
 - Control Center stays loopback-only and does not expose an arbitrary command backend.
 - Filesystem access follows the user's Full/selected Agent Access mode. Selected mode stays on configured roots; Full mode may use a contained home/absolute folder while filesystem root, credential/application-secret areas, traversal, and symlink escape remain blocked.
 - Existing path containment, symlink defenses, revision/SHA guards, and mutation locks remain in force beneath both UI and agent operations.
-- Stable update artifacts remain pinned to the Equinox Local HTTPS update origin and require a trusted Ed25519 signature.
+- Production Main update artifacts are pinned to the Equinox Local HTTPS distribution origin and require the trusted Ed25519 signer, exact SHA-256 and full native source identity.
 - Optional integrations fail independently rather than becoming mandatory dependencies for core Local operation.
 
 If a feature appears to require relaxing one of these rules, discuss the design first.
 
 ## Continuous integration
 
-Product-impacting releases use exact-SHA native macOS/Windows package construction, production signing and CodeQL analysis. **Documentation/metadata-only changes** use a separate lightweight Docs workflow and do not advance the admitted `main-snapshot` runtime SHA. CI status is visible on each PR; do not publish a numbered Stable release from PR checks alone.
+Product-impacting releases use exact-SHA native macOS/Windows package construction, production signing and CodeQL analysis. **Documentation/metadata-only changes** use a separate lightweight Docs workflow and do not advance the admitted `main-snapshot` runtime SHA. CI status is visible on each PR; do not treat a PR build as an authorized production release.
 
-macOS/Windows ARM64 and x64 packages must each be built for the exact target source SHA. Do not reuse artifacts from another commit. See [architecture](docs/architecture.md) and [updates](docs/updates.md) for the detailed admission and rollback model.
+macOS/Windows ARM64 and x64 packages must each be built for the exact target source SHA. Do not reuse artifacts from another commit. See [architecture](docs/architecture.md) and [updates](docs/updates.md) for the current signed Main admission and install/recovery model.
 
 ## Automated tests
 
