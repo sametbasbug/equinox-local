@@ -1,8 +1,8 @@
 # One Main, One Installer, One Public Repository
 
-Status: **approved implementation plan — in progress** (2026-10-27)
+Status: **historical implementation log; signed Main distribution and canonical public site are live** (reviewed 2026-10-31)
 Decision owner: maintainer. Canonical public repository: `sametbasbug/equinox-local`.
-This plan supersedes the numbered-Stable-vs-Main distribution/independent-A-B-update goals in historical plans. Those documents remain historical evidence, not a parallel roadmap.
+This plan supersedes the numbered-Stable-vs-Main distribution/independent-A-B-update goals in historical plans. Historical checkpoints, proposed rollback paths and unchecked task boxes below do **not** describe the active public installer. For the deployed signed Main workflow, use [current updates documentation](../updates.md).
 
 ## Non-negotiable outcome
 

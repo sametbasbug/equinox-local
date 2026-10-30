@@ -27,8 +27,8 @@ Reports are especially useful when they demonstrate a concrete bypass of one of 
 - Equinox Browser cannot perform browser automation before consent/control is enabled.
 - Equinox Browser is the only browser transport; Agent Browser and Your Browser remain explicit isolated contexts with no silent fallback, and the retired legacy QA-browser backend cannot reappear as an alternate route.
 - Native Messaging cannot be rebound to an unexpected extension/origin or unsafe host path.
-- Managed update manifests cannot be accepted without a trusted Ed25519 signature and pinned update origin.
-- A failed managed update cannot silently replace the last verified healthy release.
+- Production Main selectors and native archives cannot be accepted without the trusted Ed25519 signature, pinned HTTPS origin and exact expected artifact SHA-256/source identity.
+- An unauthenticated or unhealthy replacement cannot be reported as successfully installed; guarded recovery must preserve the user’s settings and personal state.
 - Detached helpers do not inherit provider credentials or arbitrary command arguments.
 - Optional desktop control must respect the documented, bounded platform-specific Peekaboo (macOS) or winapp (Windows) automation surface.
 
@@ -44,18 +44,18 @@ The following are generally not vulnerabilities by themselves:
 
 ## Automated security scanning
 
-The public repository runs a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite alongside the normal macOS and Windows x64/ARM64 CI/test suites. Private factory/release infrastructure is kept outside the public source boundary rather than relying on a private-publication staging mode for security coverage.
+The public repository runs a GitHub CodeQL workflow for JavaScript/TypeScript using the `security-extended` query suite alongside four-target macOS and Windows ARM64/x64 native package validation. Private factory/release infrastructure is kept outside the public source boundary rather than relying on a private-publication staging mode for security coverage.
 
-CodeQL is a supplement to the explicit security-boundary tests in this repository, not a replacement for them.
+CodeQL supplements the explicit product security checks, signature verification, and static/type/native-build gates; it cannot by itself prove runtime security.
 
 ## Development rules for security-sensitive changes
 
-Security-boundary changes should include regression coverage. Before submitting:
+Security-sensitive changes must preserve security invariants and pass the existing static, type and native distribution checks. The maintainer has removed automated test suites and prohibits adding new ones. Before submitting:
 
 ```bash
 npm ci
 npm run check
-npm test
+npm run typecheck
 ```
 
 Do not solve a UX problem by adding a generic shell endpoint, broad filesystem root, silent browser fallback, credential-bearing helper environment, or unverified update path.
