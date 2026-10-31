@@ -1,11 +1,7 @@
 <div align="center">
-  <img src="assets/equinox-browser.png" alt="Equinox Browser icon" width="112" height="112" />
+  <img src="assets/equinox-local-banner.png" alt="Equinox Local — Your AI. Your computer. Your control." width="100%" />
 
-  # Equinox Local
-
-  **Your AI assistant. Your computer. Your control.**
-
-  A local-first bridge that lets ChatGPT work with your files, terminal, browser and desktop through a native Control Center and explicit user permissions.
+  <p>A local-first bridge that lets ChatGPT work with your files, terminal, browser and desktop through a native Control Center and explicit user permissions.</p>
 
   [![Equinox Local version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fmain.local.sametbasbug.dev%2Flatest%2Fmain.json&query=%24.version&label=Equinox+Local&color=7358e8&prefix=v)](https://local.sametbasbug.dev/install/)
   [![Equinox Browser version](https://img.shields.io/chrome-web-store/v/npdneefcobilfkjlihghjgjnknenhfoj?label=Equinox%20Browser&color=7358e8)](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj)
