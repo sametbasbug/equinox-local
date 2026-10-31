@@ -18,13 +18,27 @@ function taskId(input) {
         throw new Error("Expected an exact Task Capsule id.");
     return id;
 }
+function parseJsonText(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.text !== "string")
+        return value;
+    let parsed;
+    try {
+        parsed = JSON.parse(value.text);
+    }
+    catch {
+        return value;
+    }
+    if (!parsed || typeof parsed !== "object")
+        return value;
+    return Object.keys(value).length === 1 ? parsed : { ...value, text: parsed };
+}
 function unpack(result) {
     if (!result || typeof result !== "object" || !Array.isArray(result.content))
-        return result;
+        return parseJsonText(result);
     if (result.isError)
         throw new Error(result.content.filter((part) => part?.type === "text").map((part) => part.text).join("\n") || "Capability failed.");
     if (result.structuredContent !== undefined)
-        return result.structuredContent;
+        return parseJsonText(result.structuredContent);
     if (result.content.length === 1 && result.content[0]?.type === "text") {
         const text = result.content[0].text;
         if (typeof text === "string") {
@@ -122,7 +136,8 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
                 if (!started?.confirmed || !started.binding)
                     throw new Error("Chat creation was not confirmed; inspect the task before retrying.");
                 const updated = await tasks.bindChat({ taskId: id, binding: started.binding });
-                return { task: updated, initialTurn: { userEpoch: started.userEpoch, previousAssistantTurnKey: started.previousAssistantTurnKey } };
+                const receipt = { userEpoch: started.userEpoch, previousAssistantTurnKey: started.previousAssistantTurnKey };
+                return { task: updated, receipt, initialTurn: receipt };
             }
             finally {
                 inflight.delete(id);

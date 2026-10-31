@@ -2,6 +2,14 @@
 
 `eqlocal` is a JSON-first command-line client for the **existing running** Equinox Local runtime. On macOS Factory/source checkouts, startup installs `~/.local/bin/eqlocal` as a user-owned launcher bound to the running source checkout and the running Node executable; no signed managed-release layout or ambient PATH Node is required. You can also invoke `node scripts/eqlocal.mjs` from the checkout. It does not launch a second agent or provide a new ChatGPT API. Managed signed releases use their own pinned Node and managed launchers. This CLI shares the existing local authenticated bridge; it is not a second server or independent agent.
 
+## First conversation
+
+Create a Task Capsule with `eqlocal tasks create --objective "Discuss an issue"` and save its Task ID. Run `eqlocal chat start --task TASK_ID`; by default this opens a **new** Your Browser conversation and sends a neutral READY handshake, **not** the task objective. `--run-task` explicitly starts the objective. The returned `result.receipt` (also `result.initialTurn`) is used by `eqlocal chat wait --task TASK_ID --receipt 'JSON_RECEIPT'`.
+
+For the next message use `eqlocal chat send --task TASK_ID --agent Nyx --message-file -` (stdin) or `--message TEXT`. The `--agent` flag is a **sender label**, not a destination agent. On confirmed delivery, pass its receipt to `chat wait`; finish with `eqlocal tasks finish TASK_ID`. Run `eqlocal chat send --help` and `eqlocal tasks create --help` for command-specific options.
+
+**Ambiguous delivery is not retry-safe.** If `CHAT_BRIDGE_AMBIGUOUS` appears, inspect the bound conversation rather than blindly resending. A manually sent message changes the user epoch and invalidates earlier wait receipts.
+
 ## Contract
 
 - Success: exactly one `{ "ok": true, "result": ... }` JSON object on stdout. Errors: exactly one `{ "ok": false, "error": { "code": ..., "message": ... } }` on stderr and nonzero exit status. `--json` is an explicit supported no-op, because JSON is already the default. `--help` prints usage.

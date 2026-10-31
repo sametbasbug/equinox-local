@@ -1849,7 +1849,7 @@ async function deliverChatBridgeMessage({
         // those separators before matching the staged source message.
         const children = composer ? Array.from(composer.children) : [];
         const stagedText = children.length && children.every((node) => node.tagName === 'P')
-          ? children.map((node) => String(node.textContent || '')).join('\n')
+          ? children.map((node) => String(node.textContent || '')).join('\\n')
           : String(composer?.textContent || '');
         if (!composer || stagedText !== ${JSON.stringify(message)}) return { focused: false, reason: "composer_changed" };
         if (!button || !button.isConnected || button.type !== 'submit') return { focused: false, reason: "send_button_missing" };
