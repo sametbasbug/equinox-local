@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'README.md'
+      - 'assets/equinox-local-banner.png'
       - 'AGENTS.md'
       - 'CONTRIBUTING.md'
       - 'CODE_OF_CONDUCT.md'
@@ -19,6 +20,7 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'README.md'
+      - 'assets/equinox-local-banner.png'
       - 'AGENTS.md'
       - 'CONTRIBUTING.md'
       - 'CODE_OF_CONDUCT.md'
