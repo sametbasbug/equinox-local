@@ -25,7 +25,7 @@ const HELP = `eqlocal — Equinox Local agent CLI (JSON output by default)
   --help     Show command usage
 
 '--args-file -' and '--message-file -' read stdin. Chat delivery never auto-retries.
-Save the chat send receipt to poll its final response after disconnects.`;
+Save the chat send receipt to poll its final response after disconnects. Results go to stdout; errors (also JSON) go to stderr.`;
 const HELP_TOPICS = Object.freeze({
   chat: `Chat commands operate only on an exact active Task Capsule's bound ChatGPT conversation.
 
@@ -34,10 +34,18 @@ const HELP_TOPICS = Object.freeze({
   eqlocal chat read|wait --task TASK_ID --receipt JSON [--timeout SECONDS]
 
 Start creates a new conversation in Your Browser. By default it sends a neutral READY handshake, not the task objective. --run-task sends the task objective immediately. --agent prefixes a message with a sender label; it does not select or invoke another agent. Never blindly retry an ambiguous send.
+
+Quick path:
+  eqlocal tasks create --objective "Discuss an issue"  # read result.taskId
+  eqlocal chat start --task TASK_ID --wait
+  eqlocal chat send --task TASK_ID --message "Hello" --wait
+  eqlocal tasks finish TASK_ID
+
+Successful results are JSON on stdout; errors are JSON on stderr.
 `,
   'chat start': `eqlocal chat start --task TASK_ID [--wait] [--run-task] [--timeout SECONDS]
 
-Opens a NEW Your Browser ChatGPT conversation for an active, unbound task. Default: neutral EQL_CLI_READY handshake; --run-task immediately asks the assistant to execute the Task Capsule objective instead. Returns result.receipt and the backward-compatible result.initialTurn; pass either JSON object to --receipt for chat wait. --wait waits for the initial assistant response.
+Opens a NEW Your Browser ChatGPT conversation for an active, unbound task. Default: neutral EQL_CLI_READY handshake; --run-task immediately asks the assistant to execute the Task Capsule objective instead. Returns result.receipt and the backward-compatible result.initialTurn; pass either JSON object to --receipt for chat wait. --wait waits for the initial assistant response. If creation is ambiguous, the candidateTabId is NOT a verified binding; inspect it without retrying start.
 `,
   'chat send': `eqlocal chat send --task TASK_ID (--message TEXT | --message-file PATH) [--agent NAME] [--request-id ID] [--wait] [--timeout SECONDS]
 
@@ -55,7 +63,7 @@ Polls a confirmed send/start receipt until ready or timeout (default 120 seconds
 `,
   'tasks create': `eqlocal tasks create --objective TEXT [--title TEXT]
 
-Creates a new Task Capsule, but does NOT open ChatGPT or execute it. Read result.id (the returned Task ID), then use eqlocal chat start --task TASK_ID.
+Creates a new Task Capsule, but does NOT open ChatGPT or execute it. Read result.taskId (the returned Task ID), then use eqlocal chat start --task TASK_ID.
 `,
 });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -122,7 +130,7 @@ async function request(payload) {
       if (newline < 0) return;
       try {
         const response = JSON.parse(buffer.slice(0, newline));
-        if (!response.ok) {const error = new Error(String(response.error?.message || 'CLI operation failed.').replace(/Telegram Chat Bridge/g, 'Chat Bridge')); error.code = response.error?.code || 'CLI_ERROR'; fail(error); return;}
+        if (!response.ok) {const error = new Error(String(response.error?.message || 'CLI operation failed.').replace(/Telegram Chat Bridge/g, 'Chat Bridge').replace(/Telegram new-task chat creation/g, 'ChatGPT task-chat creation')); error.code = response.error?.code || 'CLI_ERROR'; error.candidateTabId = response.error?.candidateTabId; fail(error); return;}
         settled = true; socket.end(); resolve(response.result);
       } catch (error) {fail(error);}
     });
@@ -206,6 +214,10 @@ async function main() {
 }
 main().catch((error) => {
   const ambiguous = error.code === 'CHAT_BRIDGE_AMBIGUOUS' || (pendingRequestId && /timed out|disconnected/i.test(error.message || ''));
-  process.stderr.write(JSON.stringify({ok: false, error: {code: error.code || 'CLI_ERROR', message: error.message || String(error), ...(pendingRequestId ? {requestId: pendingRequestId} : {}), ...(ambiguous ? {delivery_state: 'unknown', retry_safe: false, next_action: 'Inspect the exact bound ChatGPT conversation without submitting again. Do not reuse an older receipt after a manual send.'} : {})}}) + '\n');
+  const candidateTabId = Number.isSafeInteger(error.candidateTabId) && error.candidateTabId > 0 ? error.candidateTabId : null;
+  const nextAction = candidateTabId
+    ? `Inspect candidate tab ${candidateTabId} in Your Browser using eqlocal call browser.tabs --args '{"target":"user"}' and scoped browser.snapshot; this is NOT a verified task binding. Do not resend or retry chat start.`
+    : 'Inspect Your Browser tabs and the task state without resending. Do not reuse an older receipt after a manual send.';
+  process.stderr.write(JSON.stringify({ok: false, error: {code: error.code || 'CLI_ERROR', message: error.message || String(error), ...(pendingRequestId ? {requestId: pendingRequestId} : {}), ...(candidateTabId ? {candidateTabId, candidateVerified: false} : {}), ...(ambiguous ? {delivery_state: 'unknown', retry_safe: false, next_action: nextAction} : {})}}) + '\n');
   process.exitCode = 1;
 });

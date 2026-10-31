@@ -656,7 +656,7 @@ export async function registerEquinoxBrowserTools({ registerTextTool, registerRa
             max_nodes: z.number().int().min(1).max(250).default(250)
                 .describe("Snapshot'a eklenecek en fazla öğe sayısı"),
             root_ref: z.string().regex(/^@[ec]\d+$/).optional()
-                .describe("Önceki geçerli snapshot'taki etkileşimli @eN veya semantic container @cN ref alt ağacına daralt"),
+                .describe("Önceki geçerli snapshot'taki @eN veya @cN ref alt ağacına daralt; main_frame_only=true, active_layer_only=true veya frame_id ile birlikte kullanılamaz"),
             roles: z.array(z.string().min(1).max(100)).max(50).optional()
                 .describe("İsteğe bağlı exact accessibility role filtresi"),
             query: z.string().min(1).max(1_000).optional()

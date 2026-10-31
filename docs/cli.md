@@ -4,11 +4,11 @@
 
 ## First conversation
 
-Create a Task Capsule with `eqlocal tasks create --objective "Discuss an issue"` and save its Task ID. Run `eqlocal chat start --task TASK_ID`; by default this opens a **new** Your Browser conversation and sends a neutral READY handshake, **not** the task objective. `--run-task` explicitly starts the objective. The returned `result.receipt` (also `result.initialTurn`) is used by `eqlocal chat wait --task TASK_ID --receipt 'JSON_RECEIPT'`.
+Create a Task Capsule with `eqlocal tasks create --objective "Discuss an issue"` and save **`result.taskId`** from the JSON result. Run `eqlocal chat start --task TASK_ID`; by default this opens a **new** Your Browser conversation and sends a neutral READY handshake, **not** the task objective. `--run-task` explicitly starts the objective. The returned `result.receipt` (also `result.initialTurn`) is used by `eqlocal chat wait --task TASK_ID --receipt 'JSON_RECEIPT'`.
 
 For the next message use `eqlocal chat send --task TASK_ID --agent Nyx --message-file -` (stdin) or `--message TEXT`. The `--agent` flag is a **sender label**, not a destination agent. On confirmed delivery, pass its receipt to `chat wait`; finish with `eqlocal tasks finish TASK_ID`. Run `eqlocal chat send --help` and `eqlocal tasks create --help` for command-specific options.
 
-**Ambiguous delivery is not retry-safe.** If `CHAT_BRIDGE_AMBIGUOUS` appears, inspect the bound conversation rather than blindly resending. A manually sent message changes the user epoch and invalidates earlier wait receipts.
+**Ambiguous delivery is not retry-safe.** If `CHAT_BRIDGE_AMBIGUOUS` appears during `chat start`, the error may include `candidateTabId` with `candidateVerified: false`. This is only a read-only inspection hint in Your Browser; it is **not** a task binding and does not permit sending. Inspect this exact tab with `eqlocal call browser.tabs --args '{"target":"user"}'` and a scoped snapshot before any further action. During `chat send`, inspect the exact bound conversation rather than blindly resending. A manually sent message changes the user epoch and invalidates earlier wait receipts. Success JSON goes to stdout, failure JSON to stderr.
 
 ## Contract
 
