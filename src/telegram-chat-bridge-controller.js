@@ -353,26 +353,38 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             if (!promptSubmitted) {
                 throw taskChatNotStarted("ChatGPT task-chat composer/send control did not remain stable long enough to submit the Task prompt" + (lastComposerError ? ": " + errorMessage(lastComposerError).slice(0, 120) : lastSendReason ? ` (${lastSendReason}).` : "."));
             }
+            // A fresh ChatGPT conversation may finish the first assistant turn before
+            // Chrome publishes its final /c/ URL. Observe only the tab we created,
+            // and accept its identity only when the tab route or the first-party Chat
+            // Bridge observer supplies an exact, validated conversation identity.
             let identity = null;
-            const conversationDeadline = Date.now() + 12_000;
+            let turnState = null;
+            const conversationDeadline = Date.now() + 35_000;
             while (Date.now() < conversationDeadline && !identity) {
-                const tabs = await callContext("user", "tabs.list", {}, 5_000);
+                const tabs = await callContext("user", "tabs.list", {}, 4_000).catch(() => null);
                 const tab = Array.isArray(tabs) ? tabs.find((item) => Number(item?.id ?? item?.tabId) === createdTabId) : null;
-                const conversationId = chatGptConversationIdFromUrl(tab?.url);
-                if (conversationId) {
+                const urlId = chatGptConversationIdFromUrl(tab?.url);
+                const observed = await callContext("user", "chat_bridge.inspect", { tabId: createdTabId }, 5_000).catch(() => null);
+                const observerUrl = typeof observed?.canonicalUrl === "string" ? observed.canonicalUrl : null;
+                const observerId = chatGptConversationIdFromUrl(observerUrl);
+                if (urlId && observerId && urlId !== observerId) {
+                    throw new Error("ChatGPT task-chat tab and Browser Chat Bridge disagree about the conversation identity.");
+                }
+                const conversationId = urlId || (observerId && observed?.conversationId === observerId ? observerId : null);
+                const canonicalUrl = urlId ? String(tab.url) : observerUrl;
+                if (conversationId && canonicalUrl && tab) {
                     identity = {
                         conversationId,
-                        canonicalUrl: String(tab.url),
+                        canonicalUrl,
                         title: String(tab.title || "ChatGPT").slice(0, 200),
                     };
+                    turnState = observed?.conversationId === conversationId ? observed : null;
                     break;
                 }
-                await sleep(150);
+                await sleep(250);
             }
             if (!identity)
-                throw new Error("ChatGPT task conversation identity could not be confirmed.");
-            const inspected = await callContext("user", "chat_bridge.inspect", { tabId: createdTabId }, 5_000).catch(() => null);
-            const turnState = inspected?.conversationId === identity.conversationId ? inspected : null;
+                throw new Error("ChatGPT task conversation identity could not be confirmed before the bounded deadline.");
             return Object.freeze({
                 confirmed: true,
                 binding: Object.freeze({
@@ -398,6 +410,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             if (mutationStarted) {
                 const ambiguous = new Error("Telegram new-task chat creation became ambiguous: " + errorMessage(error).slice(0, 220));
                 ambiguous.code = "CHAT_BRIDGE_AMBIGUOUS";
+                if (createdTabId)
+                    ambiguous.candidateTabId = createdTabId;
                 throw ambiguous;
             }
             throw error;

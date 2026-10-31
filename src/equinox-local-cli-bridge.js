@@ -149,8 +149,11 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
             if (inflight.has(id))
                 throw new Error("A CLI delivery is in progress for this task.");
             const task = await tasks.readInternal(id);
-            if (task.status !== "active" || !task.chatBinding)
-                throw new Error("An active task with a verified ChatGPT binding is required.");
+            if (task.status !== "active" || !task.chatBinding) {
+                const error = new Error("An active task with a verified ChatGPT binding is required.");
+                error.code = "CLI_CHAT_NOT_BOUND";
+                throw error;
+            }
             const agent = input.agent === undefined ? null : requiredString(input.agent, "agent", 80);
             const rawMessage = requiredString(input.message, "message", 3800);
             const message = agent ? `[Equinox Local CLI · Agent: ${agent}] ${rawMessage}` : rawMessage;
@@ -238,7 +241,8 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
                         response = { ok: true, result: await dispatch(request) };
                     }
                     catch (error) {
-                        response = { ok: false, error: { code: typeof error?.code === "string" ? error.code : "CLI_ERROR", message: error instanceof Error ? error.message.slice(0, 800) : "CLI request failed." } };
+                        const candidateTabId = error?.candidateTabId;
+                        response = { ok: false, error: { code: typeof error?.code === "string" ? error.code : "CLI_ERROR", message: error instanceof Error ? error.message.slice(0, 800) : "CLI request failed.", ...(Number.isSafeInteger(candidateTabId) && candidateTabId > 0 ? { candidateTabId } : {}) } };
                     }
                     const data = JSON.stringify(response);
                     if (Buffer.byteLength(data) > MAX_RESPONSE_BYTES)
