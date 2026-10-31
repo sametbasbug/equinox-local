@@ -18,7 +18,7 @@ const HELP = `eqlocal — Equinox Local agent CLI (JSON output by default)
   eqlocal tasks create --objective TEXT [--title TEXT]
   eqlocal tasks finish|cancel TASK_ID
   eqlocal chat start --task TASK_ID [--wait] [--run-task]
-  eqlocal chat send --task TASK_ID --message TEXT [--agent NAME] [--request-id ID] [--wait]
+  eqlocal chat send --task TASK_ID (--message TEXT | --message-file PATH) [--agent NAME] [--request-id ID] [--wait]
   eqlocal chat read|wait --task TASK_ID --receipt JSON [--timeout SECONDS]
 
   --json     Machine-readable output (always the default)
@@ -26,6 +26,38 @@ const HELP = `eqlocal — Equinox Local agent CLI (JSON output by default)
 
 '--args-file -' and '--message-file -' read stdin. Chat delivery never auto-retries.
 Save the chat send receipt to poll its final response after disconnects.`;
+const HELP_TOPICS = Object.freeze({
+  chat: `Chat commands operate only on an exact active Task Capsule's bound ChatGPT conversation.
+
+  eqlocal chat start --task TASK_ID [--wait] [--run-task]
+  eqlocal chat send --task TASK_ID (--message TEXT | --message-file PATH) [--agent NAME] [--request-id ID] [--wait]
+  eqlocal chat read|wait --task TASK_ID --receipt JSON [--timeout SECONDS]
+
+Start creates a new conversation in Your Browser. By default it sends a neutral READY handshake, not the task objective. --run-task sends the task objective immediately. --agent prefixes a message with a sender label; it does not select or invoke another agent. Never blindly retry an ambiguous send.
+`,
+  'chat start': `eqlocal chat start --task TASK_ID [--wait] [--run-task] [--timeout SECONDS]
+
+Opens a NEW Your Browser ChatGPT conversation for an active, unbound task. Default: neutral EQL_CLI_READY handshake; --run-task immediately asks the assistant to execute the Task Capsule objective instead. Returns result.receipt and the backward-compatible result.initialTurn; pass either JSON object to --receipt for chat wait. --wait waits for the initial assistant response.
+`,
+  'chat send': `eqlocal chat send --task TASK_ID (--message TEXT | --message-file PATH) [--agent NAME] [--request-id ID] [--wait] [--timeout SECONDS]
+
+Sends one message to the exact bound conversation. --message-file - reads stdin (UTF-8), avoiding shell quoting problems. --agent adds a sender label, not an agent target. --request-id is an 8–64-character lowercase alphanumeric/hyphen idempotency key. With --wait, polls using the confirmed send receipt. On CHAT_BRIDGE_AMBIGUOUS, do NOT retry: inspect the task-bound conversation before any new mutation.
+`,
+  'chat read': `eqlocal chat read --task TASK_ID --receipt JSON
+
+Reads the final assistant response for a confirmed send/start receipt (containing userEpoch and previousAssistantTurnKey). Does not send or retry.
+`,
+  'chat wait': `eqlocal chat wait --task TASK_ID --receipt JSON [--timeout SECONDS]
+
+Polls a confirmed send/start receipt until ready or timeout (default 120 seconds; max 600). Timed-out waits are safe to repeat with the same receipt. Do not reuse a receipt after manually sending a new user message.
+`,
+  tasks: `Task Capsules: eqlocal tasks list, read TASK_ID, create --objective TEXT [--title TEXT], finish|cancel|delete TASK_ID. Use tasks create before chat start; finish when your work is complete.
+`,
+  'tasks create': `eqlocal tasks create --objective TEXT [--title TEXT]
+
+Creates a new Task Capsule, but does NOT open ChatGPT or execute it. Read result.id (the returned Task ID), then use eqlocal chat start --task TASK_ID.
+`,
+});
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const args = process.argv.slice(2);
 let pendingRequestId = null;
@@ -90,7 +122,7 @@ async function request(payload) {
       if (newline < 0) return;
       try {
         const response = JSON.parse(buffer.slice(0, newline));
-        if (!response.ok) {const error = new Error(response.error?.message || 'CLI operation failed.'); error.code = response.error?.code || 'CLI_ERROR'; fail(error); return;}
+        if (!response.ok) {const error = new Error(String(response.error?.message || 'CLI operation failed.').replace(/Telegram Chat Bridge/g, 'Chat Bridge')); error.code = response.error?.code || 'CLI_ERROR'; fail(error); return;}
         settled = true; socket.end(); resolve(response.result);
       } catch (error) {fail(error);}
     });
@@ -134,7 +166,7 @@ async function main() {
   }
   const [group, command, third, fourth] = pos;
   if (fourth !== undefined) throw new Error('Too many positional arguments. Run eqlocal --help.');
-  if (!group || group === 'help' || opt.help) {process.stdout.write(HELP); return;}
+  if (!group || group === 'help' || opt.help) {const topic = group === 'help' ? [command, third].filter(Boolean).join(' ') : [group, command].filter(Boolean).join(' '); process.stdout.write(HELP_TOPICS[topic] || HELP); return;}
   let result;
   if (group === 'status' && !command) result = await request({action: 'status'});
   else if (group === 'tools' && command === 'list') result = await request({action: 'tools.list', ...(third ? {domain: third} : {})});
@@ -173,6 +205,7 @@ async function main() {
   process.stdout.write(JSON.stringify({ok: true, result}) + '\n');
 }
 main().catch((error) => {
-  process.stderr.write(JSON.stringify({ok: false, error: {code: error.code || 'CLI_ERROR', message: error.message || String(error), ...(pendingRequestId ? {requestId: pendingRequestId} : {})}}) + '\n');
+  const ambiguous = error.code === 'CHAT_BRIDGE_AMBIGUOUS' || (pendingRequestId && /timed out|disconnected/i.test(error.message || ''));
+  process.stderr.write(JSON.stringify({ok: false, error: {code: error.code || 'CLI_ERROR', message: error.message || String(error), ...(pendingRequestId ? {requestId: pendingRequestId} : {}), ...(ambiguous ? {delivery_state: 'unknown', retry_safe: false, next_action: 'Inspect the exact bound ChatGPT conversation without submitting again. Do not reuse an older receipt after a manual send.'} : {})}}) + '\n');
   process.exitCode = 1;
 });
