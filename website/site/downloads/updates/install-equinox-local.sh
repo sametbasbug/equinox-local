@@ -202,10 +202,26 @@ cleanup() {
     if [ "$recovery_ok" = true ] && [ -z "$(/bin/ls -A "$REINSTALL_BACKUP_ROOT" 2>/dev/null)" ]; then
       /bin/rmdir "$REINSTALL_BACKUP_ROOT" || true
       if [ "$REINSTALL_SERVICE_STOPPED" = true ] && [ "$REINSTALL_HAD_OLD_AGENT" = true ]; then
-        if ! /bin/launchctl bootstrap "gui/$CURRENT_UID" "$HOME_DIR/Library/LaunchAgents/dev.equinox.local.plist" >/dev/null 2>&1; then
-          printf 'Equinox Local installer: old executable files restored, but launchd bootstrap failed; restart the old service manually.\n' >&2
-        elif ! /bin/launchctl kickstart "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1; then
-          printf 'Equinox Local installer: old executable files restored, but launchd kickstart failed; restart the old service manually.\n' >&2
+        local login_disabled=false login_state=""
+        login_state="$(/bin/launchctl print-disabled "gui/$CURRENT_UID" 2>/dev/null)" || {
+          printf 'Equinox Local installer: cannot inspect previous login startup setting for recovery.\n' >&2
+          recovery_ok=false
+        }
+        if [ "$recovery_ok" = true ]; then
+          if printf '%s\n' "$login_state" | /usr/bin/grep -Fq '"dev.equinox.local" => disabled'; then
+            login_disabled=true
+            /bin/launchctl enable "gui/$CURRENT_UID/dev.equinox.local" ||
+              printf 'Equinox Local installer: could not temporarily enable the old service.\n' >&2
+          fi
+          if ! /bin/launchctl bootstrap "gui/$CURRENT_UID" "$HOME_DIR/Library/LaunchAgents/dev.equinox.local.plist" >/dev/null 2>&1; then
+            printf 'Equinox Local installer: old executable files restored, but launchd bootstrap failed; restart the old service manually.\n' >&2
+          elif ! /bin/launchctl kickstart "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1; then
+            printf 'Equinox Local installer: old executable files restored, but launchd kickstart failed; restart the old service manually.\n' >&2
+          fi
+          if [ "$login_disabled" = true ]; then
+            /bin/launchctl disable "gui/$CURRENT_UID/dev.equinox.local" ||
+              printf 'Equinox Local installer: could not restore disabled login startup; disable it in the menu.\n' >&2
+          fi
         fi
       fi
     fi

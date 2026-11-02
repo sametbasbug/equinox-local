@@ -23,6 +23,7 @@ if [ "${1:-}" = "--worker" ]; then
   shift
 fi
 APP_PATH="$HOME/Applications/Equinox Local.app"
+LOGIN_STARTUP_RESTORE_NEEDED=0
 APP_EXECUTABLE="$APP_PATH/Contents/MacOS/applet"
 PRE_RESTART_APP_PIDS=""
 if [ -x "$APP_EXECUTABLE" ] && [ ! -L "$APP_EXECUTABLE" ]; then
@@ -128,6 +129,10 @@ timestamp() {
 
 cleanup_restart() {
   status=$?
+  # Preserve opt-out if a restart fails between enable and bootstrap.
+  if [ "$LOGIN_STARTUP_RESTORE_NEEDED" -eq 1 ]; then
+    /bin/launchctl disable "gui/$(/usr/bin/id -u)/$LABEL" >/dev/null 2>&1 || true
+  fi
   if [ -n "$BOUNDED_PID" ]; then
     /bin/kill -TERM "$BOUNDED_PID" >/dev/null 2>&1 || true
     wait "$BOUNDED_PID" >/dev/null 2>&1 || true
@@ -457,6 +462,11 @@ DOMAIN="gui/$CURRENT_UID"
   fi
 
   RESTART_STAGE="launch-agent-bootstrap"
+  LOGIN_STARTUP_STATE="$(/bin/launchctl print-disabled "$DOMAIN")" || fail "could not inspect source LaunchAgent login preference"
+  if printf '%s\n' "$LOGIN_STARTUP_STATE" | /usr/bin/grep -Fq "\"$LABEL\" => disabled"; then
+    LOGIN_STARTUP_RESTORE_NEEDED=1
+    run_bounded 20 /bin/launchctl enable "$DOMAIN/$LABEL" || fail "could not temporarily enable source LaunchAgent for explicit restart"
+  fi
   BOOTSTRAPPED=0
   for _ in {1..12}; do
     if run_bounded 40 /bin/launchctl bootstrap "$DOMAIN" "$PLIST"; then
@@ -468,6 +478,10 @@ DOMAIN="gui/$CURRENT_UID"
   [ "$BOOTSTRAPPED" -eq 1 ] || fail "source LaunchAgent bootstrap failed after bounded retries"
   RESTART_STAGE="launch-agent-kickstart"
   run_bounded 40 /bin/launchctl kickstart "$DOMAIN/$LABEL" || fail "source LaunchAgent kickstart failed or timed out"
+  if [ "$LOGIN_STARTUP_RESTORE_NEEDED" -eq 1 ]; then
+    run_bounded 20 /bin/launchctl disable "$DOMAIN/$LABEL" || fail "could not restore disabled login startup preference"
+    LOGIN_STARTUP_RESTORE_NEEDED=0
+  fi
 
   RESTART_STAGE="runtime-ready"
   sleep 8
