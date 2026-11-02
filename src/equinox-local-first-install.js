@@ -295,19 +295,37 @@ async function firstInstallActivationDiagnostics({ homeDir, uid, execFileImpl = 
 async function reloadLaunchAgent(installation, { uid, execFileImpl = execFile, }) {
     if (!Number.isInteger(uid) || uid < 1)
         throw new Error("A non-root user id is required to load Equinox Local.");
-    const service = `gui/${uid}/${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}`;
-    await execFileImpl("/bin/launchctl", ["bootout", service], {
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-    }).catch(() => ({ stdout: "", stderr: "" }));
-    await execFileImpl("/bin/launchctl", ["bootstrap", `gui/${uid}`, installation.launchAgentPath], {
-        timeout: 15_000,
+    const domain = "gui/" + uid;
+    const service = domain + "/" + EQUINOX_LOCAL_LAUNCH_AGENT_LABEL;
+    const { stdout: disabledOutput } = await execFileImpl("/bin/launchctl", ["print-disabled", domain], {
+        timeout: 5_000,
         maxBuffer: 1024 * 1024,
     });
-    await execFileImpl("/bin/launchctl", ["kickstart", service], {
-        timeout: 15_000,
-        maxBuffer: 1024 * 1024,
-    });
+    const disabled = String(disabledOutput).split(/\r?\n/u).some((line) => line.trim() === '"' + EQUINOX_LOCAL_LAUNCH_AGENT_LABEL + '" => disabled');
+    // An opted-out LaunchAgent must still support explicit signed reinstalls
+    // while preserving the user's next-login preference.
+    if (disabled) {
+        await execFileImpl("/bin/launchctl", ["enable", service], { timeout: 5_000, maxBuffer: 64 * 1024 });
+    }
+    try {
+        await execFileImpl("/bin/launchctl", ["bootout", service], {
+            timeout: 15_000,
+            maxBuffer: 1024 * 1024,
+        }).catch(() => ({ stdout: "", stderr: "" }));
+        await execFileImpl("/bin/launchctl", ["bootstrap", domain, installation.launchAgentPath], {
+            timeout: 15_000,
+            maxBuffer: 1024 * 1024,
+        });
+        await execFileImpl("/bin/launchctl", ["kickstart", service], {
+            timeout: 15_000,
+            maxBuffer: 1024 * 1024,
+        });
+    }
+    finally {
+        if (disabled) {
+            await execFileImpl("/bin/launchctl", ["disable", service], { timeout: 5_000, maxBuffer: 64 * 1024 });
+        }
+    }
 }
 // Older Main enrollment retains the signed Stable WPF/Native Messaging at the
 // numbered release path and has no current-native.json until a native update.

@@ -280,6 +280,7 @@ private enum RuntimeLaunchAgentError: LocalizedError {
     case launchctlFailed(String)
     case launchctlTimedOut
     case runtimeStillReachable
+    case startupPreferenceUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -295,6 +296,8 @@ private enum RuntimeLaunchAgentError: LocalizedError {
             return "The macOS LaunchAgent operation timed out."
         case .runtimeStillReachable:
             return "Equinox Local stopped its LaunchAgent, but the local runtime is still reachable."
+        case .startupPreferenceUnavailable:
+            return "Equinox Local could not verify its macOS login startup preference."
         }
     }
 }
@@ -334,17 +337,27 @@ private final class RuntimeLaunchAgentController {
                     throw RuntimeLaunchAgentError.runtimeStillReachable
                 } else {
                     let candidate = try preferredCandidate()
-                    let bootstrap = try runLaunchctl(["bootstrap", domain, candidate.plistPath], timeout: 3.0)
-                    if bootstrap != 0, !(try isLoaded(candidate.label)) {
-                        throw RuntimeLaunchAgentError.launchctlFailed("bootstrap")
+                    // Disabled LaunchAgents cannot be bootstrapped. A manual app
+                    // launch must still work without changing next-login policy.
+                    let wasDisabled = try isStartAtLoginDisabled(candidate.label)
+                    if wasDisabled { try setStartAtLoginDisabled(false, for: candidate.label) }
+                    do {
+                        let bootstrap = try runLaunchctl(["bootstrap", domain, candidate.plistPath], timeout: 3.0)
+                        if bootstrap != 0, !(try isLoaded(candidate.label)) {
+                            throw RuntimeLaunchAgentError.launchctlFailed("bootstrap")
+                        }
+                        let kickstart = try runLaunchctl(["kickstart", "\(domain)/\(candidate.label)"], timeout: 3.0)
+                        if kickstart != 0, !(try isLoaded(candidate.label)) {
+                            throw RuntimeLaunchAgentError.launchctlFailed("start")
+                        }
+                        guard try waitUntil(timeout: 3.0, condition: { try isLoaded(candidate.label) }) else {
+                            throw RuntimeLaunchAgentError.launchctlFailed("start")
+                        }
+                    } catch {
+                        if wasDisabled { try? setStartAtLoginDisabled(true, for: candidate.label) }
+                        throw error
                     }
-                    let kickstart = try runLaunchctl(["kickstart", "\(domain)/\(candidate.label)"], timeout: 3.0)
-                    if kickstart != 0, !(try isLoaded(candidate.label)) {
-                        throw RuntimeLaunchAgentError.launchctlFailed("start")
-                    }
-                    guard try waitUntil(timeout: 3.0, condition: { try isLoaded(candidate.label) }) else {
-                        throw RuntimeLaunchAgentError.launchctlFailed("start")
-                    }
+                    if wasDisabled { try setStartAtLoginDisabled(true, for: candidate.label) }
                     remember(candidate.label)
                     result = .success(candidate.label)
                 }
@@ -352,6 +365,54 @@ private final class RuntimeLaunchAgentController {
                 result = .failure(error)
             }
             DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    func startAtLoginStatus(completion: @escaping (Result<Bool, Error>) -> Void) {
+        queue.async { [self] in
+            let result = Result { try !isStartAtLoginDisabled(currentCandidate().label) }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    func setStartAtLogin(_ enabled: Bool, completion: @escaping (Result<Bool, Error>) -> Void) {
+        queue.async { [self] in
+            let result = Result {
+                let candidate = try currentCandidate()
+                try setStartAtLoginDisabled(!enabled, for: candidate.label)
+                return !(try isStartAtLoginDisabled(candidate.label))
+            }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    private func currentCandidate() throws -> TrustedLaunchAgent {
+        let loaded = try loadedLabels()
+        if loaded.count > 1 { throw RuntimeLaunchAgentError.ambiguousLaunchAgents }
+        if let label = loaded.first { return try validateLaunchAgent(label) }
+        return try preferredCandidate()
+    }
+
+    private func isStartAtLoginDisabled(_ label: String) throws -> Bool {
+        guard supportedLabels.contains(label) else {
+            throw RuntimeLaunchAgentError.invalidLaunchAgent("unsupported label")
+        }
+        let response = try launchctlResult(["print-disabled", domain], timeout: 3.0, captureOutput: true)
+        guard response.status == 0 else { throw RuntimeLaunchAgentError.startupPreferenceUnavailable }
+        // Services not present in print-disabled have the macOS default (enabled).
+        return response.output.split(separator: "\n").contains {
+            $0.trimmingCharacters(in: .whitespaces) == "\"\(label)\" => disabled"
+        }
+    }
+
+    private func setStartAtLoginDisabled(_ disabled: Bool, for label: String) throws {
+        guard supportedLabels.contains(label) else {
+            throw RuntimeLaunchAgentError.invalidLaunchAgent("unsupported label")
+        }
+        let action = disabled ? "disable" : "enable"
+        guard try runLaunchctl([action, "\(domain)/\(label)"], timeout: 3.0) == 0,
+              try isStartAtLoginDisabled(label) == disabled else {
+            throw RuntimeLaunchAgentError.startupPreferenceUnavailable
         }
     }
 
@@ -471,10 +532,17 @@ private final class RuntimeLaunchAgentController {
     }
 
     private func runLaunchctl(_ arguments: [String], timeout: TimeInterval) throws -> Int32 {
+        try launchctlResult(arguments, timeout: timeout).status
+    }
+
+    private func launchctlResult(
+        _ arguments: [String], timeout: TimeInterval, captureOutput: Bool = false
+    ) throws -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
+        let output = captureOutput ? Pipe() : nil
+        process.standardOutput = output ?? FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
         let deadline = Date().addingTimeInterval(timeout)
@@ -490,7 +558,9 @@ private final class RuntimeLaunchAgentController {
             if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
             throw RuntimeLaunchAgentError.launchctlTimedOut
         }
-        return process.terminationStatus
+        let data = output?.fileHandleForReading.readDataToEndOfFile() ?? Data()
+        guard data.count <= 128 * 1024 else { throw RuntimeLaunchAgentError.startupPreferenceUnavailable }
+        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 
     private func waitUntil(timeout: TimeInterval, condition: () throws -> Bool) throws -> Bool {
@@ -1038,6 +1108,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var agentStateMenuItem: NSMenuItem!
     private var controlCenterMenuItem: NSMenuItem!
     private var floatingPetMenuItem: NSMenuItem!
+    private var startAtLoginMenuItem: NSMenuItem!
+    private var startAtLoginEnabled: Bool?
+    private var startAtLoginActionInFlight = false
+    private var startAtLoginStatusInFlight = false
     private var agentActionMenuItem: NSMenuItem!
     private var agentBrowserStateMenuItem: NSMenuItem!
     private var agentBrowserActionMenuItem: NSMenuItem!
@@ -1060,6 +1134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         notificationCenter.delegate = self
         configureMainMenu()
         configureStatusItem()
+        refreshStartAtLoginStatus()
         let storedControlCenterVisibility = UserDefaults.standard.object(forKey: controlCenterVisibleKey) as? Bool
         let showControlCenter = restartShellMode ? (storedControlCenterVisibility ?? true) : true
         configureWindow(showOnLaunch: showControlCenter)
@@ -1140,6 +1215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func menuWillOpen(_ menu: NSMenu) {
         refreshMenuStatus()
         refreshUpdateStatus()
+        refreshStartAtLoginStatus()
     }
 
     private func localized(_ english: String, _ turkish: String) -> String {
@@ -1182,6 +1258,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         statusMenu.addItem(controlCenterMenuItem)
         floatingPetMenuItem = makeMenuItem("", action: #selector(toggleFloatingPet(_:)))
         statusMenu.addItem(floatingPetMenuItem)
+        startAtLoginMenuItem = makeMenuItem("", action: #selector(toggleStartAtLogin(_:)))
+        statusMenu.addItem(startAtLoginMenuItem)
 
         agentBrowserStateMenuItem = makeMenuItem("")
         agentBrowserStateMenuItem.isEnabled = false
@@ -1473,6 +1551,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             ? localized("Resume Agent", "Ajanı Sürdür")
             : localized("Emergency Stop", "Acil Durdur")
         agentActionMenuItem?.isEnabled = runtimeAvailable && !menuActionInFlight
+        startAtLoginMenuItem?.title = localized("Start at login", "Oturum açıldığında başlat")
+        startAtLoginMenuItem?.state = startAtLoginEnabled == true ? .on : .off
+        startAtLoginMenuItem?.isEnabled = startAtLoginEnabled != nil && !startAtLoginActionInFlight
         agentBrowserStateMenuItem?.title = "Agent Browser · \(agentBrowserReady ? localized("Connected", "Bağlı") : localized("Not connected", "Bağlı değil"))"
         agentBrowserActionMenuItem?.title = localized("Open Agent Browser", "Agent Browser'ı Aç")
         agentBrowserActionMenuItem?.isEnabled = runtimeAvailable && !agentPaused && !menuActionInFlight
@@ -2009,6 +2090,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5))
         }
         refreshMenuStatus()
+    }
+
+    private func refreshStartAtLoginStatus() {
+        guard !startAtLoginStatusInFlight && !startAtLoginActionInFlight else { return }
+        startAtLoginStatusInFlight = true
+        runtimeLifecycle.startAtLoginStatus { [weak self] result in
+            guard let self else { return }
+            self.startAtLoginStatusInFlight = false
+            self.startAtLoginEnabled = try? result.get()
+            self.renderStatusMenu()
+        }
+    }
+
+    @objc private func toggleStartAtLogin(_ sender: Any?) {
+        guard let enabled = startAtLoginEnabled, !startAtLoginActionInFlight else { return }
+        startAtLoginActionInFlight = true
+        renderStatusMenu()
+        runtimeLifecycle.setStartAtLogin(!enabled) { [weak self] result in
+            guard let self else { return }
+            self.startAtLoginActionInFlight = false
+            switch result {
+            case let .success(actual):
+                self.startAtLoginEnabled = actual
+            case let .failure(error):
+                self.startAtLoginEnabled = nil
+                self.showRuntimeLifecycleError(title: self.localized("Could not change login startup", "Otomatik başlatma değiştirilemedi"), error: error)
+            }
+            self.renderStatusMenu()
+            self.refreshStartAtLoginStatus()
+        }
     }
 
     @objc private func openControlCenter(_ sender: Any?) {
