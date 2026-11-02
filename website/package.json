@@ -14,9 +14,9 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
-    "astro": "7.4.2",
+    "astro": "7.4.4",
     "tailwindcss": "4.3.3",
-    "wrangler": "4.153.0"
+    "wrangler": "4.156.1"
   },
   "overrides": {
     "miniflare": {
