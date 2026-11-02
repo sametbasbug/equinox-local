@@ -11,7 +11,7 @@ import {
 } from "../../src/equinox-local-app-host.js";
 import { synchronizeEquinoxLocalNativeAppHost } from "../../src/equinox-local-native-app-host.js";
 import { readEquinoxLocalMainNativePointer } from "../../src/equinox-local-main-native-state.js";
-import { buildEquinoxLocalNativeAppArtifacts } from "../../src/equinox-local-native-app.js";
+import { buildEquinoxLocalNativeAppArtifacts, equinoxLocalNativeAppArtifactPaths, EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION } from "../../src/equinox-local-native-app.js";
 import { readSourceRuntimeConfig } from "../../src/equinox-local-source-runtime.js";
 
 function shellQuote(value: string): string {
@@ -149,8 +149,15 @@ export async function prepareSourceAppHost({
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
-    if (mainNative) {
-      if (mainNative.target !== target) throw new Error("Main native pointer does not match the source host platform.");
+    if (mainNative && mainNative.target !== target) throw new Error("Main native pointer does not match the source host platform.");
+    // A Factory checkout may outlive a historical signed native pointer.
+    // New native menu code must not be pinned forever to an older shell binary.
+    // The pointer is independently authenticated before inspecting its metadata.
+    const pointerMetadata = mainNative
+      ? JSON.parse(await fsImpl.readFile(equinoxLocalNativeAppArtifactPaths(mainNative.releaseDir).metadata, "utf8"))
+      : null;
+    if (mainNative && Number.isSafeInteger(pointerMetadata?.shellVersion)
+        && pointerMetadata.shellVersion >= EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION) {
       await synchronizeNativeAppImpl({ homeDir, releaseDir: mainNative.releaseDir, fsImpl, requirePayloadIdentity: true });
     } else {
       const artifactRoot = await fsImpl.mkdtemp(path.join(os.tmpdir(), "equinox-source-native-app-"));
