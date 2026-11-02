@@ -26,6 +26,13 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+### Dependency refresh (November 2026)
+
+- Updated the four-platform pinned Node.js runtime and installers to **26.13.0**, retaining verified official archive SHA-256/lengths and Windows executable digests. CI Node setup and the website's mirrored installers use the same pins.
+- Updated the four platform tunnel-client archives to **0.0.19** with SHA-256 digests validated against official release assets.
+- Updated the local PDF.js dependency to **6.5.438**, Node types to **26.6.6**, and the site build tools to Astro **7.4.4** and Wrangler **4.156.1**, refreshing both lockfiles and transitive packages.
+- Existing compatible GitHub Actions major tags, TypeScript, Peekaboo, and the pinned prebuilt Dugite/node-pty channels remain unchanged; those custom native distributions cannot be replaced by unrelated published npm or source-only major releases.
+
 ## [6.2.1] - 2026-10-26
 
 ### Windows signed reinstall and runtime refresh
