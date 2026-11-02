@@ -5,6 +5,7 @@
 - Added a localized **Start at login** toggle to the macOS menu bar, matching the existing Windows tray preference.
 - The per-user launchd setting is persisted without stopping a running runtime. Explicit manual launches can still start an opted-out LaunchAgent and retain the disabled-at-login preference.
 - Kept the trusted LaunchAgent ownership and content checks; launchd setting changes are verified before updating the checkmark. Source restarts and signed macOS reinstalls temporarily load an opted-out service without resetting its next-login preference.
+- Advanced the native macOS shell revision so existing installations actually receive the new menu. Factory source restarts rebuild a newer checkout shell instead of reusing an older signed native pointer.
 
 ## [6.3.1] - 2026-10-29
 
