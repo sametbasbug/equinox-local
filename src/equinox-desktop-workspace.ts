@@ -34,7 +34,14 @@ const state: {
   filter: Filter;
   search: string;
   busy: boolean;
-} = { tasks: [], selected: null, filter: "all", search: "", busy: false };
+  connected: boolean;
+} = { tasks: [], selected: null, filter: "all", search: "", busy: false, connected: false };
+
+const selectedTaskKey = "equinox-workspace-selected-task";
+function rememberSelection(): void {
+  if (!state.selected) return;
+  try { sessionStorage.setItem(selectedTaskKey, state.selected); } catch { /* Optional tab storage. */ }
+}
 
 function node<K extends keyof HTMLElementTagNameMap>(
   name: K,
@@ -213,6 +220,10 @@ function bindNewTaskDialog(): void {
     const objective = (byId("new-task-objective") as HTMLTextAreaElement).value.trim();
     if (!name || objective.length < 12) return;
     const submit = byId("new-task-submit") as HTMLButtonElement;
+    if (!state.connected) {
+      byId("new-task-error").textContent = "Yerel servis bağlı değil. Bağlantı geri geldiğinde yeniden deneyebilirsin.";
+      return;
+    }
     if (submit.disabled) return;
     submit.disabled = true;
     void (async () => {
@@ -225,6 +236,7 @@ function bindNewTaskDialog(): void {
         (byId("task-search") as HTMLInputElement).value = "";
         setFilter("all");
         state.selected = result.task.taskId;
+        rememberSelection();
         await refresh();
         const scroller = document.querySelector<HTMLElement>(".main-scroll");
         if (scroller) scroller.scrollTo({top: byId("work-section").offsetTop - 66, behavior: "smooth"});
@@ -252,7 +264,7 @@ function appendChat(target: HTMLElement, task: WorkspaceTask): void {
       const button = node("button", "chat-start", chatStarting.has(task.taskId)
         ? "Konuşma oluşturuluyor…" : "ChatGPT konuşmasını başlat ↗");
       button.type = "button";
-      button.disabled = chatStarting.has(task.taskId) || chatStartBlocked.has(task.taskId);
+      button.disabled = !state.connected || chatStarting.has(task.taskId) || chatStartBlocked.has(task.taskId);
       button.addEventListener("click", () => void startTaskChat(task.taskId));
       card.append(button);
     }
@@ -318,7 +330,7 @@ function appendChat(target: HTMLElement, task: WorkspaceTask): void {
   input.addEventListener("input", () => chatDrafts.set(task.taskId, input.value));
   const send = node("button", "chat-send", "Gönder ↗");
   send.type = "submit";
-  const blocked = chatSending.has(task.taskId) || !["idle", "ready"].includes(info.status);
+  const blocked = !state.connected || chatSending.has(task.taskId) || !["idle", "ready"].includes(info.status);
   input.disabled = blocked;
   send.disabled = blocked;
   form.append(input, send);
@@ -406,8 +418,28 @@ function renderTasks(): void {
     button.append(icon, copy, node("span", "task-caret", "›"));
     button.addEventListener("click", () => {
       state.selected = task.taskId;
+      rememberSelection();
       renderTasks();
       if (task.chatBound && task.status === "active") void loadChat(task.taskId);
+    });
+    button.addEventListener("keydown", (event) => {
+      const index = tasks.findIndex((entry) => entry.taskId === task.taskId);
+      let nextIndex = index;
+      if (event.key === "ArrowDown") nextIndex = Math.min(index + 1, tasks.length - 1);
+      else if (event.key === "ArrowUp") nextIndex = Math.max(index - 1, 0);
+      else if (event.key === "Home") nextIndex = 0;
+      else if (event.key === "End") nextIndex = tasks.length - 1;
+      else return;
+      event.preventDefault();
+      const next = tasks[nextIndex];
+      if (!next) return;
+      state.selected = next.taskId;
+      rememberSelection();
+      renderTasks();
+      const target = [...list.querySelectorAll<HTMLButtonElement>(".task-item")]
+        .find((entry) => entry.dataset.taskId === next.taskId);
+      target?.focus({preventScroll: true});
+      target?.scrollIntoView({block: "nearest"});
     });
     list.append(button);
   }
@@ -457,6 +489,7 @@ async function refresh(): Promise<void> {
       headers: { "x-equinox-background-refresh": "1" },
       cache: "no-store",
       credentials: "same-origin",
+      signal: AbortSignal.timeout(8000),
     };
     const [tasksResult, statusResult] = await Promise.all([
       fetch("/api/v1/tasks", options),
@@ -472,9 +505,21 @@ async function refresh(): Promise<void> {
     updateCounters();
     if (changed) renderTasks();
     updateHealth(statusPayload);
+    const restored = !state.connected;
+    state.connected = true;
+    byId("connection-alert").hidden = true;
+    if (restored) {
+      renderDetail();
+      const selected = state.tasks.find((entry) => entry.taskId === state.selected);
+      if (selected?.chatBound && chatInfo.get(selected.taskId)?.status === "unavailable") void loadChat(selected.taskId);
+    }
     byId("connection-text").textContent = "Yerel servis bağlı";
     byId("connection-dot").classList.add("ok");
   } catch {
+    const lost = state.connected;
+    state.connected = false;
+    byId("connection-alert").hidden = false;
+    if (lost) renderDetail();
     byId("connection-text").textContent = "Bağlantı yok";
     byId("connection-dot").classList.remove("ok");
     byId("metric-health").textContent = "Bağlantı yok";
@@ -488,6 +533,10 @@ async function refresh(): Promise<void> {
 }
 
 function boot(): void {
+  try {
+    const remembered = sessionStorage.getItem(selectedTaskKey);
+    if (remembered && /^task-[a-z0-9-]{6,80}$/u.test(remembered)) state.selected = remembered;
+  } catch { /* Optional tab storage. */ }
   byId("today-label").textContent = new Intl.DateTimeFormat("tr-TR", {
     day: "numeric", month: "long", year: "numeric",
   }).format(new Date());
@@ -517,6 +566,9 @@ function boot(): void {
     if (!document.hidden) void refresh();
   });
   window.setInterval(() => { if (!document.hidden) void refresh(); }, 20000);
+  // A disconnected workspace should recover promptly, but never re-POST a
+  // potentially delivered task/chat mutation.
+  window.setInterval(() => { if (!document.hidden && !state.connected) void refresh(); }, 5000);
   window.setInterval(() => {
     if (document.hidden || !state.selected || chatRequests.has(state.selected)) return;
     const info = chatInfo.get(state.selected);

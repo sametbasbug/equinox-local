@@ -1037,3 +1037,50 @@ html, body {
   opacity: .5;
   cursor: not-allowed;
 }
+
+
+.connection-alert {
+  flex: none;
+  margin: 0;
+  padding: 12px 28px;
+  background: #33271f;
+  border-bottom: 1px solid #755238;
+  color: #f0cdad;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.connection-alert[hidden] {
+  display: none;
+}
+
+/* At the supported 620px desktop minimum, keep the status and navigation
+   reachable rather than clipping the lower part of the sidebar. */
+@media (max-height: 700px) {
+  .sidebar {
+    padding-top: 14px;
+    padding-bottom: 12px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+  .brand {
+    padding-bottom: 18px;
+  }
+  .sidebar-section-label.secondary-label {
+    margin-top: 15px;
+  }
+  .side-link {
+    min-height: 36px;
+    font-size: 12px;
+  }
+  .sidebar-bottom {
+    padding-top: 10px;
+  }
+  .sidebar-note {
+    margin-top: 12px;
+  }
+}
+@media (max-width: 1100px) {
+  .welcome-pattern {
+    display: none;
+  }
+}

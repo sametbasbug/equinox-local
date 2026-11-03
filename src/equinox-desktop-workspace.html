@@ -33,7 +33,7 @@
         <a class="side-link" href="/"><span class="side-icon">⚙</span> Kontrol Merkezi <span class="nav-arrow">↗</span></a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="connection-row"><span class="connection-dot" id="connection-dot"></span><div><strong id="connection-text">Bağlanıyor…</strong><small>Yerel Equinox servisi</small></div></div>
+        <div class="connection-row"><span class="connection-dot" id="connection-dot"></span><div><strong id="connection-text" aria-live="polite" aria-atomic="true">Bağlanıyor…</strong><small>Yerel Equinox servisi</small></div></div>
         <div class="sidebar-note">Bilgisayarın ve verilerin senin kontrolünde.</div>
       </div>
     </aside>
@@ -46,6 +46,9 @@
           <button class="icon-button" id="refresh-button" type="button" title="Görevleri yenile" aria-label="Görevleri yenile">↻</button>
         </div>
       </header>
+      <p id="connection-alert" class="connection-alert" role="status" hidden>
+        Yerel servisle bağlantı kesildi. Mevcut bilgiler korunuyor; yeni işlem başlatılmıyor. Bağlantı otomatik yeniden denenecek.
+      </p>
       <div class="main-scroll">
         <section class="welcome" aria-label="Hoş geldin">
           <div class="welcome-glow"></div>
@@ -72,7 +75,7 @@
             <label class="search-box"><span aria-hidden="true">⌕</span><input id="task-search" type="search" placeholder="Görev ara" aria-label="Görev ara" maxlength="120"></label>
           </div>
           <div class="work-grid">
-            <div class="task-column"><div class="list-heading"><strong id="list-title">Tüm görevler</strong><span id="list-count"></span></div><div id="task-list" class="task-list" aria-live="polite"><div class="task-empty">Görevler yükleniyor…</div></div></div>
+            <div class="task-column"><div class="list-heading"><strong id="list-title">Tüm görevler</strong><span id="list-count"></span></div><div id="task-list" class="task-list" role="group" aria-label="Görevler"><div class="task-empty">Görevler yükleniyor…</div></div></div>
             <section class="detail-panel" aria-label="Seçilen görevin ayrıntıları">
               <div class="detail-top"><span class="detail-eyebrow">GÖREV AYRINTILARI</span><span id="detail-state" class="state-tag">—</span></div>
               <div id="task-detail">
