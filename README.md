@@ -125,6 +125,10 @@ npm ci
 npm run check
 ```
 
+### Electron 46 development preview
+
+The next-generation shared desktop shell is being developed alongside the existing native macOS/Windows applications. With the current Equinox Local runtime already running on `127.0.0.1:24891`, run `npm install` and then `npm run desktop:dev` to open the **Electron 46 alpha** preview. This currently displays the existing Control Center; it is not the signed production installer or the upcoming conversation-first workspace. See [the staged migration plan](docs/plans/electron46-unified-workspace.md).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for supported Node tooling, platform prerequisites and contribution guidelines. Use [issues](https://github.com/sametbasbug/equinox-local/issues/new/choose) for bugs and the [private security channel](SECURITY.md) for vulnerabilities.
 
 ## License
