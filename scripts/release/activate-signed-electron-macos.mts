@@ -134,32 +134,43 @@ async function fingerprintSignedUiTree(root: string): Promise<string> {
     for (const name of children) {
       const next = relative ? relative + "/" + name : name;
       const absolute = path.join(folder, name);
-      const stat = await fs.lstat(absolute);
       if (++entries > 5_000) throw new Error("Managed Electron UI tree exceeds the expected entry budget.");
-      if (stat.isSymbolicLink()) {
+      // Open first and classify from the SAME descriptor. A prior lstat
+      // followed by open would admit a filename-swap race.
+      let handle: Awaited<ReturnType<typeof fs.open>>;
+      try {
+        handle = await fs.open(absolute, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      } catch (error) {
+        if (!error || typeof error !== "object" || !("code" in error) || error.code !== "ELOOP") {
+          throw error;
+        }
+        // O_NOFOLLOW intentionally refuses framework symlinks. Never open
+        // their targets; record the exact relative link and contained target.
         const target = await fs.readlink(absolute);
         const resolved = await fs.realpath(absolute);
         if (!resolved.startsWith(rootReal + path.sep)) {
           throw new Error("Managed Electron UI framework link escapes the owned tree.");
         }
         digest.update("L\0" + next + "\0" + target + "\0");
-      } else if (stat.isDirectory()) {
-        digest.update("D\0" + next + "\0" + (stat.mode & 0o777).toString(8) + "\0");
-        pending.push(next);
-      } else if (stat.isFile()) {
-        totalBytes += stat.size;
-        if (totalBytes > 1024 * 1024 * 1024) {
-          throw new Error("Managed Electron UI tree exceeds its content budget.");
-        }
-        digest.update("F\0" + next + "\0" + stat.size + "\0" +
-          (stat.mode & 0o777).toString(8) + "\0");
-        const handle = await fs.open(absolute, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-        try {
-          const opened = await handle.stat();
-          if (!opened.isFile() || opened.size !== stat.size ||
-              opened.dev !== stat.dev || opened.ino !== stat.ino) {
-            throw new Error("Managed Electron UI file changed during verification.");
+        continue;
+      }
+      try {
+        const stat = await handle.stat();
+        if (stat.isDirectory()) {
+          digest.update("D\0" + next + "\0" + (stat.mode & 0o777).toString(8) + "\0");
+          const unchanged = await fs.lstat(absolute);
+          if (!unchanged.isDirectory() || unchanged.isSymbolicLink() ||
+              unchanged.ino !== stat.ino || unchanged.dev !== stat.dev) {
+            throw new Error("Managed Electron UI directory changed while enumerating.");
           }
+          pending.push(next);
+        } else if (stat.isFile()) {
+          totalBytes += stat.size;
+          if (totalBytes > 1024 * 1024 * 1024) {
+            throw new Error("Managed Electron UI tree exceeds its content budget.");
+          }
+          digest.update("F\0" + next + "\0" + stat.size + "\0" +
+            (stat.mode & 0o777).toString(8) + "\0");
           let offset = 0;
           while (offset < stat.size) {
             const {bytesRead} = await handle.read(block, 0,
@@ -171,11 +182,11 @@ async function fingerprintSignedUiTree(root: string): Promise<string> {
           if ((await handle.stat()).size !== stat.size) {
             throw new Error("Managed Electron UI file grew during verification.");
           }
-        } finally {
-          await handle.close();
+        } else {
+          throw new Error("Managed Electron UI tree includes a special filesystem entry.");
         }
-      } else {
-        throw new Error("Managed Electron UI tree includes a special filesystem entry.");
+      } finally {
+        await handle.close();
       }
     }
   }
