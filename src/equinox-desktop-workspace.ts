@@ -8,8 +8,17 @@ type WorkspaceTask = {
   completed: string[];
   next: string[];
   updatedAt: string;
+  chatBound: boolean;
 };
 type Filter = "all" | "active" | "completed";
+type ChatInfo = {
+  status: "idle" | "sending" | "waiting" | "ready" | "uncertain" | "unavailable";
+  requestId?: string; message?: string; response?: string; truncated?: boolean;
+};
+const chatInfo = new Map<string, ChatInfo>();
+const chatDrafts = new Map<string, string>();
+const chatRequests = new Set<string>();
+const chatSending = new Set<string>();
 const byId = (id: string): HTMLElement => {
   const element = document.getElementById(id);
   if (!element) throw new Error("Workspace element missing: " + id);
@@ -46,6 +55,7 @@ function safeTask(value: unknown): WorkspaceTask | null {
     completed: Array.isArray(t.completed) ? t.completed.filter((x): x is string => typeof x === "string").slice(0, 64) : [],
     next: Array.isArray(t.next) ? t.next.filter((x): x is string => typeof x === "string").slice(0, 64) : [],
     updatedAt: typeof t.updatedAt === "string" ? t.updatedAt : "",
+    chatBound: Boolean((value as {chatBinding?: {browserContext?: string}}).chatBinding?.browserContext === "user"),
   };
 }
 
@@ -90,6 +100,131 @@ function makeSteps(values: string[], completed: boolean): HTMLElement {
   return list;
 }
 
+function chatPath(taskId: string, action: string): string {
+  return "/api/v1/tasks/" + encodeURIComponent(taskId) + "/chat/" + action;
+}
+
+async function loadChat(taskId: string): Promise<void> {
+  if (chatRequests.has(taskId)) return;
+  chatRequests.add(taskId);
+  try {
+    const response = await fetch(chatPath(taskId, "status"), {credentials: "same-origin", cache: "no-store"});
+    const payload = await response.json() as {ok?: boolean; chat?: ChatInfo};
+    if (!response.ok || !payload.ok || !payload.chat) throw new Error("Sohbet bağlantısı okunamadı.");
+    chatInfo.set(taskId, payload.chat);
+  } catch {
+    // No mutation, no guessed conversation, and no automatic replay.
+    chatInfo.set(taskId, {status: "unavailable"});
+  } finally {
+    chatRequests.delete(taskId);
+  }
+  if (taskId === state.selected) renderDetail();
+}
+
+async function chatMutation(taskId: string, action: "send" | "acknowledge", data: object): Promise<void> {
+  if (chatSending.has(taskId)) return;
+  chatSending.add(taskId);
+  if (taskId === state.selected) renderDetail();
+  try {
+    const session = await fetch("/api/v1/session", {credentials: "same-origin", cache: "no-store"});
+    const token = await session.json() as {csrfToken?: string};
+    if (!session.ok || typeof token.csrfToken !== "string") throw new Error("Güvenli oturum doğrulanamadı.");
+    const response = await fetch(chatPath(taskId, action), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {"content-type": "application/json", "x-equinox-csrf": token.csrfToken},
+      body: JSON.stringify(data),
+    });
+    const payload = await response.json() as {chat?: ChatInfo; error?: string};
+    if (!response.ok || !payload.chat) throw new Error(payload.error || "Gönderim durumu doğrulanamadı.");
+    chatInfo.set(taskId, payload.chat);
+    if (action === "send") chatDrafts.delete(taskId);
+  } catch {
+    // The browser boundary may already have been crossed. Re-read state,
+    // never re-POST automatically, and block a new send until reconciled.
+    chatInfo.set(taskId, {status: "unavailable"});
+  } finally {
+    chatSending.delete(taskId);
+  }
+  if (taskId === state.selected) renderDetail();
+  void loadChat(taskId);
+}
+
+function appendChat(target: HTMLElement, task: WorkspaceTask): void {
+  const card = node("section", "chat-card");
+  card.id = "task-chat";
+  card.setAttribute("aria-label", "Göreve bağlı ChatGPT sohbeti");
+  const title = node("div", "chat-card-title");
+  title.append(node("h4", "", "Göreve bağlı sohbet"), node("span", "chat-provider", "ChatGPT · Your Browser"));
+  card.append(title);
+  if (task.status !== "active" || !task.chatBound) {
+    card.append(node("p", "chat-hint", "Bu görevde henüz doğrulanmış bir ChatGPT sohbet bağlantısı yok. Sohbet bağlantısını CLI veya Telegram görev akışı üzerinden kurabilirsin."));
+    target.append(card);
+    return;
+  }
+  const info = chatInfo.get(task.taskId);
+  if (!info) {
+    card.append(node("p", "chat-hint", "Sohbetin durumu yükleniyor…"));
+    target.append(card);
+    void loadChat(task.taskId);
+    return;
+  }
+  if (info.message) {
+    const outgoing = node("div", "chat-bubble outgoing");
+    outgoing.append(node("span", "chat-person", "SEN"), node("p", "", info.message));
+    card.append(outgoing);
+  }
+  if (info.status === "ready" && info.response) {
+    const incoming = node("div", "chat-bubble incoming");
+    incoming.append(node("span", "chat-person", "CHATGPT"), node("p", "", info.response));
+    if (info.truncated) incoming.append(node("small", "", "Yanıt kesilmiş olabilir; ayrıntı için ChatGPT konuşmasını aç."));
+    card.append(incoming);
+  }
+  const status = ({
+    idle: "Bu görevde son gönderilen mesaj burada görünecek. Eski sohbet geçmişi ChatGPT sekmesinde tutulur.",
+    sending: "Mesaj gönderiliyor…",
+    waiting: "Mesaj gönderildi. ChatGPT yanıtı bekleniyor…",
+    ready: "Son yanıt alındı.",
+    uncertain: "Gönderim ya da yanıt durumu belirsiz. ChatGPT sekmesini kontrol etmeden yeniden mesaj gönderme.",
+    unavailable: "Sohbet durumu doğrulanamadı. Mesajı tekrar gönderme; önce ChatGPT sekmesini kontrol et.",
+  } satisfies Record<ChatInfo["status"], string>)[info.status];
+  card.append(node("p", "chat-status" + (info.status === "uncertain" || info.status === "unavailable" ? " warning" : ""), status));
+  if (info.status === "uncertain" && info.requestId) {
+    const acknowledge = node("button", "chat-acknowledge", "Sekmeyi kontrol ettim · Kilidi kaldır");
+    acknowledge.type = "button";
+    acknowledge.addEventListener("click", () => {
+      if (window.confirm("ChatGPT konuşmasını kontrol ettiğini onaylıyor musun? Bu işlem mesajı yeniden göndermez. Emin değilsen iptal et.")) {
+        void chatMutation(task.taskId, "acknowledge", {requestId: info.requestId});
+      }
+    });
+    card.append(acknowledge);
+  }
+  const form = node("form", "chat-form");
+  const input = node("input", "chat-input") as HTMLInputElement;
+  input.type = "text";
+  input.maxLength = 3800;
+  input.placeholder = "Bu göreve bir mesaj yaz…";
+  input.setAttribute("aria-label", "Göreve bağlı ChatGPT mesajı");
+  input.autocomplete = "off";
+  input.value = chatDrafts.get(task.taskId) || "";
+  input.addEventListener("input", () => chatDrafts.set(task.taskId, input.value));
+  const send = node("button", "chat-send", "Gönder ↗");
+  send.type = "submit";
+  const blocked = chatSending.has(task.taskId) || !["idle", "ready"].includes(info.status);
+  input.disabled = blocked;
+  send.disabled = blocked;
+  form.append(input, send);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const message = input.value.trim();
+    if (!message || blocked || message.length > 3800) return;
+    const requestId = crypto.randomUUID().toLowerCase();
+    void chatMutation(task.taskId, "send", {message, requestId});
+  });
+  card.append(form, node("p", "chat-footnote", "Önizleme: tek satırlık mesajlar desteklenir. Bu özellik mevcut ChatGPT konuşmasını kullanır; bağımsız model API'si değildir."));
+  target.append(card);
+}
+
 function renderDetail(): void {
   const target = byId("task-detail");
   target.replaceChildren();
@@ -109,6 +244,7 @@ function renderDetail(): void {
   stateTag.className = task.status === "completed" ? "state-tag done" : "state-tag";
   target.append(node("h3", "detail-title", task.title));
   if (task.objective) target.append(node("p", "detail-objective", task.objective));
+  appendChat(target, task);
   target.append(node("h4", "detail-subtitle", "SIRADAKİ ADIMLAR"));
   if (task.next.length) target.append(makeSteps(task.next, false));
   else target.append(node("p", "detail-objective", task.status === "active" ? "Sıradaki adım henüz belirlenmedi." : "Bu görev için bekleyen adım yok."));
@@ -152,6 +288,7 @@ function renderTasks(): void {
     button.addEventListener("click", () => {
       state.selected = task.taskId;
       renderTasks();
+      if (task.chatBound && task.status === "active") void loadChat(task.taskId);
     });
     list.append(button);
   }
@@ -199,9 +336,11 @@ async function refresh(): Promise<void> {
     const taskPayload = await tasksResult.json() as { tasks?: unknown };
     const statusPayload = await statusResult.json() as unknown;
     if (!Array.isArray(taskPayload.tasks)) throw new Error("Görev bilgileri alınamadı.");
-    state.tasks = taskPayload.tasks.map(safeTask).filter((x): x is WorkspaceTask => x !== null);
+    const updated = taskPayload.tasks.map(safeTask).filter((x): x is WorkspaceTask => x !== null);
+    const changed = JSON.stringify(updated) !== JSON.stringify(state.tasks);
+    state.tasks = updated;
     updateCounters();
-    renderTasks();
+    if (changed) renderTasks();
     updateHealth(statusPayload);
     byId("connection-text").textContent = "Yerel servis bağlı";
     byId("connection-dot").classList.add("ok");
@@ -233,11 +372,25 @@ function boot(): void {
     state.search = (event.target as HTMLInputElement).value.trim().toLocaleLowerCase("tr").slice(0, 120);
     renderTasks();
   });
+  byId("open-chat").addEventListener("click", () => {
+    const scroller = document.querySelector<HTMLElement>(".main-scroll");
+    const card = byId("task-chat");
+    if (scroller) {
+      const offset = card.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      scroller.scrollTo({top: scroller.scrollTop + offset - 110, behavior: "smooth"});
+    }
+    (document.querySelector("#task-chat .chat-input") as HTMLInputElement | null)?.focus({preventScroll: true});
+  });
   byId("refresh-button").addEventListener("click", () => void refresh());
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) void refresh();
   });
   window.setInterval(() => { if (!document.hidden) void refresh(); }, 20000);
+  window.setInterval(() => {
+    if (document.hidden || !state.selected || chatRequests.has(state.selected)) return;
+    const info = chatInfo.get(state.selected);
+    if (info && ["sending", "waiting"].includes(info.status)) void loadChat(state.selected);
+  }, 5000);
   void refresh();
 }
 boot();

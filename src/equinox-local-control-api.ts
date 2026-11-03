@@ -40,6 +40,7 @@ type ControlApiOptions={
   disconnectTelegram?:Callback|null;getHttpProfiles?:Callback|null;setHttpProfileManagement?:Callback|null;
   upsertHttpProfile?:Callback|null;testHttpProfile?:Callback|null;deleteHttpProfile?:Callback|null;
   recordInternalError?:Callback|null;
+  getWorkspaceChatStatus?:Callback|null;sendWorkspaceChat?:Callback|null;acknowledgeWorkspaceChat?:Callback|null;
 };
 type MutableControlState={
   server:Server|null;startedAt:string|null;actualPort:number|null;
@@ -463,6 +464,27 @@ function validateUninstallRequest(body:JsonBoundary) {
   return Object.freeze({ removeUserData: body.removeUserData });
 }
 
+function parseWorkspaceChatRoute(pathname:string) {
+  const match = /^\/api\/v1\/tasks\/(task-[a-z0-9-]{6,80})\/chat\/(status|send|acknowledge)$/u.exec(pathname);
+  return match ? {taskId: match[1]!, action: match[2]!} : null;
+}
+
+function validateWorkspaceChatMessage(body:JsonBoundary) {
+  const value = validateExactObject(body, ["message", "requestId"], "Workspace chat send");
+  if (Object.keys(value).length !== 2 || typeof value.message !== "string"
+    || !value.message.trim() || value.message.length > 3800
+    || /[\r\n\u0000]/u.test(value.message)) throw badRequest("Workspace chat requires a single-line message of up to 3800 characters.");
+  if (typeof value.requestId !== "string" || !/^[a-z0-9-]{8,64}$/u.test(value.requestId)) throw badRequest("Workspace chat requestId is invalid.");
+  return {message: value.message, requestId: value.requestId};
+}
+
+function validateWorkspaceChatAcknowledge(body:JsonBoundary) {
+  const value = validateExactObject(body, ["requestId"], "Workspace chat acknowledge");
+  if (Object.keys(value).length !== 1 || typeof value.requestId !== "string"
+    || !/^[a-z0-9-]{8,64}$/u.test(value.requestId)) throw badRequest("Workspace chat requestId is invalid.");
+  return value.requestId as string;
+}
+
 function parseTaskRoute(pathname:string) {
   const match = /^\/api\/v1\/tasks\/(task-[a-z0-9-]{6,80})(?:\/(complete|cancel|delete|continuation\/cancel|fresh-resume\/cancel|fresh-resume\/abandon))?$/u.exec(pathname);
   if (!match) return null;
@@ -561,6 +583,9 @@ export function createEquinoxLocalControlApi({
   testHttpProfile = null,
   deleteHttpProfile = null,
   recordInternalError = null,
+  getWorkspaceChatStatus = null,
+  sendWorkspaceChat = null,
+  acknowledgeWorkspaceChat = null,
   host = LOOPBACK_HOST,
   port,
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
@@ -727,6 +752,28 @@ export function createEquinoxLocalControlApi({
       if (req.method === "GET" && url.pathname === "/api/v1/tasks") {
         if (typeof getTasks !== "function") { const error:ControlError = new Error("Task controls are unavailable on this installation."); error.statusCode = 503; throw error; }
         jsonBody(res, 200, { ok: true, tasks: await getTasks() });
+        return;
+      }
+
+      const workspaceChatRoute = parseWorkspaceChatRoute(url.pathname);
+      if (workspaceChatRoute && req.method === "GET" && workspaceChatRoute.action === "status") {
+        if (typeof getWorkspaceChatStatus !== "function") { const error:ControlError = new Error("Workspace chat unavailable."); error.statusCode = 503; throw error; }
+        jsonBody(res, 200, {ok: true, chat: await getWorkspaceChatStatus(workspaceChatRoute.taskId)});
+        return;
+      }
+      if (workspaceChatRoute && req.method === "POST" && workspaceChatRoute.action !== "status") {
+        assertMutationRequest(req, {port: actualPort, csrfToken: state.csrfToken});
+        if (workspaceChatRoute.action === "send") {
+          if (typeof sendWorkspaceChat !== "function") {const error:ControlError = new Error("Workspace chat unavailable."); error.statusCode = 503; throw error;}
+          const chat = await sendWorkspaceChat(workspaceChatRoute.taskId, validateWorkspaceChatMessage(await readJsonRequest(req)));
+          state.mutationCount += 1;
+          jsonBody(res, 200, {ok: true, chat});
+        } else {
+          if (typeof acknowledgeWorkspaceChat !== "function") {const error:ControlError = new Error("Workspace chat unavailable."); error.statusCode = 503; throw error;}
+          const chat = await acknowledgeWorkspaceChat(workspaceChatRoute.taskId, validateWorkspaceChatAcknowledge(await readJsonRequest(req)));
+          state.mutationCount += 1;
+          jsonBody(res, 200, {ok: true, chat});
+        }
         return;
       }
 

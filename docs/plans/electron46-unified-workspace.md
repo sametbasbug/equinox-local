@@ -36,3 +36,10 @@ One approachable, polished desktop workspace on macOS and Windows. Make conversa
 - The preview displays real task summaries, searchable filters, goals, remaining and completed steps, and runtime connection state. Task management routes back to the existing Control Center.
 - Conversation composer is not yet implemented. We deliberately do not show a deceptive non-functional chat interface. Provider integration and full localization remain future work.
 - This is still an opt-in preview, not a signed desktop release, and does not replace existing AppKit/WPF lifecycle ownership.
+
+## Task-bound chat bridge (checkpoint 4)
+
+- The workspace uses the existing Equinox Browser Chat Bridge v9, not a model API or a separate browser automation backend. Sending is explicit and limited to active Task Capsules with verified **Your Browser** conversation bindings.
+- Strict one-line text (3800-character limit for the current extension), request-ID deduplication, same-origin CSRF and no unrestricted browser/agent IPC. A failed or ambiguous browser submission is **never** automatically repeated.
+- Only the most recent workspace-originated send/answer is kept in process memory; ChatGPT remains the full transcript. Restarting the runtime does not reconstruct pending receipts or full ChatGPT history. Users must inspect uncertain sends in ChatGPT before unlocking.
+- This preview cannot start a new conversation or choose a model/provider; these are staged future capabilities. The original Task/CLI/Telegram flows remain available.

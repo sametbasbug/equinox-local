@@ -792,3 +792,138 @@ a {
     padding:0 17px
   }
 }
+
+/* Task-bound ChatGPT Bridge preview: real delivery, never an unrestricted agent API. */
+.chat-card {
+  background: linear-gradient(180deg, #211d32, #1a1928);
+  border: 1px solid #443a5d;
+  border-radius: 13px;
+  padding: 15px;
+  margin: 18px 0 22px;
+}
+.chat-card-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.chat-card-title h4 {
+  font-size: 12px;
+  margin: 0;
+  font-weight: 750;
+}
+.chat-provider {
+  font-size: 10px;
+  color: #c5b5e8;
+  border: 1px solid #514368;
+  border-radius: 20px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+.chat-hint, .chat-status, .chat-footnote {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #a9a2ba;
+  margin: 12px 0;
+}
+.chat-status.warning {
+  color: #f4bc8c;
+}
+.chat-bubble {
+  padding: 12px;
+  border-radius: 12px;
+  margin-top: 13px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.65;
+}
+.chat-bubble.outgoing {
+  background: #3d3157;
+  margin-left: 30px;
+}
+.chat-bubble.incoming {
+  background: #242436;
+  border: 1px solid #454158;
+  margin-right: 20px;
+}
+.chat-bubble p {
+  margin: 5px 0 0;
+}
+.chat-bubble small {
+  color: #c7b9dd;
+}
+.chat-person {
+  font-size: 9px;
+  font-weight: 790;
+  color: #c8b7ff;
+  letter-spacing: 1px;
+}
+.chat-form {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+}
+.chat-input {
+  min-width: 0;
+  flex: 1;
+  height: 38px;
+  border: 1px solid #514667;
+  background: #131320;
+  border-radius: 9px;
+  padding: 0 12px;
+  color: #f1edfc;
+  font-size: 12px;
+}
+.chat-input::placeholder {
+  color: #88809d;
+}
+.chat-input:focus-visible {
+  outline-offset: 1px;
+}
+.chat-send {
+  flex: none;
+  border: none;
+  border-radius: 9px;
+  background: #c8b5f6;
+  color: #1d172d;
+  padding: 11px 12px;
+  font-size: 11px;
+  font-weight: 750;
+}
+.chat-send:hover {
+  background: #ded0ff;
+}
+.chat-send:disabled, .chat-input:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.chat-acknowledge {
+  padding: 9px 10px;
+  background: transparent;
+  border: 1px solid #a87c55;
+  color: #f8ccaa;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 640;
+  text-align: left;
+}
+.chat-acknowledge:hover {
+  background: #59412d;
+}
+.chat-footnote {
+  margin-bottom: 0;
+  font-size: 10px;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+.main {
+  min-height: 0;
+  height: 100%;
+}

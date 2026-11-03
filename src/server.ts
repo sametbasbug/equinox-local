@@ -143,6 +143,7 @@ import {
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
 import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
+import { createEquinoxWorkspaceChat } from "./equinox-workspace-chat.js";
 import { installEquinoxLocalCli, installEquinoxLocalSourceCli } from "./equinox-local-cli-installation.js";
 import {
   registerAuthenticatedHttpTools,
@@ -2400,6 +2401,12 @@ const telegramChatBridgeController:RuntimeBoundary = createTelegramChatBridgeCon
   browserBridge: equinoxBrowserBridge,
   agentControl,
 });
+const workspaceChatController = createEquinoxWorkspaceChat({
+  readTask: (taskId) => taskCapsuleStore.readInternal(taskId),
+  deliverText: (input) => telegramChatBridgeController.deliverText(input),
+  readFinal: (input) => telegramChatBridgeController.readFinal(input),
+  assertMutationAllowed: (reason) => agentControl.assertMutationAllowed(reason),
+});
 const telegramTaskInboxController:RuntimeBoundary = createTelegramTaskInboxController({
   store: taskCapsuleStore,
   autoContinueController,
@@ -3180,6 +3187,9 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   getOnboardingStatus: getControlCenterOnboardingStatus,
   getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
   getTask: async (taskId) => taskCapsuleStore.read(taskId),
+  getWorkspaceChatStatus: (taskId) => workspaceChatController.status(taskId),
+  sendWorkspaceChat: (taskId, input) => workspaceChatController.send(taskId, input),
+  acknowledgeWorkspaceChat: (taskId, requestId) => workspaceChatController.acknowledge(taskId, requestId),
   updateTask: async (taskId, body) => withMutationLocks([`task:${taskId}`], async () => (
     taskCapsuleStore.checkpoint({
       taskId,
