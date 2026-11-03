@@ -2401,6 +2401,7 @@ const telegramChatBridgeController:RuntimeBoundary = createTelegramChatBridgeCon
   browserBridge: equinoxBrowserBridge,
   agentControl,
 });
+const workspaceChatStarts = new Set<string>();
 const workspaceChatController = createEquinoxWorkspaceChat({
   readTask: (taskId) => taskCapsuleStore.readInternal(taskId),
   deliverText: (input) => telegramChatBridgeController.deliverText(input),
@@ -3187,6 +3188,42 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   getOnboardingStatus: getControlCenterOnboardingStatus,
   getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
   getTask: async (taskId) => taskCapsuleStore.read(taskId),
+  createWorkspaceTask: (input) => withMutationLocks(["workspace-task-create"], async () => {
+    agentControl.assertMutationAllowed("workspace_task_create");
+    return taskCapsuleStore.checkpoint({
+      title: input.title, objective: input.objective, completed: [], next: [], references: [],
+    });
+  }),
+  startWorkspaceChat: async (taskId) => {
+    agentControl.assertMutationAllowed("workspace_chat_start");
+    if (workspaceChatStarts.has(taskId)) {
+      throw Object.assign(new Error("Bu görevin ChatGPT bağlantısı zaten başlatılıyor."), {statusCode: 409});
+    }
+    workspaceChatStarts.add(taskId);
+    try {
+      const task = await taskCapsuleStore.readInternal(taskId);
+      if (task.status !== "active" || task.chatBinding) {
+        throw Object.assign(new Error("Yalnızca aktif ve henüz bağlanmamış görevlerde yeni konuşma başlatılabilir."), {statusCode: 409});
+      }
+      const started = await telegramChatBridgeController.startTaskChat({
+        taskId, checkpointRevision: task.checkpointRevision,
+        initialMessage: `Equinox Local Workspace chat for ${taskId} is connected. Reply only EQL_CLI_READY. Do not run the Task Capsule objective or invoke tools; wait for the next message.`,
+      });
+      if (!started?.confirmed || !started.binding) {
+        throw Object.assign(new Error("ChatGPT konuşma bağlantısı doğrulanamadı. Sekmeyi kontrol et; otomatik tekrar yapılmayacak."), {statusCode: 409});
+      }
+      const updated = await taskCapsuleStore.bindChat({taskId, binding: started.binding, expectUnbound: true});
+      if (!updated.chatBinding || updated.status !== "active") {
+        throw Object.assign(new Error("ChatGPT sekmesi açılmış olabilir ancak görev bağlantısı kaydedilemedi. Sekmeyi kontrol et."), {statusCode: 409});
+      }
+      return updated;
+    } catch (error) {
+      if ((error as {statusCode?: number})?.statusCode) throw error;
+      throw Object.assign(new Error("ChatGPT bağlantısı doğrulanamadı. Yeni sekmeyi kontrol et ve otomatik tekrar yapma."), {statusCode: 409});
+    } finally {
+      workspaceChatStarts.delete(taskId);
+    }
+  },
   getWorkspaceChatStatus: (taskId) => workspaceChatController.status(taskId),
   sendWorkspaceChat: (taskId, input) => workspaceChatController.send(taskId, input),
   acknowledgeWorkspaceChat: (taskId, requestId) => workspaceChatController.acknowledge(taskId, requestId),

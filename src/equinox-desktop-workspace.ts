@@ -19,6 +19,9 @@ const chatInfo = new Map<string, ChatInfo>();
 const chatDrafts = new Map<string, string>();
 const chatRequests = new Set<string>();
 const chatSending = new Set<string>();
+const chatStarting = new Set<string>();
+const chatStartBlocked = new Set<string>();
+const chatStartErrors = new Map<string, string>();
 const byId = (id: string): HTMLElement => {
   const element = document.getElementById(id);
   if (!element) throw new Error("Workspace element missing: " + id);
@@ -150,6 +153,84 @@ async function chatMutation(taskId: string, action: "send" | "acknowledge", data
   void loadChat(taskId);
 }
 
+async function postAction(path: string, data: object): Promise<{task?: {taskId: string; chatBinding?: unknown}; error?: string}> {
+  const session = await fetch("/api/v1/session", {credentials: "same-origin", cache: "no-store"});
+  const token = await session.json() as {csrfToken?: string};
+  if (!session.ok || typeof token.csrfToken !== "string") throw new Error("Güvenli oturum doğrulanamadı.");
+  const response = await fetch(path, {
+    method: "POST", credentials: "same-origin",
+    headers: {"content-type": "application/json", "x-equinox-csrf": token.csrfToken},
+    body: JSON.stringify(data),
+  });
+  const payload = await response.json() as {ok?: boolean; task?: {taskId: string; chatBinding?: unknown}; error?: string};
+  if (!response.ok || !payload.ok || !payload.task) throw new Error(payload.error || "İşlem tamamlanamadı.");
+  return payload;
+}
+
+async function startTaskChat(taskId: string): Promise<void> {
+  if (chatStarting.has(taskId) || chatStartBlocked.has(taskId)) return;
+  chatStarting.add(taskId);
+  if (taskId === state.selected) renderDetail();
+  try {
+    const response = await postAction(chatPath(taskId, "start"), {});
+    if (!response.task?.chatBinding) {
+      throw new Error("Sohbet bağlantısı doğrulanamadı.");
+    }
+    chatStartErrors.delete(taskId);
+    chatInfo.delete(taskId);
+    await refresh();
+    void loadChat(taskId);
+  } catch {
+    // A remote tab may already exist. The user must inspect it first.
+    chatStartBlocked.add(taskId);
+    chatStartErrors.set(taskId, "Konuşma açılmış olabilir. ChatGPT sekmesini kontrol et. Bu oturumda otomatik yeniden deneme kapalı.");
+  } finally {
+    chatStarting.delete(taskId);
+    if (taskId === state.selected) renderDetail();
+  }
+}
+
+function bindNewTaskDialog(): void {
+  const dialog = byId("new-task-dialog") as HTMLDialogElement;
+  const form = byId("new-task-form") as HTMLFormElement;
+  const opener = () => {
+    (byId("new-task-error") as HTMLElement).textContent = "";
+    if (!dialog.open) dialog.showModal();
+  };
+  byId("new-task").addEventListener("click", opener);
+  byId("new-task-welcome").addEventListener("click", opener);
+  byId("new-task-close").addEventListener("click", () => dialog.close());
+  byId("new-task-cancel").addEventListener("click", () => dialog.close());
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = (byId("new-task-name") as HTMLInputElement).value.trim();
+    const objective = (byId("new-task-objective") as HTMLTextAreaElement).value.trim();
+    if (!name || objective.length < 12) return;
+    const submit = byId("new-task-submit") as HTMLButtonElement;
+    if (submit.disabled) return;
+    submit.disabled = true;
+    void (async () => {
+      try {
+        const result = await postAction("/api/v1/tasks/create", {title: name, objective});
+        if (!result.task?.taskId) throw new Error("Görev kimliği alınamadı.");
+        dialog.close();
+        form.reset();
+        state.search = "";
+        (byId("task-search") as HTMLInputElement).value = "";
+        setFilter("all");
+        state.selected = result.task.taskId;
+        await refresh();
+        const scroller = document.querySelector<HTMLElement>(".main-scroll");
+        if (scroller) scroller.scrollTo({top: byId("work-section").offsetTop - 66, behavior: "smooth"});
+      } catch {
+        byId("new-task-error").textContent = "İşlemin sonucu doğrulanamadı. Tekrar oluşturmadan önce görev listesini yenile.";
+      } finally {
+        submit.disabled = false;
+      }
+    })();
+  });
+}
+
 function appendChat(target: HTMLElement, task: WorkspaceTask): void {
   const card = node("section", "chat-card");
   card.id = "task-chat";
@@ -158,7 +239,18 @@ function appendChat(target: HTMLElement, task: WorkspaceTask): void {
   title.append(node("h4", "", "Göreve bağlı sohbet"), node("span", "chat-provider", "ChatGPT · Your Browser"));
   card.append(title);
   if (task.status !== "active" || !task.chatBound) {
-    card.append(node("p", "chat-hint", "Bu görevde henüz doğrulanmış bir ChatGPT sohbet bağlantısı yok. Sohbet bağlantısını CLI veya Telegram görev akışı üzerinden kurabilirsin."));
+    card.append(node("p", "chat-hint", task.status === "active"
+      ? "Bu göreve henüz bir sohbet bağlanmadı. Hazırsan ChatGPT'de ayrı bir konuşma oluşturabilirsin; görevin kendiliğinden çalışmaya başlamaz."
+      : "Tamamlanan veya iptal edilen görevlerde yeni sohbet başlatılamaz."));
+    if (task.status === "active") {
+      const button = node("button", "chat-start", chatStarting.has(task.taskId)
+        ? "Konuşma oluşturuluyor…" : "ChatGPT konuşmasını başlat ↗");
+      button.type = "button";
+      button.disabled = chatStarting.has(task.taskId) || chatStartBlocked.has(task.taskId);
+      button.addEventListener("click", () => void startTaskChat(task.taskId));
+      card.append(button);
+    }
+    if (chatStartErrors.has(task.taskId)) card.append(node("p", "chat-status warning", chatStartErrors.get(task.taskId)));
     target.append(card);
     return;
   }
@@ -381,6 +473,7 @@ function boot(): void {
     }
     (document.querySelector("#task-chat .chat-input") as HTMLInputElement | null)?.focus({preventScroll: true});
   });
+  bindNewTaskDialog();
   byId("refresh-button").addEventListener("click", () => void refresh());
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) void refresh();

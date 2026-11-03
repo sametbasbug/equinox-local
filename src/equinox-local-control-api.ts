@@ -41,6 +41,7 @@ type ControlApiOptions={
   upsertHttpProfile?:Callback|null;testHttpProfile?:Callback|null;deleteHttpProfile?:Callback|null;
   recordInternalError?:Callback|null;
   getWorkspaceChatStatus?:Callback|null;sendWorkspaceChat?:Callback|null;acknowledgeWorkspaceChat?:Callback|null;
+  createWorkspaceTask?:Callback|null;startWorkspaceChat?:Callback|null;
 };
 type MutableControlState={
   server:Server|null;startedAt:string|null;actualPort:number|null;
@@ -465,8 +466,22 @@ function validateUninstallRequest(body:JsonBoundary) {
 }
 
 function parseWorkspaceChatRoute(pathname:string) {
-  const match = /^\/api\/v1\/tasks\/(task-[a-z0-9-]{6,80})\/chat\/(status|send|acknowledge)$/u.exec(pathname);
+  const match = /^\/api\/v1\/tasks\/(task-[a-z0-9-]{6,80})\/chat\/(status|send|acknowledge|start)$/u.exec(pathname);
   return match ? {taskId: match[1]!, action: match[2]!} : null;
+}
+
+function validateWorkspaceTaskCreate(body:JsonBoundary) {
+  const value = validateExactObject(body, ["title", "objective"], "New workspace task");
+  if (Object.keys(value).length !== 2 || typeof value.title !== "string" || typeof value.objective !== "string") {
+    throw badRequest("Task title and objective are required.");
+  }
+  const title = value.title.trim();
+  const objective = value.objective.trim();
+  if (title.length < 1 || title.length > 160 || objective.length < 12 || objective.length > 6000
+    || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(title + objective)) {
+    throw badRequest("Task title must contain 1–160 characters and objective 12–6000 characters.");
+  }
+  return {title, objective};
 }
 
 function validateWorkspaceChatMessage(body:JsonBoundary) {
@@ -583,6 +598,8 @@ export function createEquinoxLocalControlApi({
   testHttpProfile = null,
   deleteHttpProfile = null,
   recordInternalError = null,
+  createWorkspaceTask = null,
+  startWorkspaceChat = null,
   getWorkspaceChatStatus = null,
   sendWorkspaceChat = null,
   acknowledgeWorkspaceChat = null,
@@ -755,6 +772,15 @@ export function createEquinoxLocalControlApi({
         return;
       }
 
+      if (req.method === "POST" && url.pathname === "/api/v1/tasks/create") {
+        assertMutationRequest(req, {port: actualPort, csrfToken: state.csrfToken});
+        if (typeof createWorkspaceTask !== "function") {const error:ControlError = new Error("Workspace task creation unavailable."); error.statusCode = 503; throw error;}
+        const task = await createWorkspaceTask(validateWorkspaceTaskCreate(await readJsonRequest(req)));
+        state.mutationCount += 1;
+        jsonBody(res, 201, {ok: true, task});
+        return;
+      }
+
       const workspaceChatRoute = parseWorkspaceChatRoute(url.pathname);
       if (workspaceChatRoute && req.method === "GET" && workspaceChatRoute.action === "status") {
         if (typeof getWorkspaceChatStatus !== "function") { const error:ControlError = new Error("Workspace chat unavailable."); error.statusCode = 503; throw error; }
@@ -763,7 +789,13 @@ export function createEquinoxLocalControlApi({
       }
       if (workspaceChatRoute && req.method === "POST" && workspaceChatRoute.action !== "status") {
         assertMutationRequest(req, {port: actualPort, csrfToken: state.csrfToken});
-        if (workspaceChatRoute.action === "send") {
+        if (workspaceChatRoute.action === "start") {
+          if (typeof startWorkspaceChat !== "function") {const error:ControlError = new Error("Workspace chat start unavailable."); error.statusCode = 503; throw error;}
+          validateEmptyObject(await readJsonRequest(req), "Workspace chat start");
+          const task = await startWorkspaceChat(workspaceChatRoute.taskId);
+          state.mutationCount += 1;
+          jsonBody(res, 200, {ok: true, task});
+        } else if (workspaceChatRoute.action === "send") {
           if (typeof sendWorkspaceChat !== "function") {const error:ControlError = new Error("Workspace chat unavailable."); error.statusCode = 503; throw error;}
           const chat = await sendWorkspaceChat(workspaceChatRoute.taskId, validateWorkspaceChatMessage(await readJsonRequest(req)));
           state.mutationCount += 1;

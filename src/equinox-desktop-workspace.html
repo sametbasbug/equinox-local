@@ -22,6 +22,7 @@
       <nav class="sidebar-nav" aria-label="Çalışma alanı">
         <button class="side-link is-active" data-filter="all" type="button" aria-current="page"><span class="side-icon">◈</span> Genel bakış <span class="side-count" id="all-count">—</span></button>
         <button class="side-link" data-filter="active" type="button"><span class="side-icon">◷</span> Devam edenler <span class="side-count" id="active-count">—</span></button>
+        <button class="side-link" id="new-task" type="button"><span class="side-icon">＋</span> Yeni görev</button>
         <button class="side-link" id="open-chat" type="button"><span class="side-icon">◇</span> Sohbet</button>
         <button class="side-link" data-filter="completed" type="button"><span class="side-icon">✓</span> Tamamlananlar</button>
       </nav>
@@ -53,6 +54,7 @@
           <p>Yapay zekâ ajanlarının neler yaptığını gör, sıradaki adımı takip et ve işlerini tek bir yerden yönet.</p>
           <div class="welcome-actions">
             <button id="show-active" type="button" class="primary-action">Devam eden işleri gör <span>↗</span></button>
+            <button id="new-task-welcome" type="button" class="secondary-action new-task-welcome">+ Yeni görev</button>
             <a class="secondary-action" href="/?section=tasks">Görevleri yönet</a>
           </div>
           <div class="welcome-pattern" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -83,5 +85,23 @@
       </div>
     </main>
   </div>
+  <dialog id="new-task-dialog" class="new-task-dialog" aria-labelledby="new-task-title">
+    <form id="new-task-form">
+      <div class="dialog-header">
+        <div><div class="section-kicker">YENİ GÖREV</div><h2 id="new-task-title">Ne üzerinde çalışacağız?</h2></div>
+        <button type="button" id="new-task-close" class="icon-button" aria-label="Pencereyi kapat">×</button>
+      </div>
+      <p class="dialog-intro">Önce hedefini kaydet. Ardından bu göreve ChatGPT konuşması bağlayabilirsin.</p>
+      <label class="dialog-label" for="new-task-name">Görev adı</label>
+      <input id="new-task-name" name="name" required minlength="1" maxlength="160" placeholder="Örneğin: Yeni web sitemi tasarla" autocomplete="off">
+      <label class="dialog-label" for="new-task-objective">Ne yapmak istiyorsun?</label>
+      <textarea id="new-task-objective" name="objective" required minlength="12" maxlength="6000" rows="4" placeholder="Hedefini ve önemli ayrıntıları kısaca anlat…"></textarea>
+      <p id="new-task-error" class="dialog-error" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button type="button" id="new-task-cancel" class="dialog-cancel">Vazgeç</button>
+        <button type="submit" id="new-task-submit" class="primary-action">Görevi oluştur ↗</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

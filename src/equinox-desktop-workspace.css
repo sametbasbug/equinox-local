@@ -927,3 +927,113 @@ html, body {
   min-height: 0;
   height: 100%;
 }
+
+.new-task-welcome {
+  background: transparent;
+  border: 0;
+  padding: 7px 0;
+  cursor: pointer;
+}
+.new-task-dialog {
+  width: min(510px, calc(100vw - 30px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border: 1px solid #65577b;
+  border-radius: 20px;
+  background: #1d1a29;
+  box-shadow: 0 28px 90px #000a;
+  color: #eae6f3;
+  padding: 27px;
+}
+.new-task-dialog::backdrop {
+  background: #070711b9;
+  backdrop-filter: blur(5px);
+}
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.dialog-header h2 {
+  font-size: 23px;
+  margin: 10px 0;
+  letter-spacing: -.5px;
+}
+.dialog-intro {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #ada4bb;
+  margin: 0 0 24px;
+}
+.dialog-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 720;
+  color: #cbc0df;
+  margin: 17px 0 8px;
+}
+.new-task-dialog input, .new-task-dialog textarea {
+  width: 100%;
+  display: block;
+  border: 1px solid #514666;
+  border-radius: 10px;
+  background: #11121e;
+  color: #f0eaf8;
+  padding: 11px 12px;
+  outline: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.new-task-dialog textarea {
+  resize: vertical;
+}
+.new-task-dialog input:focus, .new-task-dialog textarea:focus {
+  border-color: #b6a0f1;
+}
+.dialog-error {
+  min-height: 16px;
+  color: #eeb995;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.dialog-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+.dialog-cancel {
+  background: transparent;
+  border: 1px solid #484056;
+  color: #b8b0c8;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.dialog-cancel:hover {
+  background: #2d283d;
+}
+.new-task-dialog button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+.chat-start {
+  background: #d1bdf6;
+  border: none;
+  border-radius: 9px;
+  color: #281d3c;
+  padding: 11px 13px;
+  font-size: 11px;
+  font-weight: 740;
+  margin-top: 10px;
+}
+.chat-start:hover {
+  background: #e7dafa;
+}
+.chat-start:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}

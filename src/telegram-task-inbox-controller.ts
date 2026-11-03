@@ -1005,7 +1005,7 @@ export function createTelegramTaskInboxController({
 
       const result = await startTaskChat({ taskId: task.taskId, checkpointRevision: task.checkpointRevision });
       if (result?.confirmed !== true || !result?.binding) throw new Error("New Task ChatGPT conversation was not confirmed.");
-      await store.bindChat({ taskId: task.taskId, binding: result.binding });
+      await store.bindChat({ taskId: task.taskId, binding: result.binding, expectUnbound: true });
       const boundTask = await store.readInternal(task.taskId);
       if (!boundTask?.chatBinding?.canonicalUrl) throw new Error("Durable Task chat binding could not be read back after persistence.");
       state!.chatBridge = normalizeChatBridgeBinding({

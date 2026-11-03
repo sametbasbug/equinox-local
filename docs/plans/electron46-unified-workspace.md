@@ -43,3 +43,11 @@ One approachable, polished desktop workspace on macOS and Windows. Make conversa
 - Strict one-line text (3800-character limit for the current extension), request-ID deduplication, same-origin CSRF and no unrestricted browser/agent IPC. A failed or ambiguous browser submission is **never** automatically repeated.
 - Only the most recent workspace-originated send/answer is kept in process memory; ChatGPT remains the full transcript. Restarting the runtime does not reconstruct pending receipts or full ChatGPT history. Users must inspect uncertain sends in ChatGPT before unlocking.
 - This preview cannot start a new conversation or choose a model/provider; these are staged future capabilities. The original Task/CLI/Telegram flows remain available.
+
+
+## Task creation and conversation binding (checkpoint 5)
+
+- Workspace exposes a two-step human-first flow: a bounded Task Capsule is created explicitly; the user then chooses to start a neutral, task-bound ChatGPT conversation. Task creation does not automatically cause agent/tool execution.
+- The bounded task-create and task-chat-start routes reuse the existing same-origin/CSRF-guarded Control Center backend, Task Capsule store and Equinox Browser Chat Bridge. The start route refuses active bindings and concurrent start in the workspace, and the store rejects overwriting a different binding when expectUnbound is requested. Existing CLI/Telegram and Auto Continue rebinding semantics are preserved.
+- If a browser-side start may have crossed a mutation boundary, Workspace disables a retry for the current page session and instructs the user to inspect ChatGPT; it never silently opens a duplicate tab.
+- A real isolated Chat Bridge check used a temporary task and separate ChatGPT tab: neutral start returned EQL_CLI_READY, explicit send returned the exact requested marker, the tab closed, and the task was finished and deleted. The Factory app was not restarted.
