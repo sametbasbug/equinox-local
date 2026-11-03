@@ -14,7 +14,60 @@ const unavailable = path.join(__dirname, 'unavailable.html');
 // This is a preview-only UI resident shell. The installed native app continues
 // to own runtime startup, login registration, permissions, and signed updates.
 let previewTray = null;
+let trayStatusTimer = null;
+let trayStatusPending = false;
+let trayStatusLabel = 'Yerel servis: kontrol ediliyor…';
 let quitting = false;
+
+function stopTrayStatus() {
+  if (trayStatusTimer !== null) clearInterval(trayStatusTimer);
+  trayStatusTimer = null;
+}
+
+function trayHealthLabel(state) {
+  if (state === 'HEALTHY') return 'Yerel servis: sağlıklı';
+  if (state === 'ATTENTION') return 'Yerel servis: dikkat gerekiyor';
+  if (state === 'DEGRADED') return 'Yerel servis: kısıtlı';
+  return 'Yerel servis: bağlı';
+}
+
+function updateTrayMenu() {
+  if (!previewTray || previewTray.isDestroyed()) return;
+  previewTray.setContextMenu(Menu.buildFromTemplate([
+    {label: 'Equinox Local · Preview', enabled: false},
+    {label: trayStatusLabel, enabled: false},
+    {type: 'separator'},
+    {label: 'Çalışma alanını aç', click: () => revealWindow(WORKSPACE)},
+    {label: 'Kontrol Merkezi', click: () => revealWindow(CONTROL_CENTER)},
+    {type: 'separator'},
+    {label: 'Çıkış · Yalnızca önizleme', click: () => { quitting = true; app.quit(); }},
+  ]));
+}
+
+async function refreshTrayStatus() {
+  if (!previewTray || trayStatusPending || quitting) return;
+  trayStatusPending = true;
+  let next = 'Yerel servis: bağlantı yok';
+  try {
+    const response = await fetch(origin + '/api/v1/status', {
+      signal: AbortSignal.timeout(2500),
+      redirect: 'error',
+      cache: 'no-store',
+    });
+    if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
+      const status = (await response.json()).status;
+      next = trayHealthLabel(status?.health?.state);
+    }
+  } catch {
+    // The already-owned local service may be stopped or restarting.
+  } finally {
+    trayStatusPending = false;
+    if (next !== trayStatusLabel && !quitting) {
+      trayStatusLabel = next;
+      updateTrayMenu();
+    }
+  }
+}
 
 function revealWindow(url = null) {
   const win = BrowserWindow.getAllWindows()[0];
@@ -46,14 +99,9 @@ function createPreviewTray() {
   }
   previewTray = new Tray(icon);
   previewTray.setToolTip('Equinox Local — Workspace Preview');
-  previewTray.setContextMenu(Menu.buildFromTemplate([
-    {label: 'Equinox Local · Preview', enabled: false},
-    {type: 'separator'},
-    {label: 'Çalışma alanını aç', click: () => revealWindow(WORKSPACE)},
-    {label: 'Kontrol Merkezi', click: () => revealWindow(CONTROL_CENTER)},
-    {type: 'separator'},
-    {label: 'Çıkış · Yalnızca önizleme', click: () => { quitting = true; app.quit(); }},
-  ]));
+  updateTrayMenu();
+  void refreshTrayStatus();
+  trayStatusTimer = setInterval(() => { void refreshTrayStatus(); }, 20000);
   if (process.platform === 'win32') {
     previewTray.on('click', () => revealWindow());
     previewTray.on('double-click', () => revealWindow());
@@ -194,6 +242,7 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on('before-quit', () => {
     quitting = true;
+    stopTrayStatus();
     previewTray?.destroy();
     previewTray = null;
   });
@@ -208,6 +257,7 @@ if (!app.requestSingleInstanceLock()) {
     } catch (error) {
       // A missing optional UI icon must not stop a preview or take ownership
       // of the installed application's runtime/lifecycle.
+      stopTrayStatus();
       previewTray?.destroy();
       previewTray = null;
       console.warn('Preview tray unavailable; window-only fallback:', error.message);
