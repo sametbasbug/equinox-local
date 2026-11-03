@@ -10,6 +10,9 @@ const CONTROL_CENTER = 'http://127.0.0.1:' + previewPort + '/';
 const origin = new URL(CONTROL_CENTER).origin;
 const WORKSPACE = origin + '/workspace';
 const unavailable = path.join(__dirname, 'unavailable.html');
+// Opt-in development contract for a future native-hosted UI process. Native
+// AppKit/WPF continues to own the tray, login policy, runtime and installer.
+const hostedUi = process.env.EQUINOX_DESKTOP_HOSTED_UI === '1';
 
 // This is a preview-only UI resident shell. The installed native app continues
 // to own runtime startup, login registration, permissions, and signed updates.
@@ -251,8 +254,13 @@ function createWindow(initialUrl = WORKSPACE) {
 
 // Set the profile BEFORE taking Electron's single-instance lock: an unrelated
 // Electron development app must not share this preview's lock or Chromium data.
-app.setName('Equinox Local Preview');
-app.setPath('userData', path.join(app.getPath('appData'), 'Equinox Local Desktop Preview'));
+app.setName(hostedUi ? 'Equinox Local Hosted UI Preview' : 'Equinox Local Preview');
+app.setPath('userData', path.join(app.getPath('appData'),
+  hostedUi ? 'Equinox Local Hosted UI Preview' : 'Equinox Local Desktop Preview'));
+// Keep Windows preview taskbar identity separate from the installed WPF app.
+if (process.platform === 'win32') {
+  app.setAppUserModelId(hostedUi ? 'dev.equinox.local.hosted-ui-preview' : 'dev.equinox.local.desktop-preview');
+}
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -269,15 +277,17 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.setPermissionRequestHandler((_contents, permission, callback, details) => {
       callback(permission === 'clipboard-sanitized-write' && isControlCenterUrl(details.requestingUrl));
     });
-    try {
-      createPreviewTray();
-    } catch (error) {
-      // A missing optional UI icon must not stop a preview or take ownership
-      // of the installed application's runtime/lifecycle.
-      stopTrayStatus();
-      previewTray?.destroy();
-      previewTray = null;
-      console.warn('Preview tray unavailable; window-only fallback:', error.message);
+    if (!hostedUi) {
+      try {
+        createPreviewTray();
+      } catch (error) {
+        // A missing optional UI icon must not stop a preview or take ownership
+        // of the installed application's runtime/lifecycle.
+        stopTrayStatus();
+        previewTray?.destroy();
+        previewTray = null;
+        console.warn('Preview tray unavailable; window-only fallback:', error.message);
+      }
     }
     createWindow();
     const go = (url) => revealWindow(url);
@@ -294,6 +304,6 @@ if (!app.requestSingleInstanceLock()) {
     app.on('activate', () => revealWindow());
   });
   app.on('window-all-closed', () => {
-    if (!previewTray && process.platform !== 'darwin') app.quit();
+    if (hostedUi || (!previewTray && process.platform !== 'darwin')) app.quit();
   });
 }
