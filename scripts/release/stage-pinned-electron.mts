@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { ELECTRON_DISTRIBUTIONS, EQUINOX_LOCAL_ELECTRON_VERSION } from "../../src/equinox-local-runtime-versions.js";
+import { inspectPinnedElectronZip } from "./inspect-pinned-electron-zip.mjs";
 
 // Keep the official ZIP sealed as a normal file in the existing signed Main
 // archive. Never extract ZIP members or preserve framework symlinks in the
@@ -125,6 +126,9 @@ export async function stagePinnedElectronArchive({
     await handle.sync();
     await handle.close();
     handle = null;
+    // Inspect member shapes and symlink containment before admitting a sealed
+    // archive into the same signed Main artifact.
+    await inspectPinnedElectronZip({archivePath: temporary, target: admittedTarget});
     // Never overwrite another, possibly already signed staging artifact.
     // Same-directory hard link provides atomic no-overwrite admission;
     // removing the temporary name leaves one ordinary signed ZIP file.

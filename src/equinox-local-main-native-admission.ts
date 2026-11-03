@@ -32,6 +32,8 @@ const ALL_TARGETS = Object.freeze([...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS]);
 
 const SHARED_NATIVE_PATHS = Object.freeze([
   "scripts/release/package-managed-release.mjs",
+  "scripts/release/stage-pinned-electron.mjs",
+  "scripts/release/inspect-pinned-electron-zip.mjs",
   "src/equinox-local-platform.js",
   "src/equinox-local-release-runtime-contract.js",
   "src/equinox-local-runtime-versions.js",

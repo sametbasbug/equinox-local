@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { ELECTRON_DISTRIBUTIONS, EQUINOX_LOCAL_ELECTRON_VERSION } from "../../src/equinox-local-runtime-versions.js";
+import { inspectPinnedElectronZip } from "./inspect-pinned-electron-zip.mjs";
 const MAX_REDIRECTS = 4;
 const MAX_DOWNLOAD_MS = 180_000;
 const ADMITTED_HOSTS = new Set(["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"]);
@@ -109,6 +110,9 @@ export async function stagePinnedElectronArchive({ releaseDir, target, fetchImpl
         await handle.sync();
         await handle.close();
         handle = null;
+        // Inspect member shapes and symlink containment before admitting a sealed
+        // archive into the same signed Main artifact.
+        await inspectPinnedElectronZip({ archivePath: temporary, target: admittedTarget });
         // Never overwrite another, possibly already signed staging artifact.
         // Same-directory hard link provides atomic no-overwrite admission;
         // removing the temporary name leaves one ordinary signed ZIP file.
