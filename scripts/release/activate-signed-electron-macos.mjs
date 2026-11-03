@@ -9,6 +9,7 @@ import { validateTrustedMainInstallPointer } from "../../src/equinox-local-main-
 import { inspectEquinoxLocalMainNativeStoredRelease } from "../../src/equinox-local-main-native-state.js";
 import { equinoxLocalManagedSourcePaths } from "../../src/equinox-local-managed-source-installation.js";
 import { ELECTRON_DISTRIBUTIONS } from "../../src/equinox-local-runtime-versions.js";
+import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import { inspectExtractedPinnedMacElectron } from "./inspect-extracted-electron-macos.mjs";
 // Dormant installer-side admission. It never starts Electron or changes the
 // selected Main native pointer; callers must already own the signed install
@@ -228,6 +229,25 @@ export async function activateSignedMainMacElectronUi({ signedPointer, installer
         stored.manifest.artifactBytes !== row.artifact.bytes ||
         stored.manifest.payloadVersion !== pointer.version) {
         throw new Error("Signed Main immutable release differs from the authenticated selector.");
+    }
+    // Require the exact immutable signed-selector receipt that the ORIGINAL
+    // Main installer wrote for this SHA. A separately supplied, even validly
+    // signed pointer cannot silently replace this store's admission identity.
+    const receiptPath = path.join(root, "native-store", target, sourceSha, "signed-selector.json");
+    const { data: receiptText } = await readBoundedNormalFile(receiptPath, {
+        minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8",
+        label: "Immutable signed Main Electron admission receipt",
+    });
+    let receipt;
+    try {
+        receipt = JSON.parse(receiptText);
+    }
+    catch {
+        throw new Error("Immutable signed Main Electron admission receipt contains invalid JSON.");
+    }
+    const admittedReceipt = verifyPointerImpl(receipt, { expectedSourceSha: sourceSha });
+    if (JSON.stringify(admittedReceipt) !== JSON.stringify(pointer)) {
+        throw new Error("Electron UI signed Main selector disagrees with its immutable native-store receipt.");
     }
     const sourceEntrypoint = path.join(releaseDir, "desktop", "electron", "main.cjs");
     const sourceHandle = await fs.open(sourceEntrypoint, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
