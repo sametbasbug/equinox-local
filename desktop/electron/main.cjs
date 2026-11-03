@@ -18,6 +18,7 @@ let trayStatusTimer = null;
 let trayStatusPending = false;
 let trayStatusLabel = 'Yerel servis: kontrol ediliyor…';
 let quitting = false;
+const previewNavigation = new WeakMap();
 
 function stopTrayStatus() {
   if (trayStatusTimer !== null) clearInterval(trayStatusTimer);
@@ -75,7 +76,9 @@ function revealWindow(url = null) {
     createWindow(url || WORKSPACE);
     return;
   }
-  if (url && win.webContents.getURL() !== url) void win.loadURL(url);
+  if (url && win.webContents.getURL() !== url) {
+    previewNavigation.get(win)?.(url);
+  }
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
@@ -157,6 +160,7 @@ function createWindow(initialUrl = WORKSPACE) {
   // retrying any privileged task/chat mutation. Poll only the fixed loopback
   // Workspace route; never follow a server-provided redirect.
   let offline = false;
+  let reconnectTarget = initialUrl;
   let reconnectTimer = null;
   let probing = false;
   const stopReconnect = () => {
@@ -166,17 +170,18 @@ function createWindow(initialUrl = WORKSPACE) {
   const probeReconnect = async () => {
     if (!offline || probing || win.isDestroyed()) return;
     probing = true;
+    const target = reconnectTarget;
     try {
-      const response = await fetch(WORKSPACE, {
+      const response = await fetch(target, {
         signal: AbortSignal.timeout(2500),
         redirect: 'error',
         cache: 'no-store'
       });
       await response.body?.cancel();
       if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) return;
-      if (!win.isDestroyed() && offline) {
-        await win.loadURL(WORKSPACE);
-        if (!win.isDestroyed() && win.webContents.getURL() === WORKSPACE) {
+      if (!win.isDestroyed() && offline && reconnectTarget === target) {
+        await win.loadURL(target);
+        if (!win.isDestroyed() && reconnectTarget === target && win.webContents.getURL() === target) {
           offline = false;
           stopReconnect();
         }
@@ -193,13 +198,25 @@ function createWindow(initialUrl = WORKSPACE) {
     void win.loadFile(unavailable);
     reconnectTimer = setInterval(() => { void probeReconnect(); }, 4000);
   };
+  // Switching from the tray also updates the offline retry destination.
+  // Never let an earlier reconnect attempt override the user's last choice.
+  previewNavigation.set(win, (url) => {
+    if (url !== WORKSPACE && url !== CONTROL_CENTER) return;
+    reconnectTarget = url;
+    offline = false;
+    stopReconnect();
+    void win.loadURL(url);
+  });
   win.on('close', (event) => {
     if (previewTray && !quitting) {
       event.preventDefault();
       win.hide();
     }
   });
-  win.on('closed', stopReconnect);
+  win.on('closed', () => {
+    stopReconnect();
+    previewNavigation.delete(win);
+  });
   win.once('ready-to-show', () => win.show());
   win.webContents.on('did-finish-load', () => {
     // Chromium may finish rendering its *error document* for a failed local
