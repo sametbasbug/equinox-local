@@ -275,6 +275,13 @@ function appendChat(target, task) {
         void loadChat(task.taskId);
         return;
     }
+    if (info.conversationUrl) {
+        const link = node("a", "chat-conversation-link", "Bağlı ChatGPT konuşmasını aç ↗");
+        link.href = info.conversationUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        card.append(link);
+    }
     if (info.message) {
         const outgoing = node("div", "chat-bubble outgoing");
         outgoing.append(node("span", "chat-person", "SEN"), node("p", "", info.message));

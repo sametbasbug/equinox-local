@@ -14,7 +14,7 @@ type WorkspaceTask = {
 type Filter = "all" | "active" | "completed";
 type ChatInfo = {
   status: "idle" | "sending" | "waiting" | "ready" | "uncertain" | "unavailable";
-  requestId?: string; message?: string; response?: string; truncated?: boolean;
+  requestId?: string; message?: string; response?: string; truncated?: boolean; conversationUrl?: string;
 };
 const chatInfo = new Map<string, ChatInfo>();
 const chatDrafts = new Map<string, string>();
@@ -278,6 +278,13 @@ function appendChat(target: HTMLElement, task: WorkspaceTask): void {
     target.append(card);
     void loadChat(task.taskId);
     return;
+  }
+  if (info.conversationUrl) {
+    const link = node("a", "chat-conversation-link", "Bağlı ChatGPT konuşmasını aç ↗");
+    link.href = info.conversationUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    card.append(link);
   }
   if (info.message) {
     const outgoing = node("div", "chat-bubble outgoing");

@@ -1,5 +1,21 @@
 const TASK_ID = /^task-[a-z0-9-]{6,80}$/u;
 const REQUEST_ID = /^[a-z0-9-]{8,64}$/u;
+function verifiedConversationUrl(binding) {
+    if (typeof binding.canonicalUrl !== "string")
+        return null;
+    try {
+        const url = new URL(binding.canonicalUrl);
+        const match = /^\/(?:g\/[A-Za-z0-9_-]{8,160}\/)?c\/([A-Za-z0-9-]{8,160})\/?$/u.exec(url.pathname);
+        if (url.protocol !== "https:" || !["chatgpt.com", "www.chatgpt.com"].includes(url.hostname)
+            || url.username || url.password || url.port || url.search || url.hash
+            || match?.[1] !== binding.conversationId)
+            return null;
+        return url.href;
+    }
+    catch {
+        return null;
+    }
+}
 function chatError(message, statusCode = 409) {
     return Object.assign(new Error(message), { statusCode });
 }
@@ -44,8 +60,10 @@ export function createEquinoxWorkspaceChat(deps) {
     async function status(taskId) {
         const task = await boundTask(taskId);
         const record = sessions.get(taskId);
+        const conversationUrl = verifiedConversationUrl(task.chatBinding);
+        const result = () => ({ ...publicState(taskId), ...(conversationUrl ? { conversationUrl } : {}) });
         if (record?.status !== "waiting" || !record.receipt || reading.has(taskId))
-            return publicState(taskId);
+            return result();
         reading.add(taskId);
         try {
             const answer = await deps.readFinal({ binding: task.chatBinding, ...record.receipt });
@@ -63,7 +81,7 @@ export function createEquinoxWorkspaceChat(deps) {
         finally {
             reading.delete(taskId);
         }
-        return publicState(taskId);
+        return result();
     }
     async function send(taskId, input) {
         const task = await boundTask(taskId);

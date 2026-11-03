@@ -1084,3 +1084,19 @@ html, body {
     display: none;
   }
 }
+
+
+.chat-conversation-link {
+  display: inline-block;
+  font-size: 11px;
+  color: #d9c5ff;
+  border-bottom: 1px solid #8c78b5;
+  text-decoration: none;
+  padding-bottom: 3px;
+  margin-top: 13px;
+  font-weight: 650;
+}
+.chat-conversation-link:hover {
+  color: #f2eaff;
+  border-color: #d9c5ff;
+}
