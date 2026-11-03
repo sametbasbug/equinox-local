@@ -48,6 +48,24 @@ const CONTROL_CENTER_ASSETS = new Map([
             ]),
             contentType: "text/html; charset=utf-8",
         })],
+    ["/workspace", Object.freeze({
+            urls: Object.freeze([
+                new URL("./equinox-desktop-workspace.html", import.meta.url),
+                new URL("../equinox-desktop-workspace.html", import.meta.url),
+            ]),
+            contentType: "text/html; charset=utf-8",
+        })],
+    ["/assets/desktop-workspace.css", Object.freeze({
+            urls: Object.freeze([
+                new URL("./equinox-desktop-workspace.css", import.meta.url),
+                new URL("../equinox-desktop-workspace.css", import.meta.url),
+            ]),
+            contentType: "text/css; charset=utf-8",
+        })],
+    ["/assets/desktop-workspace.js", Object.freeze({
+            url: new URL("./equinox-desktop-workspace.js", import.meta.url),
+            contentType: "text/javascript; charset=utf-8",
+        })],
     ["/assets/control-center.css", Object.freeze({
             urls: Object.freeze([
                 new URL("./equinox-control-center.css", import.meta.url),

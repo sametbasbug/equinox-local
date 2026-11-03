@@ -43,6 +43,9 @@ const LOCAL_MODULE_PATTERN = /(?:from\s+|import\s*\(\s*)["'](\.\.?\/[^"']+)["']/
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const STATIC_RELEASE_FILES = Object.freeze([
   "src/equinox-control-center.html",
+  "src/equinox-desktop-workspace.html",
+  "src/equinox-desktop-workspace.css",
+  "src/equinox-desktop-workspace.js",
   "src/equinox-control-center.css",
   "src/equinox-control-center.js",
   "app/EquinoxLocal.png",

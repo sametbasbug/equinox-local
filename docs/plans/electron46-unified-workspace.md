@@ -25,7 +25,14 @@ One approachable, polished desktop workspace on macOS and Windows. Make conversa
 
 ## Phase 1 acceptance and limitations
 
-- `npm run desktop:dev` starts an Electron 46 window bound only to the existing `http://127.0.0.1:24891/` Control Center. The existing runtime must be running first.
+- `npm run desktop:dev` starts an Electron 46 window bound only to the existing `http://127.0.0.1:24891/` workspace (path /workspace) through the existing local Control Center server. The existing runtime must be running first. Ctrl/Cmd+2 opens the original Control Center and Ctrl/Cmd+1 returns to the workspace.
 - Verify the Electron runtime version, Node version, renderer sandbox flags and the window's actual main-frame URL.
 - If the runtime is down, show a nonprivileged retry screen; external HTTPS links open in the system browser, non-HTTPS / unintended file navigation is rejected.
 - Existing public install and Factory continue unmodified. This phase is **not** a complete packaged Electron replacement, nor a native conversation UI.
+
+## Human-first workspace increment (checkpoint 3)
+
+- The existing loopback server now serves an exact-path workspace HTML, CSS, and generated TypeScript asset without a competing backend, alternate browser, new renderer permissions or new control endpoints.
+- The preview displays real task summaries, searchable filters, goals, remaining and completed steps, and runtime connection state. Task management routes back to the existing Control Center.
+- Conversation composer is not yet implemented. We deliberately do not show a deceptive non-functional chat interface. Provider integration and full localization remain future work.
+- This is still an opt-in preview, not a signed desktop release, and does not replace existing AppKit/WPF lifecycle ownership.

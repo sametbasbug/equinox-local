@@ -1,9 +1,14 @@
 // Development-only Electron shell. The existing local runtime owns all privileged capabilities.
 const path = require('node:path');
-const { app, BrowserWindow, shell, session } = require('electron');
+const { app, BrowserWindow, Menu, shell, session } = require('electron');
 
-const CONTROL_CENTER = 'http://127.0.0.1:24891/';
+const previewPort = process.env.EQUINOX_DESKTOP_PREVIEW_PORT || '24891';
+if (!/^[1-9][0-9]{0,4}$/.test(previewPort) || Number(previewPort) > 65535) {
+  throw new Error('Desktop preview port is invalid.');
+}
+const CONTROL_CENTER = 'http://127.0.0.1:' + previewPort + '/';
 const origin = new URL(CONTROL_CENTER).origin;
+const WORKSPACE = origin + '/workspace';
 const unavailable = path.join(__dirname, 'unavailable.html');
 
 function isControlCenterUrl(raw) {
@@ -51,7 +56,7 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
   win.webContents.on('did-finish-load', () => {
     console.log(isControlCenterUrl(win.webContents.getURL())
-      ? 'Electron desktop preview: Control Center loaded.'
+      ? 'Electron desktop preview: workspace loaded.'
       : 'Electron desktop preview: offline screen loaded.');
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -76,7 +81,7 @@ function createWindow() {
     }
   });
 
-  void win.loadURL(CONTROL_CENTER);
+  void win.loadURL(WORKSPACE);
   return win;
 }
 
@@ -98,6 +103,21 @@ if (!app.requestSingleInstanceLock()) {
       callback(permission === 'clipboard-sanitized-write' && isControlCenterUrl(details.requestingUrl));
     });
     createWindow();
+    const go = (url) => {
+      const window = BrowserWindow.getAllWindows()[0] || createWindow();
+      void window.loadURL(url);
+      window.focus();
+    };
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
+      { label: 'Navigate', submenu: [
+        { label: 'Workspace', accelerator: 'CmdOrCtrl+1', click: () => go(WORKSPACE) },
+        { label: 'Control Center', accelerator: 'CmdOrCtrl+2', click: () => go(CONTROL_CENTER) },
+      ] },
+      { role: 'editMenu' },
+      { role: 'viewMenu' },
+      { role: 'windowMenu' },
+    ]));
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
