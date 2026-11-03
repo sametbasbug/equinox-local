@@ -48,6 +48,9 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      // ChatGPT can take focus while a task chat is created. Keep bounded
+      // workspace request and response timers progressing in the background.
+      backgroundThrottling: false,
       webSecurity: true,
       webviewTag: false
     }
