@@ -34,6 +34,11 @@ const STATIC_RELEASE_FILES = Object.freeze([
     // native artifact pipeline.
     "desktop/electron/main.cjs",
     "desktop/electron/unavailable.html",
+    // Dormant, signature-bound macOS UI-child admission. The default installer
+    // still has no activation call; source inclusion is not installation.
+    "scripts/release/activate-signed-electron-macos.mjs",
+    "scripts/release/inspect-extracted-electron-macos.mjs",
+    "scripts/release/inspect-pinned-electron-zip.mjs",
     "native/windows/EquinoxLocal.WindowsShell/Assets/EquinoxLocal.ico",
     "src/equinox-control-center.css",
     "src/equinox-control-center.js",
