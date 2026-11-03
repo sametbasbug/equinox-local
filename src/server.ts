@@ -143,7 +143,7 @@ import {
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
 import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
-import { createEquinoxWorkspaceChat } from "./equinox-workspace-chat.js";
+import { createEquinoxWorkspaceActions } from "./equinox-workspace-actions.js";
 import { installEquinoxLocalCli, installEquinoxLocalSourceCli } from "./equinox-local-cli-installation.js";
 import {
   registerAuthenticatedHttpTools,
@@ -2401,12 +2401,11 @@ const telegramChatBridgeController:RuntimeBoundary = createTelegramChatBridgeCon
   browserBridge: equinoxBrowserBridge,
   agentControl,
 });
-const workspaceChatStarts = new Set<string>();
-const workspaceChatController = createEquinoxWorkspaceChat({
-  readTask: (taskId) => taskCapsuleStore.readInternal(taskId),
-  deliverText: (input) => telegramChatBridgeController.deliverText(input),
-  readFinal: (input) => telegramChatBridgeController.readFinal(input),
-  assertMutationAllowed: (reason) => agentControl.assertMutationAllowed(reason),
+const workspaceActions = createEquinoxWorkspaceActions({
+  store: taskCapsuleStore,
+  chatBridge: telegramChatBridgeController,
+  agentControl,
+  withMutationLocks,
 });
 const telegramTaskInboxController:RuntimeBoundary = createTelegramTaskInboxController({
   store: taskCapsuleStore,
@@ -3188,46 +3187,11 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   getOnboardingStatus: getControlCenterOnboardingStatus,
   getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
   getTask: async (taskId) => taskCapsuleStore.read(taskId),
-  createWorkspaceTask: (input) => withMutationLocks(["workspace-task-create"], async () => {
-    agentControl.assertMutationAllowed("workspace_task_create");
-    return taskCapsuleStore.checkpoint({
-      title: input.title, objective: input.objective, completed: [], next: [], references: [],
-    });
-  }),
-  startWorkspaceChat: async (taskId) => {
-    agentControl.assertMutationAllowed("workspace_chat_start");
-    if (workspaceChatStarts.has(taskId)) {
-      throw Object.assign(new Error("Bu görevin ChatGPT bağlantısı zaten başlatılıyor."), {statusCode: 409});
-    }
-    workspaceChatStarts.add(taskId);
-    try {
-      const task = await taskCapsuleStore.readInternal(taskId);
-      if (task.status !== "active" || task.chatBinding) {
-        throw Object.assign(new Error("Yalnızca aktif ve henüz bağlanmamış görevlerde yeni konuşma başlatılabilir."), {statusCode: 409});
-      }
-      const started = await telegramChatBridgeController.startTaskChat({
-        taskId, checkpointRevision: task.checkpointRevision,
-        initialMessage: `Equinox Local Workspace chat for ${taskId} is connected. Reply only EQL_CLI_READY. Do not run the Task Capsule objective or invoke tools; wait for the next message.`,
-      });
-      if (!started?.confirmed || !started.binding) {
-        throw Object.assign(new Error("ChatGPT konuşma bağlantısı doğrulanamadı. Sekmeyi kontrol et; otomatik tekrar yapılmayacak."), {statusCode: 409});
-      }
-      const updated = await taskCapsuleStore.bindChat({taskId, binding: started.binding, expectUnbound: true});
-      if (!updated.chatBinding || updated.status !== "active") {
-        throw Object.assign(new Error("ChatGPT sekmesi açılmış olabilir ancak görev bağlantısı kaydedilemedi. Sekmeyi kontrol et."), {statusCode: 409});
-      }
-      workspaceChatController.trustFreshBinding(taskId, started.binding);
-      return updated;
-    } catch (error) {
-      if ((error as {statusCode?: number})?.statusCode) throw error;
-      throw Object.assign(new Error("ChatGPT bağlantısı doğrulanamadı. Yeni sekmeyi kontrol et ve otomatik tekrar yapma."), {statusCode: 409});
-    } finally {
-      workspaceChatStarts.delete(taskId);
-    }
-  },
-  getWorkspaceChatStatus: (taskId) => workspaceChatController.status(taskId),
-  sendWorkspaceChat: (taskId, input) => workspaceChatController.send(taskId, input),
-  acknowledgeWorkspaceChat: (taskId, requestId) => workspaceChatController.acknowledge(taskId, requestId),
+  createWorkspaceTask: (input) => workspaceActions.createTask(input),
+  startWorkspaceChat: (taskId) => workspaceActions.startChat(taskId),
+  getWorkspaceChatStatus: (taskId) => workspaceActions.getChatStatus(taskId),
+  sendWorkspaceChat: (taskId, input) => workspaceActions.sendChat(taskId, input),
+  acknowledgeWorkspaceChat: (taskId, requestId) => workspaceActions.acknowledgeChat(taskId, requestId),
   updateTask: async (taskId, body) => withMutationLocks([`task:${taskId}`], async () => (
     taskCapsuleStore.checkpoint({
       taskId,
