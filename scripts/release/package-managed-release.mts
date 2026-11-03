@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 
 import { hashFile } from "../lib/package-io.mjs";
 import { productionNodeModulesFilter } from "./production-node-modules.mjs";
+import { stagePinnedElectronArchive } from "./stage-pinned-electron.mjs";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import {
   EQUINOX_LOCAL_NODE_VERSION,
@@ -26,7 +27,7 @@ type DarwinTarget = "darwin-arm64" | "darwin-x64";
 type ExecFile = typeof execFile;
 type DownloadOptions = {fetchImpl?: typeof fetch};
 type ReleaseArchiveOptions = {transaction: string; releaseDir: string; artifactPath: string; execFileImpl?: ExecFile};
-type ReleasePackageOptions = {rootDir?: string; target?: string; outputDir?: string; fetchImpl?: typeof fetch};
+type ReleasePackageOptions = {rootDir?: string; target?: string; outputDir?: string; fetchImpl?: typeof fetch; includeElectronPreview?: boolean};
 type ReleaseTreeEntry = Readonly<{absolute: string; relative: string; directory: boolean}>;
 const hasErrorCode = (error: unknown, code: string): boolean =>
   error instanceof Error && "code" in error && error.code === code;
@@ -551,6 +552,7 @@ export async function packageManagedEquinoxRelease({
   target = equinoxLocalUpdateTarget(),
   outputDir = path.join(rootDir, "backups", "local-packages"),
   fetchImpl = globalThis.fetch,
+  includeElectronPreview = false,
 }: ReleasePackageOptions = {}) {
   const hostTarget = equinoxLocalUpdateTarget();
   if (target !== hostTarget) {
@@ -574,6 +576,11 @@ export async function packageManagedEquinoxRelease({
     await installPinnedNodeBinary(admittedTarget, releaseDir, { fetchImpl });
     await installPinnedTunnelRuntime(admittedTarget, releaseDir, { fetchImpl });
     await installPinnedPeekabooRuntime(releaseDir, { fetchImpl });
+    // Inert signed ZIP, opt-in for native-payload QA only. Production Main
+    // remains unchanged until the installer and host-launch gates are proven.
+    if (includeElectronPreview) {
+      await stagePinnedElectronArchive({releaseDir, target, fetchImpl});
+    }
     const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target: admittedTarget });
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,

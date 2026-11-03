@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { hashFile } from "../lib/package-io.mjs";
 import { productionNodeModulesFilter } from "./production-node-modules.mjs";
+import { stagePinnedElectronArchive } from "./stage-pinned-electron.mjs";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import { EQUINOX_LOCAL_NODE_VERSION, EQUINOX_LOCAL_PEEKABOO_TEAM_ID, EQUINOX_LOCAL_PEEKABOO_VERSION, EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, NODE_DISTRIBUTIONS, PEEKABOO_DISTRIBUTION, TUNNEL_CLIENT_DISTRIBUTIONS, } from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
@@ -527,7 +528,7 @@ async function sha256File(target) {
     const result = await hashFile(target, { suppressCloseErrors: true });
     return Object.freeze({ sha256: result.sha256, bytes: result.bytes });
 }
-export async function packageManagedEquinoxRelease({ rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), target = equinoxLocalUpdateTarget(), outputDir = path.join(rootDir, "backups", "local-packages"), fetchImpl = globalThis.fetch, } = {}) {
+export async function packageManagedEquinoxRelease({ rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), target = equinoxLocalUpdateTarget(), outputDir = path.join(rootDir, "backups", "local-packages"), fetchImpl = globalThis.fetch, includeElectronPreview = false, } = {}) {
     const hostTarget = equinoxLocalUpdateTarget();
     if (target !== hostTarget) {
         throw new Error(`Cross-target release builds are disabled because node_modules is target-native (${hostTarget}).`);
@@ -550,6 +551,11 @@ export async function packageManagedEquinoxRelease({ rootDir = path.resolve(path
         await installPinnedNodeBinary(admittedTarget, releaseDir, { fetchImpl });
         await installPinnedTunnelRuntime(admittedTarget, releaseDir, { fetchImpl });
         await installPinnedPeekabooRuntime(releaseDir, { fetchImpl });
+        // Inert signed ZIP, opt-in for native-payload QA only. Production Main
+        // remains unchanged until the installer and host-launch gates are proven.
+        if (includeElectronPreview) {
+            await stagePinnedElectronArchive({ releaseDir, target, fetchImpl });
+        }
         const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target: admittedTarget });
         await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
             schemaVersion: 1,

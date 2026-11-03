@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import { hashFile } from "../lib/package-io.mjs";
 import { productionNodeModulesFilter } from "./production-node-modules.mjs";
+import { stagePinnedElectronArchive } from "./stage-pinned-electron.mjs";
 import { collectManagedReleaseSourceFiles, resolveManagedReleaseSourceSha } from "./package-managed-release.mjs";
 import {
   EQUINOX_LOCAL_NODE_VERSION,
@@ -56,6 +57,7 @@ type ReleaseOptions = {
   shellPublishDir?: string | null; browserLauncherPath?: string | null;
   nativeHelperCacheDir?: string | null; nativeHelperCacheHit?: boolean;
   fetchImpl?: typeof fetch;
+  includeElectronPreview?: boolean;
 };
 type NativeInstallOptions = {canExecuteTarget?: boolean};
 function hasErrorCode(error: unknown, code: string): boolean {
@@ -562,6 +564,7 @@ export async function packageManagedEquinoxWindowsRelease({
   nativeHelperCacheDir = process.env.GITHUB_ACTIONS === "true" ? process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR || null : null,
   nativeHelperCacheHit = process.env.GITHUB_ACTIONS === "true" && process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT === "true",
   fetchImpl = globalThis.fetch,
+  includeElectronPreview = false,
 }: ReleaseOptions = {}) {
   const hostTarget = `${process.platform}-${process.arch}`;
   const contract = windowsManagedPackageContract({ target });
@@ -612,6 +615,8 @@ export async function packageManagedEquinoxWindowsRelease({
       component("browser-launcher", () => browserLauncherPath
         ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
         : compileBrowserLauncher(rootDir, releaseDir, contract)),
+      ...(includeElectronPreview ? [component("electron-preview-archive", () =>
+        stagePinnedElectronArchive({releaseDir, target, fetchImpl}))] : []),
     ]);
     const preparationFailure = preparationResults.find((result) => result.status === "rejected");
     if (preparationFailure) throw preparationFailure.reason;

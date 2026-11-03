@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { hashFile } from "../lib/package-io.mjs";
 import { productionNodeModulesFilter } from "./production-node-modules.mjs";
+import { stagePinnedElectronArchive } from "./stage-pinned-electron.mjs";
 import { collectManagedReleaseSourceFiles, resolveManagedReleaseSourceSha } from "./package-managed-release.mjs";
 import { EQUINOX_LOCAL_NODE_VERSION, EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, EQUINOX_LOCAL_WINAPP_VERSION, NODE_DISTRIBUTIONS, TUNNEL_CLIENT_DISTRIBUTIONS, WINAPP_DISTRIBUTIONS, } from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
@@ -549,7 +550,7 @@ async function createManagedZip(rootDir, releaseDir, artifactPath) {
         throw error;
     }
 }
-export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), outputDir = path.join(rootDir, "backups", "local-packages"), target = process.env.EQUINOX_WINDOWS_PACKAGE_TARGET || `${process.platform}-${process.arch}`, shellPublishDir = process.env.EQUINOX_WINDOWS_SHELL_PUBLISH_DIR || null, browserLauncherPath = process.env.EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH || null, nativeHelperCacheDir = process.env.GITHUB_ACTIONS === "true" ? process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR || null : null, nativeHelperCacheHit = process.env.GITHUB_ACTIONS === "true" && process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT === "true", fetchImpl = globalThis.fetch, } = {}) {
+export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), outputDir = path.join(rootDir, "backups", "local-packages"), target = process.env.EQUINOX_WINDOWS_PACKAGE_TARGET || `${process.platform}-${process.arch}`, shellPublishDir = process.env.EQUINOX_WINDOWS_SHELL_PUBLISH_DIR || null, browserLauncherPath = process.env.EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH || null, nativeHelperCacheDir = process.env.GITHUB_ACTIONS === "true" ? process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR || null : null, nativeHelperCacheHit = process.env.GITHUB_ACTIONS === "true" && process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT === "true", fetchImpl = globalThis.fetch, includeElectronPreview = false, } = {}) {
     const hostTarget = `${process.platform}-${process.arch}`;
     const contract = windowsManagedPackageContract({ target });
     const supportedHost = process.platform === "win32" && ["x64", "arm64"].includes(process.arch);
@@ -606,6 +607,7 @@ export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resol
             component("browser-launcher", () => browserLauncherPath
                 ? copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, contract)
                 : compileBrowserLauncher(rootDir, releaseDir, contract)),
+            ...(includeElectronPreview ? [component("electron-preview-archive", () => stagePinnedElectronArchive({ releaseDir, target, fetchImpl }))] : []),
         ]);
         const preparationFailure = preparationResults.find((result) => result.status === "rejected");
         if (preparationFailure)
