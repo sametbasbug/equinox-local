@@ -1,4 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -12,13 +13,17 @@ import { inspectPinnedElectronZip } from "./inspect-pinned-electron-zip.mjs";
 const execFile = promisify(execFileCallback);
 const MAX_ENTRIES = 5_000;
 const MAX_UNPACKED_BYTES = 1024 * 1024 * 1024;
+const HOSTED_UI_ID = "dev.equinox.local.workspace-ui";
 
 export async function inspectExtractedPinnedMacElectron({
   archivePath,
   target,
   scratchRoot,
-}: {archivePath: string; target: string; scratchRoot: string}): Promise<Readonly<{
+  inspectHostedIdentity = false,
+  stageHostedUi = false,
+}: {archivePath: string; target: string; scratchRoot: string; inspectHostedIdentity?: boolean; stageHostedUi?: boolean}): Promise<Readonly<{
   target: string; files: number; links: number; expandedBytes: number; machine: "arm64" | "x64";
+  hostedBundleIdentifier?: string; stagedPath?: string;
 }>> {
   if (process.platform !== "darwin" ||
       (target !== "darwin-arm64" && target !== "darwin-x64") ||
@@ -100,8 +105,52 @@ export async function inspectExtractedPinnedMacElectron({
     } finally {
       await handle.close();
     }
+    // Isolated preview-only identity validation: do not reuse or modify the
+    // native AppKit dev.equinox.local permission owner. Ad-hoc signing needs no
+    // paid Apple Developer account and never persists outside this scratch.
+    const signedHostedUi = inspectHostedIdentity || stageHostedUi;
+    if (signedHostedUi) {
+      const app = path.join(extracted, "Electron.app");
+      const info = path.join(app, "Contents", "Info.plist");
+      await execFile("/usr/libexec/PlistBuddy", [
+        "-c", "Set :CFBundleIdentifier " + HOSTED_UI_ID, info,
+      ], {timeout: 15_000, maxBuffer: 1024 * 1024});
+      await execFile("/usr/bin/codesign", [
+        "--force", "--deep", "--sign", "-", "--identifier", HOSTED_UI_ID, app,
+      ], {timeout: 60_000, maxBuffer: 1024 * 1024});
+      await execFile("/usr/bin/codesign", [
+        "--verify", "--deep", "--strict", app,
+      ], {timeout: 30_000, maxBuffer: 1024 * 1024});
+      const {stderr} = await execFile("/usr/bin/codesign", [
+        "-dv", app,
+      ], {timeout: 15_000, maxBuffer: 1024 * 1024});
+      if (!stderr.includes("Identifier=" + HOSTED_UI_ID) ||
+          !stderr.includes("Signature=adhoc")) {
+        throw new Error("Electron UI-child bundle does not have the expected distinct ad-hoc identity.");
+      }
+    }
+    // Optional atomic *preparation* only, not a production install/repair:
+    // expose the entirely verified tree under one unpredictable name inside
+    // the original 0700 owned scratch root. The installer will later own a
+    // separate stable-name/activation transaction; this does not create one.
+    let stagedPath: string | undefined;
+    if (stageHostedUi) {
+      const candidate = path.join(scratchRoot, "electron-ui-" + randomBytes(16).toString("hex"));
+      await fs.rename(extracted, candidate);
+      try {
+        await execFile("/usr/bin/codesign", [
+          "--verify", "--deep", "--strict", path.join(candidate, "Electron.app"),
+        ], {timeout: 30_000, maxBuffer: 1024 * 1024});
+        stagedPath = candidate;
+      } catch (error) {
+        await fs.rm(candidate, {recursive: true, force: true});
+        throw error;
+      }
+    }
     return Object.freeze({target, files, links, expandedBytes,
-      machine: target === "darwin-arm64" ? "arm64" : "x64"});
+      machine: target === "darwin-arm64" ? "arm64" : "x64",
+      ...(signedHostedUi ? {hostedBundleIdentifier: HOSTED_UI_ID} : {}),
+      ...(stagedPath ? {stagedPath} : {})});
   } finally {
     await fs.rm(temporary, {recursive: true, force: true});
   }
