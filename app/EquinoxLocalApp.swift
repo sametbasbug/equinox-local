@@ -1070,12 +1070,156 @@ private final class EquinoxCompanionSpeechView: NSView {
     }
 }
 
+
+// Opt-in only until the signed four-target Main installer has completed its
+// final product/native parity gate. AppKit remains the Node/tray/TCC owner;
+// this child presents only the signed, existing Workspace UI.
+private final class NativeHostedWorkspace {
+    private var inspector: Process?
+    private var child: Process?
+    private var opening = false
+
+    func reveal(completion: @escaping (Error?) -> Void) {
+        if let child, child.isRunning {
+            _ = NSRunningApplication(processIdentifier: child.processIdentifier)?
+                .activate(options: [])
+            completion(nil)
+            return
+        }
+        guard !opening else { return }
+        opening = true
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        let install = home.appendingPathComponent("Library/Application Support/Equinox Local")
+        #if arch(arm64)
+        let target = "darwin-arm64"
+        #else
+        let target = "darwin-x64"
+        #endif
+        let current = install.appendingPathComponent("current")
+        let selected = current.resolvingSymlinksInPath().standardizedFileURL
+        let prefix = install.appendingPathComponent("main-update/native-store/\(target)")
+            .standardizedFileURL.path + "/"
+        let path = selected.path
+        let tail = path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : ""
+        let pieces = tail.split(separator: "/", omittingEmptySubsequences: false)
+        let sha = pieces.first.map(String.init) ?? ""
+        let hex = CharacterSet(charactersIn: "0123456789abcdef")
+        guard pieces.count == 2, pieces[1] == "release", sha.count == 40,
+              sha.unicodeScalars.allSatisfy({ hex.contains($0) }),
+              selected.path == prefix + sha + "/release" else {
+            opening = false
+            completion(NSError(domain: "EquinoxLocalHostedUI", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No exact signed Main runtime is selected."]))
+            return
+        }
+        let node = selected.appendingPathComponent("runtime/node/bin/node")
+        let checker = selected.appendingPathComponent("scripts/release/activate-signed-electron-macos.mjs")
+        guard FileManager.default.isExecutableFile(atPath: node.path),
+              FileManager.default.fileExists(atPath: checker.path) else {
+            opening = false
+            completion(NSError(domain: "EquinoxLocalHostedUI", code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Signed Main UI inspection tools are unavailable."]))
+            return
+        }
+        let process = Process()
+        process.executableURL = node
+        process.arguments = [checker.path, "--inspect-installed-ui"]
+        process.currentDirectoryURL = selected
+        process.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            opening = false
+            completion(error)
+            return
+        }
+        inspector = process
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            process.waitUntilExit()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.inspector = nil
+                self.opening = false
+                guard process.terminationStatus == 0, data.count > 0, data.count <= 8192,
+                      let fields = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
+                      fields["sourceSha"] == sha, fields["target"] == target else {
+                    completion(NSError(domain: "EquinoxLocalHostedUI", code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "Installed Electron UI failed signed Main verification."]))
+                    return
+                }
+                let source = prefix + sha + "/release/desktop/electron/main.cjs"
+                let executable = install.appendingPathComponent(
+                    "main-update/electron-ui/\(target)/\(sha)/Electron.app/Contents/MacOS/Electron"
+                ).standardizedFileURL.path
+                guard fields["sourceEntrypoint"] == source,
+                      fields["executablePath"] == executable,
+                      fields["installedPath"] == install.appendingPathComponent(
+                        "main-update/electron-ui/\(target)/\(sha)"
+                      ).standardizedFileURL.path,
+                      current.resolvingSymlinksInPath().standardizedFileURL.path == selected.path,
+                      !FileManager.default.fileExists(atPath: install.appendingPathComponent(
+                        "main-update/active.json"
+                      ).path),
+                      !FileManager.default.fileExists(atPath: install.appendingPathComponent(
+                        "main-update/electron-ui/\(target)/.activation.lock"
+                      ).path) else {
+                    completion(NSError(domain: "EquinoxLocalHostedUI", code: 4,
+                        userInfo: [NSLocalizedDescriptionKey: "Signed Main selection changed before UI launch."]))
+                    return
+                }
+                let ui = Process()
+                ui.executableURL = URL(fileURLWithPath: executable)
+                ui.arguments = [source]
+                ui.currentDirectoryURL = selected
+                var environment = ProcessInfo.processInfo.environment
+                for key in ["ELECTRON_RUN_AS_NODE", "NODE_OPTIONS", "NODE_PATH",
+                            "EQUINOX_LOCAL_RUNTIME_HOST", "EQUINOX_LOCAL_NATIVE_PROCESS_HELPER"] {
+                    environment.removeValue(forKey: key)
+                }
+                environment["EQUINOX_DESKTOP_HOSTED_UI"] = "1"
+                environment["EQUINOX_DESKTOP_NATIVE_PARENT_PID"] = String(getpid())
+                environment["EQUINOX_DESKTOP_PREVIEW_PORT"] = "24891"
+                ui.environment = environment
+                ui.standardOutput = FileHandle.nullDevice
+                ui.standardError = FileHandle.nullDevice
+                do {
+                    try ui.run()
+                    self.child = ui
+                    ui.terminationHandler = { [weak self] finished in
+                        DispatchQueue.main.async {
+                            if self?.child === finished { self?.child = nil }
+                        }
+                    }
+                    completion(nil)
+                } catch {
+                    completion(error)
+                }
+            }
+        }
+    }
+
+    func stop() {
+        // Let any already running, read-only inspector finish cleaning its
+        // private scratch rather than interrupting its finally cleanup.
+        // The releasing AppDelegate will not launch a child after it exits.
+        if let child, child.isRunning { child.terminate() }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, NSWindowDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var retryWorkItem: DispatchWorkItem?
     private let controlClient = ControlCenterClient()
     private let runtimeLifecycle = RuntimeLaunchAgentController()
+    private let hostedWorkspace = NativeHostedWorkspace()
+    private let hostedWorkspaceEnabled = ProcessInfo.processInfo.environment["EQUINOX_LOCAL_NATIVE_ELECTRON_UI"] == "1"
+
     private var runtimeStartInFlight = false
     private let notificationCenter = UNUserNotificationCenter.current()
     private var notificationBaselineEstablished = false
@@ -1107,6 +1251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var statusMenu: NSMenu!
     private var agentStateMenuItem: NSMenuItem!
     private var controlCenterMenuItem: NSMenuItem!
+    private var hostedWorkspaceMenuItem: NSMenuItem?
     private var floatingPetMenuItem: NSMenuItem!
     private var startAtLoginMenuItem: NSMenuItem!
     private var startAtLoginEnabled: Bool?
@@ -1168,6 +1313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        hostedWorkspace.stop()
         retryWorkItem?.cancel()
         statusTimer?.invalidate()
         updateTimer?.invalidate()
@@ -1256,6 +1402,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         controlCenterMenuItem = makeMenuItem("", action: #selector(openControlCenter(_:)), keyEquivalent: "o")
         statusMenu.addItem(controlCenterMenuItem)
+        if hostedWorkspaceEnabled {
+            hostedWorkspaceMenuItem = makeMenuItem(
+                localized("Workspace · Electron preview", "Çalışma alanı · Electron önizleme"),
+                action: #selector(openHostedWorkspace(_:))
+            )
+            statusMenu.addItem(hostedWorkspaceMenuItem!)
+        }
         floatingPetMenuItem = makeMenuItem("", action: #selector(toggleFloatingPet(_:)))
         statusMenu.addItem(floatingPetMenuItem)
         startAtLoginMenuItem = makeMenuItem("", action: #selector(toggleStartAtLogin(_:)))
@@ -1544,6 +1697,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         agentStateMenuItem?.title = "Equinox Local · \(stateLabel)"
 
         controlCenterMenuItem?.title = localized("Open Control Center", "Kontrol Merkezini Aç")
+        hostedWorkspaceMenuItem?.title = localized(
+            "Workspace · Electron preview", "Çalışma alanı · Electron önizleme"
+        )
+        hostedWorkspaceMenuItem?.isEnabled = runtimeAvailable && !quitPending
         floatingPetMenuItem?.title = floatingPetPanel?.isVisible == true
             ? localized("Hide Companion", "Companion'ı Gizle")
             : localized("Show Companion", "Companion'ı Göster")
@@ -2119,6 +2276,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
             self.renderStatusMenu()
             self.refreshStartAtLoginStatus()
+        }
+    }
+
+    @objc private func openHostedWorkspace(_ sender: Any?) {
+        guard hostedWorkspaceEnabled, runtimeAvailable, !quitPending else {
+            NSSound.beep()
+            return
+        }
+        hostedWorkspace.reveal { [weak self] error in
+            guard let self, let error else { return }
+            self.showRuntimeLifecycleError(
+                title: self.localized("Workspace unavailable", "Çalışma alanı açılamadı"),
+                error: error
+            )
         }
     }
 

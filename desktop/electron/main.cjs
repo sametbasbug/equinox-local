@@ -13,6 +13,14 @@ const unavailable = path.join(__dirname, 'unavailable.html');
 // Opt-in development contract for a future native-hosted UI process. Native
 // AppKit/WPF continues to own the tray, login policy, runtime and installer.
 const hostedUi = process.env.EQUINOX_DESKTOP_HOSTED_UI === '1';
+// Only an opted-in native AppKit/WPF parent may supervise this hosted UI.
+// A process without this variable remains a disposable manual preview.
+const nativeParentRaw = process.env.EQUINOX_DESKTOP_NATIVE_PARENT_PID;
+const nativeParentPid = hostedUi && nativeParentRaw && /^[1-9][0-9]{0,8}$/.test(nativeParentRaw)
+  ? Number(nativeParentRaw) : null;
+if (hostedUi && nativeParentRaw && (!nativeParentPid || nativeParentPid !== process.ppid)) {
+  throw new Error('Hosted Electron UI native parent PID is invalid or changed.');
+}
 
 // This is a preview-only UI resident shell. The installed native app continues
 // to own runtime startup, login registration, permissions, and signed updates.
@@ -254,17 +262,35 @@ function createWindow(initialUrl = WORKSPACE) {
 
 // Set the profile BEFORE taking Electron's single-instance lock: an unrelated
 // Electron development app must not share this preview's lock or Chromium data.
-app.setName(hostedUi ? 'Equinox Local Hosted UI Preview' : 'Equinox Local Preview');
+app.setName(hostedUi ? 'Equinox Local' : 'Equinox Local Preview');
 app.setPath('userData', path.join(app.getPath('appData'),
-  hostedUi ? 'Equinox Local Hosted UI Preview' : 'Equinox Local Desktop Preview'));
+  hostedUi ? 'Equinox Local Workspace UI' : 'Equinox Local Desktop Preview'));
 // Keep Windows preview taskbar identity separate from the installed WPF app.
 if (process.platform === 'win32') {
-  app.setAppUserModelId(hostedUi ? 'dev.equinox.local.hosted-ui-preview' : 'dev.equinox.local.desktop-preview');
+  app.setAppUserModelId(hostedUi ? 'dev.equinox.local.workspace-ui' : 'dev.equinox.local.desktop-preview');
 }
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  if (nativeParentPid) {
+    // The native shell is the only lifecycle owner. Orphaned UI windows may
+    // not survive a native crash/restart, especially during signed repair.
+    const parentWatch = setInterval(() => {
+      if (process.ppid !== nativeParentPid) {
+        quitting = true;
+        app.quit();
+        return;
+      }
+      try {
+        process.kill(nativeParentPid, 0);
+      } catch {
+        quitting = true;
+        app.quit();
+      }
+    }, 2000);
+    parentWatch.unref();
+  }
   app.on('before-quit', () => {
     quitting = true;
     stopTrayStatus();

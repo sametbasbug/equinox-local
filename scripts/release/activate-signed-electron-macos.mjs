@@ -4,9 +4,10 @@ import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { validateTrustedMainInstallPointer } from "../../src/equinox-local-main-install-pointer.js";
-import { inspectEquinoxLocalMainNativeStoredRelease } from "../../src/equinox-local-main-native-state.js";
+import { inspectEquinoxLocalMainNativeStoredRelease, readEquinoxLocalMainNativePointer } from "../../src/equinox-local-main-native-state.js";
 import { equinoxLocalManagedSourcePaths } from "../../src/equinox-local-managed-source-installation.js";
 import { ELECTRON_DISTRIBUTIONS } from "../../src/equinox-local-runtime-versions.js";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
@@ -367,5 +368,140 @@ export async function activateSignedMainMacElectronUi({ signedPointer, installer
         if (current && inode && current.dev === inode.dev && current.ino === inode.ino) {
             await fs.rm(lockPath, { force: true });
         }
+    }
+}
+// Read-only launch admission for the native AppKit owner. Unlike installer
+// activation this never changes the managed SHA tree, current native pointer,
+// active transaction, lock or any installed application. It reconstructs the
+// pinned ZIP only in a fresh private TEMP directory and compares full content.
+export async function inspectInstalledSignedMainMacElectronUi({ homeDir = os.homedir(), arch = process.arch, verifyPointerImpl = validateTrustedMainInstallPointer, inspectStoredImpl = inspectEquinoxLocalMainNativeStoredRelease, readNativePointerImpl = readEquinoxLocalMainNativePointer, } = {}) {
+    if (process.platform !== "darwin" || process.getuid?.() === 0 ||
+        !["arm64", "x64"].includes(arch) || !path.isAbsolute(homeDir) ||
+        path.normalize(homeDir) !== homeDir) {
+        throw new Error("Installed Electron UI inspection requires a canonical non-root macOS home.");
+    }
+    const target = "darwin-" + arch;
+    const root = equinoxLocalManagedSourcePaths({ homeDir, platform: "darwin", arch }).mainTransactionRoot;
+    await privateDirectory(root);
+    const pointerPath = path.join(root, "current-native.json");
+    const active = await readNativePointerImpl(pointerPath, { transactionRoot: root });
+    if (active.target !== target || !/^[a-f0-9]{40}$/u.test(active.sourceSha)) {
+        throw new Error("Current signed Main native pointer has a different target or source SHA.");
+    }
+    const sourceSha = active.sourceSha;
+    const receiptPath = path.join(root, "native-store", target, sourceSha, "signed-selector.json");
+    const { data } = await readBoundedNormalFile(receiptPath, {
+        minBytes: 200, maxBytes: 16 * 1024, encoding: "utf8",
+        label: "Current immutable Main UI signed selector",
+    });
+    let receipt;
+    try {
+        receipt = JSON.parse(data);
+    }
+    catch {
+        throw new Error("Current immutable Main UI selector is not valid JSON.");
+    }
+    const signed = verifyPointerImpl(receipt, { expectedSourceSha: sourceSha });
+    const row = signed.targets.find((candidate) => candidate.target === target);
+    if (!row || row.runtimeContractSha256 !== active.runtimeContractSha256 ||
+        signed.version !== active.payloadVersion) {
+        throw new Error("Selected native pointer differs from the immutable signed Main release.");
+    }
+    const stored = await inspectStoredImpl({
+        transactionRoot: root, target, sourceSha,
+        expectedRuntimeContractSha256: row.runtimeContractSha256,
+    });
+    const releaseDir = path.join(root, "native-store", target, sourceSha, "release");
+    if (stored.releaseDir !== releaseDir || stored.sourceSha !== sourceSha ||
+        stored.target !== target || stored.manifest.artifactSha256 !== row.artifact.sha256 ||
+        stored.manifest.artifactBytes !== row.artifact.bytes ||
+        stored.manifest.payloadVersion !== signed.version) {
+        throw new Error("Installed Electron UI source fails signed Main native-store admission.");
+    }
+    const sourceEntrypoint = path.join(releaseDir, "desktop", "electron", "main.cjs");
+    const source = await fs.open(sourceEntrypoint, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+        if (!(await source.stat()).isFile()) {
+            throw new Error("Installed Electron UI source entrypoint is not a normal signed file.");
+        }
+    }
+    finally {
+        await source.close();
+    }
+    const pinned = ELECTRON_DISTRIBUTIONS[target];
+    if (!pinned)
+        throw new Error("Installed Electron UI target lacks an official pinned ZIP.");
+    const archivePath = path.join(releaseDir, "runtime", "electron", pinned.filename);
+    const uiRoot = path.join(root, "electron-ui");
+    const targetRoot = path.join(uiRoot, target);
+    const installedPath = path.join(targetRoot, sourceSha);
+    await privateDirectory(uiRoot);
+    await privateDirectory(targetRoot);
+    await privateDirectory(installedPath);
+    for (const conflict of [path.join(root, "active.json"), path.join(targetRoot, ".activation.lock")]) {
+        try {
+            await fs.lstat(conflict);
+            throw new Error("Electron UI cannot be launched while a native installation is in progress.");
+        }
+        catch (error) {
+            if (!isMissing(error))
+                throw error;
+        }
+    }
+    const original = await fs.lstat(installedPath);
+    await signedUiIdentity(path.join(installedPath, "Electron.app"));
+    const actual = await fingerprintSignedUiTree(installedPath);
+    const scratch = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "eql-ui-readonly-"));
+    try {
+        const expected = await inspectExtractedPinnedMacElectron({
+            archivePath, target, scratchRoot: scratch, stageHostedUi: true,
+        });
+        if (!expected.stagedPath || expected.hostedBundleIdentifier !== HOSTED_UI_ID ||
+            await fingerprintSignedUiTree(expected.stagedPath) !== actual) {
+            throw new Error("Installed Electron UI differs from its original signed Main pinned ZIP.");
+        }
+    }
+    finally {
+        await fs.rm(scratch, { recursive: true, force: true });
+    }
+    const finalRoot = await fs.lstat(installedPath);
+    if (!finalRoot.isDirectory() || finalRoot.isSymbolicLink() ||
+        finalRoot.ino !== original.ino || finalRoot.dev !== original.dev) {
+        throw new Error("Installed Electron UI changed while verifying its signed identity.");
+    }
+    for (const conflict of [path.join(root, "active.json"), path.join(targetRoot, ".activation.lock")]) {
+        try {
+            await fs.lstat(conflict);
+            throw new Error("Native installation began while checking the hosted UI.");
+        }
+        catch (error) {
+            if (!isMissing(error))
+                throw error;
+        }
+    }
+    const reread = await readNativePointerImpl(pointerPath, { transactionRoot: root });
+    if (reread.target !== target || reread.sourceSha !== sourceSha ||
+        reread.runtimeContractSha256 !== row.runtimeContractSha256) {
+        throw new Error("Current signed native SHA changed during installed Electron verification.");
+    }
+    const executablePath = path.join(installedPath, "Electron.app", "Contents", "MacOS", "Electron");
+    return Object.freeze({ target, sourceSha, installedPath, executablePath, sourceEntrypoint });
+}
+// The native AppKit host may run this one-shot INSPECTION through its pinned
+// product-owned Node. No installer mutation, new server or browser backend.
+const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
+if (invoked === import.meta.url) {
+    if (process.argv.length !== 3 || process.argv[2] !== "--inspect-installed-ui") {
+        process.stderr.write("Usage: activate-signed-electron-macos.mjs --inspect-installed-ui\\n");
+        process.exitCode = 64;
+    }
+    else {
+        inspectInstalledSignedMainMacElectronUi().then((result) => {
+            process.stdout.write(JSON.stringify(result) + "\\n");
+        }).catch((error) => {
+            process.stderr.write("Installed Electron UI not admitted: " +
+                (error instanceof Error ? error.message : "unknown failure") + "\\n");
+            process.exitCode = 1;
+        });
     }
 }
