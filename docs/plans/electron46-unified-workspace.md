@@ -69,3 +69,30 @@ One approachable, polished desktop workspace on macOS and Windows. Make conversa
 - The previous intermittent failed chat-start remains a separate observation. Its unsent draft appeared in a subsequent blank ChatGPT tab; the later trials succeeded after the orphaned draft was cleared. Causality is unproven; no ambiguous browser mutation is auto-replayed.
 - Electron preview background throttling has been disabled so bounded request and poll timers may progress when ChatGPT takes focus. Confirm behavior on both actual platforms before shipping.
 - Temporary QA tasks/tabs/profiles must be cleaned up. No new test files.
+
+
+## Checkpoint 8: background behavior and native lifecycle parity audit
+
+### Verified in a source preview on macOS
+
+- A read-only, isolated Control Center preview was opened through Electron 46 using its own port/profile. With Chrome in the foreground, Workspace task GET polls continued on approximately **20-second intervals**: background throttling was disabled and the unfocused renderer remained active. This does not prove minimized/suspended-window behavior or Windows parity.
+- A separate read-only mock task with a simulated bound chat was refreshed while an unsent chat draft had focus. The draft survived a real changing-task-data refresh, including input focus/caret, after renderTasks() was updated to preserve the selected editor or keyboard-selected task row. No chat message was submitted.
+- Both checks exercised development Electron and the source renderer, not an installed signed application or a reloaded Factory runtime.
+
+### Installed shells versus the Electron preview
+
+| Concern | Current macOS AppKit host | Current Windows WPF host | Electron 46 preview / migration gate |
+| --- | --- | --- | --- |
+| Runtime ownership | Stable Equinox Local.app + verified per-user launchd LaunchAgent/runtime-host split; independent login enable state | WPF RuntimeSupervisor owns a Node runtime gate inside a Windows Job Object, with bounded recovery | Electron currently connects to an **already-running** service; no supervision. Preserve existing ownership until a single verified replacement exists on each OS. |
+| Resident UI | Native NSStatusItem menu; foreground shell separate from runtime host | Tray controller; closing the window hides rather than shutting down; explicit Exit stops the owned runtime | macOS close leaves preview process alive; Windows closes/quits. Tray, explicit Exit, status and service-start policy are **not equivalent yet**. |
+| Login preference | LaunchAgent's persisted per-user enable/disable preference, menu toggle, explicit manual launch semantics | Per-user Run-key command validated against the owned executable (--startup), hidden startup with tray | Preview does not register at login. Do not create duplicate registration or silently enable startup. |
+| Identity/permissions | Stable app bundle identity (dev.equinox.local) owns Accessibility/Screen Recording TCC grants and trusted Native Messaging | Signed WPF executable identity, installed WebView2 storage and Native Messaging host under release ownership | Stock Electron preview (com.github.Electron) must **not** request/claim installed macOS TCC grants or own Native Messaging registration. |
+| Reconnection/update | Native shell and launchd recover around source/runtime restarts; signed Main installer owns active release | WebView2 waits for the loopback service; Job Object and detached installer preserve correct update/shutdown ownership | Preview has only an offline page and retry; signed Main update, offline reconnect, shell replacement and four-target packaging are unproven. No second updater. |
+
+### Promotion gates (not yet met)
+
+1. Validate actual macOS installed-bundle identity, native permissions, status menu, login toggle on/off, reopen/close and controlled runtime restart *without* permission re-prompt or duplicate LaunchAgent.
+2. Validate actual Windows installed shell behavior: true single instance, tray/close-to-tray, startup-on-login without intrusive window, Job Object lifetime/child drainage, crash recovery, and no flashing process windows.
+3. Reuse the **existing signed Main installer/verification flow** for both architectures on both OSes, including first install, update, repair and preserved user state. Do not promote source-preview assets alone as a production app.
+4. Prove the real source server.ts Workspace callback wiring through the installed single Node runtime. Prior end-to-end UI verification was safely delegated through the existing authorized Factory CLI; it is not evidence that Electron already replaces WPF/AppKit lifecycle.
+5. Keep the unreleased preview profile separate from public and Factory state. Do not publish, replace the native hosts, or merge solely on the basis of the macOS renderer-level checks.

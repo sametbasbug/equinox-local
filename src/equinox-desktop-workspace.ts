@@ -1,5 +1,6 @@
-// Read-only workspace view over the existing bounded Control Center API.
-// No new agent service, provider connection, renderer privilege or task mutation.
+// Human-first workspace over the existing bounded Control Center API.
+// Task/chat mutations remain explicitly scoped, same-origin and CSRF-checked;
+// no new agent service, provider engine or renderer privileges.
 type WorkspaceTask = {
   taskId: string;
   title: string;
@@ -370,6 +371,16 @@ function renderDetail(): void {
 }
 
 function renderTasks(): void {
+  // A periodic task update must not steal focus from someone composing a message
+  // or navigating the task list by keyboard. The DOM nodes are replaced below.
+  const focused = document.activeElement;
+  const chatInputFocused = focused instanceof HTMLInputElement && focused.matches("#task-chat .chat-input");
+  const focusedTaskId = focused instanceof HTMLButtonElement && focused.classList.contains("task-item")
+    ? focused.dataset.taskId : null;
+  const originalSelection = state.selected;
+  const caret = chatInputFocused && focused instanceof HTMLInputElement
+    ? {start: focused.selectionStart ?? focused.value.length, end: focused.selectionEnd ?? focused.value.length}
+    : null;
   const list = byId("task-list");
   const tasks = visibleTasks();
   const titles: Record<Filter, string> = { all: "Tüm görevler", active: "Devam eden görevler", completed: "Tamamlanan görevler" };
@@ -384,6 +395,7 @@ function renderTasks(): void {
   for (const task of tasks) {
     const button = node("button", "task-item" + (task.taskId === state.selected ? " is-selected" : ""));
     button.type = "button";
+    button.dataset.taskId = task.taskId;
     button.setAttribute("aria-pressed", task.taskId === state.selected ? "true" : "false");
     const icon = node("span", "task-indicator" + (task.status === "completed" ? " done" : ""), task.status === "completed" ? "✓" : "◷");
     icon.setAttribute("aria-hidden", "true");
@@ -400,6 +412,17 @@ function renderTasks(): void {
     list.append(button);
   }
   renderDetail();
+  if (chatInputFocused && originalSelection === state.selected && caret) {
+    const input = document.querySelector<HTMLInputElement>("#task-chat .chat-input");
+    if (input && !input.disabled) {
+      input.focus({preventScroll: true});
+      input.setSelectionRange(Math.min(caret.start, input.value.length), Math.min(caret.end, input.value.length));
+    }
+  } else if (focusedTaskId) {
+    const button = [...list.querySelectorAll<HTMLButtonElement>(".task-item")]
+      .find((item) => item.dataset.taskId === focusedTaskId);
+    button?.focus({preventScroll: true});
+  }
 }
 
 function setFilter(filter: Filter): void {
