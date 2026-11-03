@@ -204,12 +204,39 @@ export async function inspectPinnedElectronZip({
     if (contents.length !== entry.uncompressedBytes) throw new Error("Pinned Electron symbolic link size is inconsistent.");
     resolvedLinkTarget(entry.name, contents.toString("utf8"));
   }
-  const required = isWindows
-    ? ["electron.exe", "LICENSE", "LICENSES.chromium.html"]
-    : ["Electron.app/Contents/MacOS/Electron", "LICENSE", "LICENSES.chromium.html"];
-  for (const name of required) {
+  const executableName = isWindows ? "electron.exe" : "Electron.app/Contents/MacOS/Electron";
+  for (const name of [executableName, "LICENSE", "LICENSES.chromium.html"]) {
     if (!entries.some((entry) => entry.name === name && entry.kind === "file")) {
       throw new Error("Pinned Electron ZIP is missing a required binary or license.");
+    }
+  }
+  // Verify the actual PE/Mach-O machine type inside the pinned archive.
+  // This is a build-only bounded decode; no binary is executed or installed.
+  const executable = entries.find((entry) => entry.name === executableName)!;
+  if (executable.dataOffset === undefined) throw new Error("Pinned Electron executable has no ZIP data offset.");
+  const compressed = bytes.subarray(executable.dataOffset, executable.dataOffset + executable.compressedBytes);
+  const binary = executable.method === 0
+    ? compressed
+    : inflateRawSync(compressed, {maxOutputLength: executable.uncompressedBytes + 1});
+  if (binary.length !== executable.uncompressedBytes) {
+    throw new Error("Pinned Electron executable size disagrees with its ZIP metadata.");
+  }
+  if (isWindows) {
+    if (binary.length < 64 || binary.toString("ascii", 0, 2) !== "MZ") {
+      throw new Error("Pinned Electron Windows executable has no valid DOS header.");
+    }
+    const peOffset = binary.readUInt32LE(0x3c);
+    const expectedMachine = target === "win32-arm64" ? 0xaa64 : 0x8664;
+    if (peOffset < 64 || peOffset + 6 > binary.length ||
+        binary.readUInt32LE(peOffset) !== 0x00004550 ||
+        binary.readUInt16LE(peOffset + 4) !== expectedMachine) {
+      throw new Error("Pinned Electron PE architecture does not match the selected Windows target.");
+    }
+  } else {
+    const expectedMachine = target === "darwin-arm64" ? 0x0100000c : 0x01000007;
+    if (binary.length < 8 || binary.readUInt32LE(0) !== 0xfeedfacf ||
+        binary.readUInt32LE(4) !== expectedMachine) {
+      throw new Error("Pinned Electron Mach-O architecture does not match the selected macOS target.");
     }
   }
   return Object.freeze({target, entries: entries.length, links: symlinks.size, unpackedBytes});
