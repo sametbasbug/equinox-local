@@ -46,6 +46,12 @@ const STATIC_RELEASE_FILES = Object.freeze([
   "src/equinox-desktop-workspace.html",
   "src/equinox-desktop-workspace.css",
   "src/equinox-desktop-workspace.js",
+  // Inert, source-integrity-checked UI entrypoint. Electron binaries are NOT
+  // shipped until each target is admitted through the existing signed Main
+  // native artifact pipeline.
+  "desktop/electron/main.cjs",
+  "desktop/electron/unavailable.html",
+  "native/windows/EquinoxLocal.WindowsShell/Assets/EquinoxLocal.ico",
   "src/equinox-control-center.css",
   "src/equinox-control-center.js",
   "app/EquinoxLocal.png",
