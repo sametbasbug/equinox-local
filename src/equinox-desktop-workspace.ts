@@ -134,7 +134,7 @@ async function chatMutation(taskId: string, action: "send" | "acknowledge", data
     if (!session.ok || typeof token.csrfToken !== "string") throw new Error("Güvenli oturum doğrulanamadı.");
     const response = await fetch(chatPath(taskId, action), {
       method: "POST",
-      credentials: "same-origin",
+      credentials: "same-origin", signal: AbortSignal.timeout(60_000),
       headers: {"content-type": "application/json", "x-equinox-csrf": token.csrfToken},
       body: JSON.stringify(data),
     });
@@ -153,12 +153,14 @@ async function chatMutation(taskId: string, action: "send" | "acknowledge", data
   void loadChat(taskId);
 }
 
-async function postAction(path: string, data: object): Promise<{task?: {taskId: string; chatBinding?: unknown}; error?: string}> {
-  const session = await fetch("/api/v1/session", {credentials: "same-origin", cache: "no-store"});
+async function postAction(path: string, data: object, timeoutMs = 25_000): Promise<{task?: {taskId: string; chatBinding?: unknown}; error?: string}> {
+  const session = await fetch("/api/v1/session", {
+    credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10_000),
+  });
   const token = await session.json() as {csrfToken?: string};
   if (!session.ok || typeof token.csrfToken !== "string") throw new Error("Güvenli oturum doğrulanamadı.");
   const response = await fetch(path, {
-    method: "POST", credentials: "same-origin",
+    method: "POST", credentials: "same-origin", signal: AbortSignal.timeout(timeoutMs),
     headers: {"content-type": "application/json", "x-equinox-csrf": token.csrfToken},
     body: JSON.stringify(data),
   });
@@ -172,18 +174,21 @@ async function startTaskChat(taskId: string): Promise<void> {
   chatStarting.add(taskId);
   if (taskId === state.selected) renderDetail();
   try {
-    const response = await postAction(chatPath(taskId, "start"), {});
+    const response = await postAction(chatPath(taskId, "start"), {}, 60_000);
     if (!response.task?.chatBinding) {
       throw new Error("Sohbet bağlantısı doğrulanamadı.");
     }
     chatStartErrors.delete(taskId);
     chatInfo.delete(taskId);
-    await refresh();
+    const task = state.tasks.find((entry) => entry.taskId === taskId);
+    if (task) task.chatBound = true;
+    renderTasks();
+    void refresh();
     void loadChat(taskId);
   } catch {
     // A remote tab may already exist. The user must inspect it first.
     chatStartBlocked.add(taskId);
-    chatStartErrors.set(taskId, "Konuşma açılmış olabilir. ChatGPT sekmesini kontrol et. Bu oturumda otomatik yeniden deneme kapalı.");
+    chatStartErrors.set(taskId, "Bağlantı doğrulanamadı veya zaman aşımına uğradı. ChatGPT sekmesi açılmış olabilir. Sekmeyi kontrol et; bu oturumda yeniden başlatma kapalı.");
   } finally {
     chatStarting.delete(taskId);
     if (taskId === state.selected) renderDetail();
@@ -281,6 +286,16 @@ function appendChat(target: HTMLElement, task: WorkspaceTask): void {
     unavailable: "Sohbet durumu doğrulanamadı. Mesajı tekrar gönderme; önce ChatGPT sekmesini kontrol et.",
   } satisfies Record<ChatInfo["status"], string>)[info.status];
   card.append(node("p", "chat-status" + (info.status === "uncertain" || info.status === "unavailable" ? " warning" : ""), status));
+  if (info.status === "unavailable" && !info.requestId) {
+    const resume = node("button", "chat-acknowledge", "ChatGPT sekmesini kontrol ettim · Devam et");
+    resume.type = "button";
+    resume.addEventListener("click", () => {
+      if (window.confirm("Göreve bağlı ChatGPT konuşmasını açıp son mesajı ve yanıtı kontrol ettin mi? Bu onay gönderimi tekrarlamaz; yalnızca Workspace'te yeni mesaj yazmayı etkinleştirir.")) {
+        void chatMutation(task.taskId, "acknowledge", {requestId: "confirm-inspected"});
+      }
+    });
+    card.append(resume);
+  }
   if (info.status === "uncertain" && info.requestId) {
     const acknowledge = node("button", "chat-acknowledge", "Sekmeyi kontrol ettim · Kilidi kaldır");
     acknowledge.type = "button";

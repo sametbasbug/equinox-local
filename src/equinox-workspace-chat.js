@@ -6,6 +6,16 @@ function chatError(message, statusCode = 409) {
 export function createEquinoxWorkspaceChat(deps) {
     const sessions = new Map();
     const reading = new Set();
+    // Runtime restarts deliberately lose pending receipts. Require the human
+    // to inspect the exact conversation again rather than silently treating a
+    // potentially delivered message as unsent.
+    const inspected = new Map();
+    const bindingKey = (binding) => [binding.browserContext, binding.browserInstanceId ?? "", binding.conversationId].join(":");
+    function trustFreshBinding(taskId, binding) {
+        if (!TASK_ID.test(taskId) || binding.browserContext !== "user")
+            throw chatError("Geçersiz sohbet bağlantısı.", 400);
+        inspected.set(taskId, bindingKey(binding));
+    }
     async function boundTask(taskId) {
         if (!TASK_ID.test(taskId))
             throw chatError("Geçersiz görev.", 400);
@@ -13,12 +23,17 @@ export function createEquinoxWorkspaceChat(deps) {
         if (task?.status !== "active" || task?.chatBinding?.browserContext !== "user") {
             throw chatError("Bu görev için aktif, doğrulanmış Your Browser sohbet bağlantısı yok.");
         }
+        const key = bindingKey(task.chatBinding);
+        if (inspected.has(taskId) && inspected.get(taskId) !== key)
+            inspected.delete(taskId);
+        if (sessions.has(taskId) && sessions.get(taskId)?.bindingKey !== key)
+            sessions.delete(taskId);
         return task;
     }
     function publicState(taskId) {
         const record = sessions.get(taskId);
         if (!record)
-            return { status: "idle" };
+            return { status: inspected.has(taskId) ? "idle" : "unavailable" };
         return {
             status: record.status,
             requestId: record.requestId,
@@ -59,6 +74,9 @@ export function createEquinoxWorkspaceChat(deps) {
         }
         if (typeof requestId !== "string" || !REQUEST_ID.test(requestId))
             throw chatError("Geçersiz mesaj kimliği.", 400);
+        if (inspected.get(taskId) !== bindingKey(task.chatBinding)) {
+            throw chatError("Bu konuşma için önce ChatGPT sekmesini kontrol edip bağlantıyı onayla.");
+        }
         const current = sessions.get(taskId);
         if (current) {
             if (current.requestId === requestId) {
@@ -72,7 +90,7 @@ export function createEquinoxWorkspaceChat(deps) {
         deps.assertMutationAllowed("workspace_chat_send");
         // Record intent before crossing the browser boundary. HTTP retry with the same
         // request ID returns this state; it never invokes delivery a second time.
-        const entry = { status: "sending", message, requestId };
+        const entry = { status: "sending", message, requestId, bindingKey: bindingKey(task.chatBinding) };
         sessions.set(taskId, entry);
         try {
             const result = await deps.deliverText({
@@ -100,8 +118,12 @@ export function createEquinoxWorkspaceChat(deps) {
         return publicState(taskId);
     }
     async function acknowledge(taskId, requestId) {
-        await boundTask(taskId);
+        const task = await boundTask(taskId);
         const entry = sessions.get(taskId);
+        if (!entry && requestId === "confirm-inspected") {
+            inspected.set(taskId, bindingKey(task.chatBinding));
+            return publicState(taskId);
+        }
         if (!entry || entry.requestId !== requestId || entry.status !== "uncertain") {
             throw chatError("Onaylanacak belirsiz gönderim bulunamadı.");
         }
@@ -109,5 +131,5 @@ export function createEquinoxWorkspaceChat(deps) {
         sessions.delete(taskId);
         return publicState(taskId);
     }
-    return Object.freeze({ status, send, acknowledge });
+    return Object.freeze({ status, send, acknowledge, trustFreshBinding });
 }

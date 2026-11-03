@@ -3216,6 +3216,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       if (!updated.chatBinding || updated.status !== "active") {
         throw Object.assign(new Error("ChatGPT sekmesi açılmış olabilir ancak görev bağlantısı kaydedilemedi. Sekmeyi kontrol et."), {statusCode: 409});
       }
+      workspaceChatController.trustFreshBinding(taskId, started.binding);
       return updated;
     } catch (error) {
       if ((error as {statusCode?: number})?.statusCode) throw error;
