@@ -1,3 +1,5 @@
+import { constants as fsConstants } from "node:fs";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
@@ -52,14 +54,41 @@ export async function inspectPinnedElectronZip({ archivePath, target, }) {
     if (!Object.hasOwn(ELECTRON_DISTRIBUTIONS, target) || !path.isAbsolute(archivePath)) {
         throw new Error("Pinned Electron ZIP requires a supported target and absolute archive path.");
     }
-    const stat = await fs.lstat(archivePath);
     const pinned = ELECTRON_DISTRIBUTIONS[target];
-    if (!pinned || !stat.isFile() || stat.isSymbolicLink() || stat.size !== pinned.bytes) {
-        throw new Error("Pinned Electron ZIP is not an exact-size normal file.");
+    if (!pinned)
+        throw new Error("Pinned Electron target is not admitted.");
+    // Open once: never stat one path and then reopen it for reading. POSIX uses
+    // O_NOFOLLOW; on Windows the path is additionally checked after opening.
+    // The same descriptor supplies size, bounded contents and exact SHA-256.
+    const flags = fsConstants.O_RDONLY | (process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW);
+    const handle = await fs.open(archivePath, flags);
+    let bytes;
+    try {
+        const stat = await handle.stat();
+        const pathStat = await fs.lstat(archivePath);
+        if (!stat.isFile() || stat.size !== pinned.bytes ||
+            pathStat.isSymbolicLink() || !pathStat.isFile() ||
+            stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+            throw new Error("Pinned Electron ZIP is not an exact-size normal file.");
+        }
+        // Bounded reads also reject concurrent growth, rather than allowing
+        // readFile to allocate arbitrary memory after the initial stat call.
+        bytes = Buffer.alloc(pinned.bytes);
+        let cursor = 0;
+        while (cursor < bytes.length) {
+            const { bytesRead } = await handle.read(bytes, cursor, Math.min(1024 * 1024, bytes.length - cursor), cursor);
+            if (bytesRead < 1)
+                throw new Error("Pinned Electron ZIP was truncated during inspection.");
+            cursor += bytesRead;
+        }
+        if ((await handle.read(Buffer.alloc(1), 0, 1, bytes.length)).bytesRead !== 0 ||
+            createHash("sha256").update(bytes).digest("hex") !== pinned.sha256) {
+            throw new Error("Pinned Electron ZIP content changed or does not match the official digest.");
+        }
     }
-    // The bounded, exact-size official ZIP is held in memory only during
-    // artifact construction. User devices never execute this build-time parser.
-    const bytes = await fs.readFile(archivePath);
+    finally {
+        await handle.close();
+    }
     const isWindows = target.startsWith("win32-");
     const endStart = Math.max(0, bytes.length - ZIP_END_BYTES);
     let end = -1;

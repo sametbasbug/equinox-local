@@ -27,6 +27,7 @@ const SHARED_NATIVE_ADMISSION_PATHS = Object.freeze([
     "src/equinox-local-main-native-admission.js",
 ]);
 const DARWIN_NATIVE_PATHS = Object.freeze([
+    "scripts/release/inspect-extracted-electron-macos.mjs",
     "app/",
     "src/equinox-local-native-app.js",
     "src/equinox-local-native-app-host.js",
