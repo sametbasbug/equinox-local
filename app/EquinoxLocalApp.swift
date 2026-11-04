@@ -1078,8 +1078,12 @@ private final class NativeHostedWorkspace {
     private var inspector: Process?
     private var child: Process?
     private var opening = false
+    private var stopped = false
 
-    func reveal(completion: @escaping (Error?) -> Void) {
+    func reveal(canLaunch: @escaping () -> Bool, completion: @escaping (Error?) -> Void) {
+        // A native quit may wait for asynchronous hard-stop, while an already
+        // running source inspector finishes. Never start UI during that wait.
+        guard !stopped, canLaunch() else { return }
         if let child, child.isRunning {
             _ = NSRunningApplication(processIdentifier: child.processIdentifier)?
                 .activate(options: [])
@@ -1145,6 +1149,10 @@ private final class NativeHostedWorkspace {
                 guard let self else { return }
                 self.inspector = nil
                 self.opening = false
+                // The read-only inspector finishes its own scratch cleanup,
+                // but neither a pending nor a completed native quit may
+                // turn its late admission result into another Electron child.
+                guard !self.stopped, canLaunch() else { return }
                 guard process.terminationStatus == 0, data.count > 0, data.count <= 8192,
                       let fields = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
                       fields["sourceSha"] == sha, fields["target"] == target else {
@@ -1204,9 +1212,9 @@ private final class NativeHostedWorkspace {
     }
 
     func stop() {
-        // Let any already running, read-only inspector finish cleaning its
-        // private scratch rather than interrupting its finally cleanup.
-        // The releasing AppDelegate will not launch a child after it exits.
+        // Prevent a pending verified-inspector completion from spawning a new
+        // child while AppKit is terminating. Do not interrupt its cleanup.
+        stopped = true
         if let child, child.isRunning { child.terminate() }
     }
 }
@@ -2284,7 +2292,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             NSSound.beep()
             return
         }
-        hostedWorkspace.reveal { [weak self] error in
+        hostedWorkspace.reveal(canLaunch: { [weak self] in
+            guard let self else { return false }
+            return !self.quitPending
+        }) { [weak self] error in
             guard let self, let error else { return }
             self.showRuntimeLifecycleError(
                 title: self.localized("Workspace unavailable", "Çalışma alanı açılamadı"),
