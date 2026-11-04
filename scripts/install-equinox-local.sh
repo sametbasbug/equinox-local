@@ -292,8 +292,17 @@ MAIN_POINTER="$TEMP_ROOT/main-signed-pointer.json"
 # Exit code alone cannot prove installation: a prior pinned verifier once
 # silently returned success without executing its entrypoint. Require the
 # exact signed SHA/version/target completion receipt before retiring A.
+# Keep the installer's clean environment. Only a literal, explicitly requested
+# UI-preview opt-in may cross into the original signed Main Node installer.
+# No other caller-controlled environment value is forwarded. A literal 0
+# preserves default-off without empty-array expansion under macOS Bash 3.2.
+ELECTRON_UI_OPT_IN_VALUE=0
+if [ "${EQUINOX_LOCAL_SIGNED_ELECTRON_UI_INSTALL:-}" = "1" ]; then
+  ELECTRON_UI_OPT_IN_VALUE=1
+fi
 fresh_completion="$(/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER" \
   TMPDIR="/private/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+  EQUINOX_LOCAL_SIGNED_ELECTRON_UI_INSTALL="$ELECTRON_UI_OPT_IN_VALUE" \
   "$MAIN_NODE" "$MAIN_INSTALLER" --install-main-fresh \
   --signed-pointer-file "$MAIN_POINTER" --archive "$MAIN_ARCHIVE")" ||
   fail "fresh signed Main installation failed; attempting to restore previous executables"

@@ -1947,6 +1947,17 @@ export async function installFreshSignedMainRelease({ signedPointer, sourceArchi
             signedPointer, installerOptIn: true, homeDir, arch, env,
         });
     }
+    if (platform === "darwin" && env.EQUINOX_LOCAL_SIGNED_ELECTRON_UI_INSTALL === "1") {
+        // The same original signed installer owns macOS preparation. Resolve the
+        // helper from its immutable native-store release, never Factory source.
+        // This only prepares the separately signed SHA-bound UI child. It cannot
+        // start a process or change the active Main selector.
+        const admission = path.posix.join(staged.releaseDir, "scripts", "release", "activate-signed-electron-macos.mjs");
+        const { activateSignedMainMacElectronUi } = await import(pathToFileURL(admission).href);
+        await activateSignedMainMacElectronUi({
+            signedPointer, installerOptIn: true, homeDir, arch,
+        });
+    }
     await writeEquinoxLocalMainNativePointer(pointerPath, {
         schemaVersion: 1, channel: "main", sourceSha: signed.sourceSha, target,
         runtimeContractSha256: targetRow.runtimeContractSha256,
