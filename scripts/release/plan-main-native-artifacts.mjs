@@ -4,7 +4,9 @@ import { inspectEquinoxLocalMainNativeImpactRange } from "../../src/equinox-loca
 import { EQUINOX_LOCAL_RELEASE_TARGET_MATRIX } from "../../src/equinox-local-platform.js";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const MAIN_NATIVE_RUNNERS = Object.freeze({
-    "darwin-arm64": "macos-latest",
+    // Stable supported M1 runner; macos-latest recently moved to macOS 26
+    // and has left candidate ARM64 jobs queued without ever starting a VM.
+    "darwin-arm64": "macos-15",
     "darwin-x64": "macos-15-intel",
     "win32-arm64": "windows-11-vs2026-arm",
     "win32-x64": "windows-latest",

@@ -105,16 +105,13 @@ internal sealed partial class WindowsHostedWorkspaceSupervisor : IAsyncDisposabl
                     RedirectStandardError = true,
                 };
                 start.ArgumentList.Add(gateScript);
+                SetMinimalHostedEnvironment(start);
                 start.Environment["EQUINOX_LOCAL_OWNED_PROCESS_SPEC"] = payload;
                 start.Environment["EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER"] = ReadyMarker;
                 start.Environment["EQUINOX_DESKTOP_HOSTED_UI"] = "1";
                 start.Environment["EQUINOX_DESKTOP_PREVIEW_PORT"] = "24891";
                 // The direct parent of electron.exe is the signed Node gate,
                 // NOT WPF. Job ownership is the Windows lifetime contract.
-                start.Environment.Remove("EQUINOX_DESKTOP_NATIVE_PARENT_PID");
-                start.Environment.Remove("ELECTRON_RUN_AS_NODE");
-                start.Environment.Remove("NODE_OPTIONS");
-                start.Environment.Remove("NODE_PATH");
                 var process = new Process { StartInfo = start, EnableRaisingEvents = true };
                 var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 process.OutputDataReceived += (_, e) =>
@@ -144,6 +141,28 @@ internal sealed partial class WindowsHostedWorkspaceSupervisor : IAsyncDisposabl
         finally { _lifecycle.Release(); }
     }
 
+    // The native WPF owner may carry unrelated user/agent/helper environment
+    // values. Neither the signed one-shot inspector nor its UI-only child
+    // needs them. Retain only Windows profile and system runtime essentials.
+    private static void SetMinimalHostedEnvironment(ProcessStartInfo start)
+    {
+        var systemRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        if (string.IsNullOrWhiteSpace(systemRoot) || !Path.IsPathFullyQualified(systemRoot) ||
+            !Directory.Exists(systemRoot))
+            throw new InvalidDataException("Windows system runtime root is unavailable for the hosted UI.");
+        start.Environment.Clear();
+        foreach (var name in new[] { "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP" })
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrWhiteSpace(value)) start.Environment[name] = value;
+        }
+        start.Environment["SystemRoot"] = systemRoot;
+        start.Environment["WINDIR"] = systemRoot;
+        start.Environment["PATH"] = string.Join(Path.PathSeparator,
+            [Path.Combine(systemRoot, "System32"), systemRoot]);
+        start.Environment["ComSpec"] = Path.Combine(systemRoot, "System32", "cmd.exe");
+    }
+
     private static async Task<SignedUi> RunInspectorAsync(string node, string inspector, string cwd)
     {
         var start = new ProcessStartInfo(node)
@@ -153,8 +172,7 @@ internal sealed partial class WindowsHostedWorkspaceSupervisor : IAsyncDisposabl
         };
         start.ArgumentList.Add(inspector);
         start.ArgumentList.Add("--inspect-installed-ui");
-        start.Environment.Remove("ELECTRON_RUN_AS_NODE");
-        start.Environment.Remove("NODE_OPTIONS");
+        SetMinimalHostedEnvironment(start);
         using var process = Process.Start(start) ?? throw new InvalidOperationException(
             "Signed Windows Workspace inspector could not start.");
         try
