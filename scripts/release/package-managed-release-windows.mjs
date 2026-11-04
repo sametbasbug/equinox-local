@@ -219,7 +219,7 @@ export async function hardlinkNormalTree(sourceRoot, destinationRoot, { includeP
         }
     }
 }
-async function copyReleaseSources(rootDir, releaseDir) {
+async function copyReleaseSources(rootDir, releaseDir, { mirrorSourceForElectron = false } = {}) {
     const files = await collectManagedReleaseSourceFiles(rootDir);
     for (const relative of [...files, ...WINDOWS_EXTRA_RELEASE_FILES]) {
         const source = path.join(rootDir, relative);
@@ -227,6 +227,11 @@ async function copyReleaseSources(rootDir, releaseDir) {
         const destination = path.join(releaseDir, destinationRelative);
         await fs.mkdir(path.dirname(destination), { recursive: true });
         await fs.copyFile(source, destination);
+        if (mirrorSourceForElectron && relative.startsWith("src/")) {
+            const mirror = path.join(releaseDir, relative);
+            await fs.mkdir(path.dirname(mirror), { recursive: true });
+            await fs.copyFile(source, mirror);
+        }
     }
     const modulesSource = path.join(rootDir, "node_modules");
     const includeProduction = await productionNodeModulesFilter(rootDir);
@@ -593,7 +598,7 @@ export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resol
         if (nativeHelperCacheHit && !nativeHelperCacheDir)
             throw new Error("Native helper cache hit requires a verified directory.");
         const preparationResults = await Promise.allSettled([
-            component("sources", () => copyReleaseSources(rootDir, releaseDir)),
+            component("sources", () => copyReleaseSources(rootDir, releaseDir, { mirrorSourceForElectron: includeElectronPreview })),
             component("node", () => installPinnedWindowsNode(transaction, releaseDir, fetchImpl, admittedTarget, { canExecuteTarget })),
             component("tunnel", () => installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, admittedTarget, { canExecuteTarget })),
             component("winapp", () => installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, admittedTarget, { canExecuteTarget })),

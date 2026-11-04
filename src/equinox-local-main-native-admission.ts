@@ -54,6 +54,7 @@ const DARWIN_NATIVE_PATHS = Object.freeze([
   "scripts/release/prepare-source-app-host.mjs",
 ]);
 const WINDOWS_NATIVE_PATHS = Object.freeze([
+  "scripts/release/activate-signed-electron-windows.mjs",
   "scripts/release/inspect-extracted-electron-windows.mjs",
   "scripts/release/inspect-installed-electron-windows.mjs",
   ".github/actions/prepare-arm64-package/",

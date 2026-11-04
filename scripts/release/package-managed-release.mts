@@ -55,6 +55,7 @@ const STATIC_RELEASE_FILES = Object.freeze([
   // Dormant, signature-bound macOS UI-child admission. The default installer
   // still has no activation call; source inclusion is not installation.
   "scripts/release/activate-signed-electron-macos.mjs",
+  "scripts/release/activate-signed-electron-windows.mjs",
   "scripts/release/inspect-extracted-electron-macos.mjs",
   "scripts/release/inspect-extracted-electron-windows.mjs",
   "scripts/release/inspect-installed-electron-windows.mjs",
@@ -189,13 +190,24 @@ export async function collectManagedReleaseSourceFiles(rootDir: string): Promise
   return Object.freeze(files);
 }
 
-async function copyFileTree(rootDir: string, releaseDir: string, files: readonly string[]): Promise<void> {
+async function copyFileTree(rootDir: string, releaseDir: string, files: readonly string[],
+  {mirrorSourceForElectron = false}: {mirrorSourceForElectron?: boolean} = {}): Promise<void> {
   for (const relative of files) {
     const source = path.join(rootDir, relative);
     const releaseRelative = relative.startsWith("src/") ? relative.slice(4) : relative;
     const destination = path.join(releaseDir, releaseRelative);
     await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
     await fs.copyFile(source, destination);
+    // Installed opt-in Electron inspectors are intentionally nested under
+    // scripts/release and import ../../src/*.js. The ordinary source runtime
+    // stays flattened for its existing server/installer entrypoints, while
+    // a signed UI-preview candidate additionally retains its ORIGINAL src
+    // module paths. Both copies are immutable data in ONE signed release.
+    if (mirrorSourceForElectron && relative.startsWith("src/")) {
+      const mirror = path.join(releaseDir, relative);
+      await fs.mkdir(path.dirname(mirror), {recursive: true, mode: 0o700});
+      await fs.copyFile(source, mirror);
+    }
   }
 }
 
@@ -578,7 +590,8 @@ export async function packageManagedEquinoxRelease({
   await fs.mkdir(releaseDir, { recursive: true, mode: 0o700 });
 
   try {
-    await copyFileTree(rootDir, releaseDir, sourceFiles);
+    await copyFileTree(rootDir, releaseDir, sourceFiles,
+      {mirrorSourceForElectron: includeElectronPreview});
     await copyProductionNodeModules(rootDir, releaseDir);
     await installPinnedNodeBinary(admittedTarget, releaseDir, { fetchImpl });
     await installPinnedTunnelRuntime(admittedTarget, releaseDir, { fetchImpl });

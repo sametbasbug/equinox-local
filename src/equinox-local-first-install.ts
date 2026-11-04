@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import {
@@ -2037,6 +2037,24 @@ export async function installFreshSignedMainRelease({
   if(staged.status!=="staged" || staged.sourceSha!==signed.sourceSha ||
      staged.version!==signed.version || staged.target!==target){
     throw new Error("Fresh Main staged release differs from the production selector.");
+  }
+  // Optional original-installer-only UI preparation. Production signed Main
+  // archives currently omit Electron by default, and no automatic opt-in is
+  // enabled. Only an explicitly opted-in signed native payload can prepare
+  // this separate SHA-scoped UI tree BEFORE the current Main pointer changes.
+  // On failure, the existing native pointer is untouched; unknown/modified
+  // UI trees are never silently replaced.
+  if(platform==="win32" && env.EQUINOX_LOCAL_SIGNED_ELECTRON_UI_INSTALL==="1"){
+    // Import ONLY from the already immutable signed Main release that was
+    // freshly validated, never the ambient source checkout or user PATH.
+    const admission=path.win32.join(staged.releaseDir,"scripts","release",
+      "activate-signed-electron-windows.mjs");
+    const {activateSignedMainWindowsElectronUi}=await import(
+      pathToFileURL(admission).href
+    );
+    await activateSignedMainWindowsElectronUi({
+      signedPointer,installerOptIn:true,homeDir,arch,env,
+    });
   }
   await writeEquinoxLocalMainNativePointer(pointerPath,{
     schemaVersion:1,channel:"main",sourceSha:signed.sourceSha,target,

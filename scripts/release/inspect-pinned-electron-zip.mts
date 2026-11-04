@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { inflateRawSync } from "node:zlib";
@@ -61,9 +61,15 @@ export async function inspectPinnedElectronZip({
   archivePath,
   target,
   includeMemberDigests = false,
-}: {archivePath: string; target: string; includeMemberDigests?: boolean}): Promise<Readonly<{
+  stageWindowsTo,
+}: {
+  archivePath: string; target: string; includeMemberDigests?: boolean;
+  // A caller-owned, empty/private staging PARENT. Never an installed tree.
+  stageWindowsTo?: string;
+}): Promise<Readonly<{
   target: string; entries: number; links: number; unpackedBytes: number;
   members?: readonly PinnedElectronMember[];
+  stagedPath?: string;
 }>> {
   if (!Object.hasOwn(ELECTRON_DISTRIBUTIONS, target) || !path.isAbsolute(archivePath)) {
     throw new Error("Pinned Electron ZIP requires a supported target and absolute archive path.");
@@ -244,7 +250,61 @@ export async function inspectPinnedElectronZip({
       throw new Error("Pinned Electron Mach-O architecture does not match the selected macOS target.");
     }
   }
-  if (!includeMemberDigests) return Object.freeze({target, entries: entries.length, links: symlinks.size, unpackedBytes});
+  // Extract from the SAME already SHA-pinned ZIP descriptor/validated entry
+  // table, never a second ZIP parser and NEVER into an installed program.
+  // The caller owns a PRIVATE scratch parent; only the fresh child created
+  // here can be removed if extraction fails. No reparse/symlink entries.
+  let stagedPath: string | undefined;
+  if (stageWindowsTo !== undefined) {
+    if (!isWindows || typeof stageWindowsTo !== "string" || !path.isAbsolute(stageWindowsTo) ||
+        path.normalize(stageWindowsTo) !== stageWindowsTo || symlinks.size) {
+      throw new Error("Windows Electron extraction requires a canonical private scratch parent.");
+    }
+    const parent = await fs.lstat(stageWindowsTo);
+    const resolvedParent = await fs.realpath(stageWindowsTo);
+    if (!parent.isDirectory() || parent.isSymbolicLink() ||
+        resolvedParent.toLowerCase() !== stageWindowsTo.toLowerCase()) {
+      throw new Error("Windows Electron extraction scratch parent is unsafe.");
+    }
+    if (process.platform === "win32") {
+      const {verifyWindowsPrivateStateAcl} = await import("../../src/equinox-local-private-state.js");
+      const acl = await verifyWindowsPrivateStateAcl({target: stageWindowsTo, type: "directory"});
+      if (!acl.safe) throw new Error("Windows Electron scratch parent ACL is not private.");
+    } else if ((parent.mode & 0o077) !== 0 || parent.uid !== process.getuid?.()) {
+      throw new Error("Offline Windows Electron ZIP staging requires a private local scratch parent.");
+    }
+    const stage = await fs.mkdtemp(path.join(stageWindowsTo, ".ui-extract-" + randomBytes(8).toString("hex") + "-"));
+    try {
+      for (const entry of entries) {
+        if (entry.kind === "symlink" || entry.dataOffset === undefined) {
+          throw new Error("Pinned Windows Electron archive has a forbidden member type.");
+        }
+        const output = path.join(stage, ...entry.name.split("/"));
+        if (entry.kind === "directory") {
+          await fs.mkdir(output, {recursive: true, mode: 0o700});
+          continue;
+        }
+        await fs.mkdir(path.dirname(output), {recursive: true, mode: 0o700});
+        const source = bytes.subarray(entry.dataOffset, entry.dataOffset + entry.compressedBytes);
+        const content = entry.method === 0 ? source
+          : inflateRawSync(source, {maxOutputLength: entry.uncompressedBytes + 1});
+        if (content.length !== entry.uncompressedBytes) {
+          throw new Error("Pinned Windows Electron archive content length changed during extraction.");
+        }
+        const outputHandle = await fs.open(output, "wx", 0o600);
+        try {
+          await outputHandle.writeFile(content);
+          await outputHandle.sync();
+        } finally { await outputHandle.close(); }
+      }
+      stagedPath = stage;
+    } catch (error) {
+      await fs.rm(stage, {recursive: true, force: true});
+      throw error;
+    }
+  }
+  if (!includeMemberDigests) return Object.freeze({target, entries: entries.length, links: symlinks.size, unpackedBytes,
+    ...(stagedPath ? {stagedPath} : {})});
   // Optional read-only manifest derives from exact official ZIP bytes checked
   // above; it never extracts into a live installed program directory.
   const members: PinnedElectronMember[] = [];
@@ -262,5 +322,5 @@ export async function inspectPinnedElectronZip({
       sha256: createHash("sha256").update(content).digest("hex")}));
   }
   return Object.freeze({target, entries: entries.length, links: symlinks.size, unpackedBytes,
-    members: Object.freeze(members)});
+    members: Object.freeze(members), ...(stagedPath ? {stagedPath} : {})});
 }
