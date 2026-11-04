@@ -1146,7 +1146,7 @@ private final class NativeHostedWorkspace {
             process.waitUntilExit()
             let data = output.fileHandleForReading.readDataToEndOfFile()
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.inspector === process else { return }
                 self.inspector = nil
                 self.opening = false
                 // The read-only inspector finishes its own scratch cleanup,
@@ -1184,15 +1184,16 @@ private final class NativeHostedWorkspace {
                 ui.executableURL = URL(fileURLWithPath: executable)
                 ui.arguments = [source]
                 ui.currentDirectoryURL = selected
-                var environment = ProcessInfo.processInfo.environment
-                for key in ["ELECTRON_RUN_AS_NODE", "NODE_OPTIONS", "NODE_PATH",
-                            "EQUINOX_LOCAL_RUNTIME_HOST", "EQUINOX_LOCAL_NATIVE_PROCESS_HELPER"] {
-                    environment.removeValue(forKey: key)
-                }
-                environment["EQUINOX_DESKTOP_HOSTED_UI"] = "1"
-                environment["EQUINOX_DESKTOP_NATIVE_PARENT_PID"] = String(getpid())
-                environment["EQUINOX_DESKTOP_PREVIEW_PORT"] = "24891"
-                ui.environment = environment
+                // The UI child only renders the existing loopback Workspace.
+                // Do not inherit the native owner/Factory process environment,
+                // which may include unrelated agent or helper configuration.
+                ui.environment = [
+                    "HOME": home.path,
+                    "PATH": "/usr/bin:/bin",
+                    "EQUINOX_DESKTOP_HOSTED_UI": "1",
+                    "EQUINOX_DESKTOP_NATIVE_PARENT_PID": String(getpid()),
+                    "EQUINOX_DESKTOP_PREVIEW_PORT": "24891",
+                ]
                 ui.standardOutput = FileHandle.nullDevice
                 ui.standardError = FileHandle.nullDevice
                 do {
@@ -1211,11 +1212,20 @@ private final class NativeHostedWorkspace {
         }
     }
 
-    func stop() {
-        // Prevent a pending verified-inspector completion from spawning a new
-        // child while AppKit is terminating. Do not interrupt its cleanup.
-        stopped = true
+    func stopForRuntimeRestart() {
+        // A pending signed inspection belongs to the old runtime epoch. Let
+        // it finish its private cleanup, but invalidate its completion before
+        // the native owner restarts the one existing Control Center server.
+        inspector = nil
+        opening = false
         if let child, child.isRunning { child.terminate() }
+        child = nil
+    }
+
+    func stop() {
+        // AppKit termination is final; a late inspector can never relaunch UI.
+        stopped = true
+        stopForRuntimeRestart()
     }
 }
 
@@ -1708,7 +1718,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         hostedWorkspaceMenuItem?.title = localized(
             "Workspace · Electron preview", "Çalışma alanı · Electron önizleme"
         )
-        hostedWorkspaceMenuItem?.isEnabled = runtimeAvailable && !quitPending
+        hostedWorkspaceMenuItem?.isEnabled = runtimeAvailable && !quitPending && !menuActionInFlight
         floatingPetMenuItem?.title = floatingPetPanel?.isVisible == true
             ? localized("Hide Companion", "Companion'ı Gizle")
             : localized("Show Companion", "Companion'ı Göster")
@@ -2288,13 +2298,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func openHostedWorkspace(_ sender: Any?) {
-        guard hostedWorkspaceEnabled, runtimeAvailable, !quitPending else {
+        guard hostedWorkspaceEnabled, runtimeAvailable, !quitPending, !menuActionInFlight else {
             NSSound.beep()
             return
         }
         hostedWorkspace.reveal(canLaunch: { [weak self] in
             guard let self else { return false }
-            return !self.quitPending
+            return self.runtimeAvailable && !self.quitPending && !self.menuActionInFlight
         }) { [weak self] error in
             guard let self, let error else { return }
             self.showRuntimeLifecycleError(
@@ -2314,7 +2324,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     @objc private func restartEquinoxLocal(_ sender: Any?) {
-        guard runtimeAvailable else { NSSound.beep(); return }
+        guard runtimeAvailable, !menuActionInFlight else { NSSound.beep(); return }
+        // Mirror the Windows WPF owner: stop the UI-only child without
+        // terminating AppKit or its original Node/Control Center supervisor.
+        hostedWorkspace.stopForRuntimeRestart()
         runMenuMutation("/api/v1/runtime/restart") { [weak self] success in
             guard success, let self else { return }
             self.runtimeAvailable = false
