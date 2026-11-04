@@ -13,6 +13,8 @@ const WINDOWS_TARGETS = Object.freeze(["win32-arm64", "win32-x64"]);
 const ALL_TARGETS = Object.freeze([...EQUINOX_LOCAL_SUPPORTED_RELEASE_TARGETS]);
 const SHARED_NATIVE_PATHS = Object.freeze([
     "scripts/release/package-managed-release.mjs",
+    "scripts/release/stage-pinned-electron.mjs",
+    "scripts/release/inspect-pinned-electron-zip.mjs",
     "src/equinox-local-platform.js",
     "src/equinox-local-release-runtime-contract.js",
     "src/equinox-local-runtime-versions.js",
@@ -25,12 +27,17 @@ const SHARED_NATIVE_ADMISSION_PATHS = Object.freeze([
     "src/equinox-local-main-native-admission.js",
 ]);
 const DARWIN_NATIVE_PATHS = Object.freeze([
+    "scripts/release/activate-signed-electron-macos.mjs",
+    "scripts/release/inspect-extracted-electron-macos.mjs",
     "app/",
     "src/equinox-local-native-app.js",
     "src/equinox-local-native-app-host.js",
     "scripts/release/prepare-source-app-host.mjs",
 ]);
 const WINDOWS_NATIVE_PATHS = Object.freeze([
+    "scripts/release/activate-signed-electron-windows.mjs",
+    "scripts/release/inspect-extracted-electron-windows.mjs",
+    "scripts/release/inspect-installed-electron-windows.mjs",
     ".github/actions/prepare-arm64-package/",
     "native/windows/",
     "scripts/release/package-managed-release-windows.mjs",

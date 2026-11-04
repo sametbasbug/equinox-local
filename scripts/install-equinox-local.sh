@@ -238,6 +238,27 @@ trap cleanup EXIT
 trap handle_signal HUP INT TERM
 
 prepare_verified_main
+# A running AppKit foreground shell is independent of the launchd runtime.
+# Capture ONLY original exact user-owned applet PIDs before executable roots
+# move; the existing signed restart helper owns safe PID revalidation/reopen.
+# The pinned Node and helper are inside this already-verified signed Main ZIP.
+# /dev/null occupies argv[1] so importing the helper does not trigger its
+# existing standalone CLI entrypoint guard (which checks process.argv[1]).
+MAIN_NODE="$TEMP_ROOT/node-v$MAIN_NODE_VERSION-$TARGET/bin/node"
+GUI_HELPER="$TEMP_ROOT/main-extracted/release/equinox-local-restart-helper.js"
+[ -f "$GUI_HELPER" ] && [ ! -L "$GUI_HELPER" ] ||
+  fail "signed Main has no original foreground app lifecycle helper"
+GUI_FOREGROUND_PIDS="$(/usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$MAIN_NODE" --input-type=module -e '
+    import {pathToFileURL} from "node:url";
+    const {captureEquinoxLocalForegroundGui}=await import(pathToFileURL(process.argv[2]).href);
+    const current=await captureEquinoxLocalForegroundGui({
+      installation:{launchAgentLabel:"dev.equinox.local"},
+      homeDir:process.argv[2],uid:Number(process.argv[3]),
+    });
+    process.stdout.write(JSON.stringify(current.pids));
+  ' /dev/null "$GUI_HELPER" "$HOME_DIR" "$CURRENT_UID")" ||
+  fail "could not capture the original AppKit shell before signed reinstall"
 info "replacing product executables with signed Main (settings preserved)"
 INSTALL_ROOT="$HOME_DIR/Library/Application Support/Equinox Local"
 require_private_directory "$INSTALL_ROOT"
@@ -285,15 +306,23 @@ done
 # Every old entry has now been moved; a failed replacement may safely remove
 # new product-owned entries that did not exist before this installation.
 REINSTALL_NEW_INSTALL_STARTED=true
-MAIN_NODE="$TEMP_ROOT/node-v$MAIN_NODE_VERSION-$TARGET/bin/node"
 MAIN_INSTALLER="$TEMP_ROOT/main-extracted/release/equinox-local-first-install.js"
 MAIN_ARCHIVE="$TEMP_ROOT/main-native.tar.gz"
 MAIN_POINTER="$TEMP_ROOT/main-signed-pointer.json"
 # Exit code alone cannot prove installation: a prior pinned verifier once
 # silently returned success without executing its entrypoint. Require the
 # exact signed SHA/version/target completion receipt before retiring A.
+# Keep the installer's clean environment. Only a literal, explicitly requested
+# UI-preview opt-in may cross into the original signed Main Node installer.
+# No other caller-controlled environment value is forwarded. A literal 0
+# preserves default-off without empty-array expansion under macOS Bash 3.2.
+ELECTRON_UI_OPT_IN_VALUE=0
+if [ "${EQUINOX_LOCAL_SIGNED_ELECTRON_UI_INSTALL:-}" = "1" ]; then
+  ELECTRON_UI_OPT_IN_VALUE=1
+fi
 fresh_completion="$(/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER" \
   TMPDIR="/private/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+  EQUINOX_LOCAL_SIGNED_ELECTRON_UI_INSTALL="$ELECTRON_UI_OPT_IN_VALUE" \
   "$MAIN_NODE" "$MAIN_INSTALLER" --install-main-fresh \
   --signed-pointer-file "$MAIN_POINTER" --archive "$MAIN_ARCHIVE")" ||
   fail "fresh signed Main installation failed; attempting to restore previous executables"
@@ -313,7 +342,27 @@ REINSTALL_COMMITTED=true
   info "old executable cleanup deferred: $REINSTALL_BACKUP_ROOT"
 info "signed Main installation is healthy; opening Equinox Local"
 if [ -d "$CONTROL_CENTER_APP" ] && [ ! -L "$CONTROL_CENTER_APP" ]; then
-  /usr/bin/open "$CONTROL_CENTER_APP" >/dev/null 2>&1 || true
+  if [ "$GUI_FOREGROUND_PIDS" != "[]" ]; then
+    # A simple 'open' would reactivate the OLD AppKit process in memory,
+    # leaving the pre-upgrade menus and optional signed Electron UI invisible.
+    # Reuse the original exact-user/executable PID guard and bounded native
+    # foreground relaunch; do not kill by generic process name or bundle ID.
+    /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+      "$MAIN_NODE" --input-type=module -e '
+        import {pathToFileURL} from "node:url";
+        const {refreshEquinoxLocalForegroundGui}=await import(pathToFileURL(process.argv[2]).href);
+        const previous=JSON.parse(process.argv[5]);
+        const outcome=await refreshEquinoxLocalForegroundGui({
+          installation:{launchAgentLabel:"dev.equinox.local"},
+          homeDir:process.argv[3],uid:Number(process.argv[4]),
+          foreground:{pids:previous},
+        });
+        if(!outcome.refreshed)throw Error("Previous AppKit shell was not refreshed after signed reinstall.");
+      ' /dev/null "$GUI_HELPER" "$HOME_DIR" "$CURRENT_UID" "$GUI_FOREGROUND_PIDS" ||
+      fail "signed Main is healthy, but the old native GUI could not be refreshed; reopen Equinox Local manually"
+  else
+    /usr/bin/open "$CONTROL_CENTER_APP" >/dev/null 2>&1 || true
+  fi
 fi
 info "done"
 exit 0

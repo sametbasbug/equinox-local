@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111019">
+  <title>Equinox Local — Workspace</title>
+  <link rel="icon" href="/assets/equinox-local.png">
+  <link rel="stylesheet" href="/assets/desktop-workspace.css">
+  <script type="module" src="/assets/desktop-workspace.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace-main">Ana içeriğe geç</a>
+  <div class="workspace-shell">
+    <aside class="sidebar" aria-label="Ana gezinme">
+      <div class="brand">
+        <span class="brand-image"><img src="/assets/equinox-local.png" alt=""></span>
+        <span class="brand-name"><strong>Equinox</strong><small>LOCAL · WORKSPACE</small></span>
+        <span class="preview-tag">PREVIEW</span>
+      </div>
+      <div class="sidebar-section-label">ÇALIŞMA ALANIN</div>
+      <nav class="sidebar-nav" aria-label="Çalışma alanı">
+        <button class="side-link is-active" data-filter="all" type="button" aria-current="page"><span class="side-icon">◈</span> Genel bakış <span class="side-count" id="all-count">—</span></button>
+        <button class="side-link" data-filter="active" type="button"><span class="side-icon">◷</span> Devam edenler <span class="side-count" id="active-count">—</span></button>
+        <button class="side-link" id="new-task" type="button"><span class="side-icon">＋</span> Yeni görev</button>
+        <button class="side-link" id="open-chat" type="button"><span class="side-icon">◇</span> Sohbet</button>
+        <button class="side-link" data-filter="completed" type="button"><span class="side-icon">✓</span> Tamamlananlar</button>
+      </nav>
+      <div class="sidebar-section-label secondary-label">ARAÇLAR</div>
+      <nav class="sidebar-nav" aria-label="Yönetim ve araçlar">
+        <a class="side-link" href="/?section=projects"><span class="side-icon">▤</span> Projeler <span class="nav-arrow">↗</span></a>
+        <a class="side-link" href="/?section=browser"><span class="side-icon">◎</span> Tarayıcı <span class="nav-arrow">↗</span></a>
+        <a class="side-link" href="/"><span class="side-icon">⚙</span> Kontrol Merkezi <span class="nav-arrow">↗</span></a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="connection-row"><span class="connection-dot" id="connection-dot"></span><div><strong id="connection-text" aria-live="polite" aria-atomic="true">Bağlanıyor…</strong><small>Yerel Equinox servisi</small></div></div>
+        <div class="sidebar-note">Bilgisayarın ve verilerin senin kontrolünde.</div>
+      </div>
+    </aside>
+
+    <main id="workspace-main" class="main">
+      <header class="topbar">
+        <span class="crumb">Çalışma alanı <span class="crumb-separator">/</span> <strong>Genel bakış</strong></span>
+        <div class="top-actions">
+          <span class="today" id="today-label"></span>
+          <button class="icon-button" id="refresh-button" type="button" title="Görevleri yenile" aria-label="Görevleri yenile">↻</button>
+        </div>
+      </header>
+      <p id="connection-alert" class="connection-alert" role="status" hidden>
+        Yerel servisle bağlantı kesildi. Mevcut bilgiler korunuyor; yeni işlem başlatılmıyor. Bağlantı otomatik yeniden denenecek.
+      </p>
+      <div class="main-scroll">
+        <section class="welcome" aria-label="Hoş geldin">
+          <div class="welcome-glow"></div>
+          <div class="eyebrow"><span class="eyebrow-dot"></span> SENİN ÇALIŞMA ALANIN</div>
+          <h1>Fikirden sonuca.<br><span>Hepsi burada.</span></h1>
+          <p>Yapay zekâ ajanlarının neler yaptığını gör, sıradaki adımı takip et ve işlerini tek bir yerden yönet.</p>
+          <div class="welcome-actions">
+            <button id="show-active" type="button" class="primary-action">Devam eden işleri gör <span>↗</span></button>
+            <button id="new-task-welcome" type="button" class="secondary-action new-task-welcome">+ Yeni görev</button>
+            <a class="secondary-action" href="/?section=tasks">Görevleri yönet</a>
+          </div>
+          <div class="welcome-pattern" aria-hidden="true"><span></span><span></span><span></span></div>
+        </section>
+
+        <section class="metrics" aria-label="Görev özeti">
+          <div class="metric"><div class="metric-label">Devam eden</div><div class="metric-number" id="metric-active">—</div><div class="metric-foot">Aktif görev</div></div>
+          <div class="metric"><div class="metric-label">Tamamlanan</div><div class="metric-number" id="metric-completed">—</div><div class="metric-foot">Kayıtlı görev</div></div>
+          <div class="metric"><div class="metric-label">Yerel durum</div><div class="metric-state" id="metric-health">Kontrol ediliyor</div><div class="metric-foot">Equinox Local</div></div>
+        </section>
+
+        <section class="work-section" id="work-section">
+          <div class="section-heading">
+            <div><span class="section-kicker">GÖREVLER</span><h2>Üzerinde çalıştıkların</h2><p>Bir iş seç, ne yapıldığını ve sırada ne olduğunu gör.</p></div>
+            <label class="search-box"><span aria-hidden="true">⌕</span><input id="task-search" type="search" placeholder="Görev ara" aria-label="Görev ara" maxlength="120"></label>
+          </div>
+          <div class="work-grid">
+            <div class="task-column"><div class="list-heading"><strong id="list-title">Tüm görevler</strong><span id="list-count"></span></div><div id="task-list" class="task-list" role="group" aria-label="Görevler"><div class="task-empty">Görevler yükleniyor…</div></div></div>
+            <section class="detail-panel" aria-label="Seçilen görevin ayrıntıları">
+              <div class="detail-top"><span class="detail-eyebrow">GÖREV AYRINTILARI</span><span id="detail-state" class="state-tag">—</span></div>
+              <div id="task-detail">
+                <div class="detail-placeholder"><div class="detail-placeholder-icon">✧</div><h3>Bir görev seç</h3><p>Yapılanları, sıradaki işleri ve hedefini burada görebilirsin.</p></div>
+              </div>
+            </section>
+          </div>
+        </section>
+        <footer class="main-footer"><span>Equinox Local · Desktop preview</span><span>Doğrulanmış görevlere bağlı ChatGPT sohbeti önizlemesi. Bağımsız model arayüzü henüz geliştirilmedi.</span></footer>
+      </div>
+    </main>
+  </div>
+  <dialog id="new-task-dialog" class="new-task-dialog" aria-labelledby="new-task-title">
+    <form id="new-task-form">
+      <div class="dialog-header">
+        <div><div class="section-kicker">YENİ GÖREV</div><h2 id="new-task-title">Ne üzerinde çalışacağız?</h2></div>
+        <button type="button" id="new-task-close" class="icon-button" aria-label="Pencereyi kapat">×</button>
+      </div>
+      <p class="dialog-intro">Önce hedefini kaydet. Ardından bu göreve ChatGPT konuşması bağlayabilirsin.</p>
+      <label class="dialog-label" for="new-task-name">Görev adı</label>
+      <input id="new-task-name" name="name" required minlength="1" maxlength="160" placeholder="Örneğin: Yeni web sitemi tasarla" autocomplete="off">
+      <label class="dialog-label" for="new-task-objective">Ne yapmak istiyorsun?</label>
+      <textarea id="new-task-objective" name="objective" required minlength="12" maxlength="6000" rows="4" placeholder="Hedefini ve önemli ayrıntıları kısaca anlat…"></textarea>
+      <p id="new-task-error" class="dialog-error" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button type="button" id="new-task-cancel" class="dialog-cancel">Vazgeç</button>
+        <button type="submit" id="new-task-submit" class="primary-action">Görevi oluştur ↗</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

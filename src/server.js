@@ -49,6 +49,7 @@ import { cancelTelegramPairing, configureTelegramIntegration, confirmTelegramPai
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
 import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
+import { createEquinoxWorkspaceActions } from "./equinox-workspace-actions.js";
 import { installEquinoxLocalCli, installEquinoxLocalSourceCli } from "./equinox-local-cli-installation.js";
 import { registerAuthenticatedHttpTools, } from "./authenticated-http-tools.js";
 import { authenticatedHttpRequest, deleteAuthenticatedHttpProfile, getAuthenticatedHttpProfiles, setAuthenticatedHttpAgentManagement, upsertAuthenticatedHttpProfileFromControlCenter, } from "./authenticated-http-integration.js";
@@ -1572,6 +1573,12 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         browserBridge: equinoxBrowserBridge,
         agentControl,
     });
+    const workspaceActions = createEquinoxWorkspaceActions({
+        store: taskCapsuleStore,
+        chatBridge: telegramChatBridgeController,
+        agentControl,
+        withMutationLocks,
+    });
     const telegramTaskInboxController = createTelegramTaskInboxController({
         store: taskCapsuleStore,
         autoContinueController,
@@ -2295,6 +2302,11 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         getOnboardingStatus: getControlCenterOnboardingStatus,
         getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
         getTask: async (taskId) => taskCapsuleStore.read(taskId),
+        createWorkspaceTask: (input) => workspaceActions.createTask(input),
+        startWorkspaceChat: (taskId) => workspaceActions.startChat(taskId),
+        getWorkspaceChatStatus: (taskId) => workspaceActions.getChatStatus(taskId),
+        sendWorkspaceChat: (taskId, input) => workspaceActions.sendChat(taskId, input),
+        acknowledgeWorkspaceChat: (taskId, requestId) => workspaceActions.acknowledgeChat(taskId, requestId),
         updateTask: async (taskId, body) => withMutationLocks([`task:${taskId}`], async () => (taskCapsuleStore.checkpoint({
             taskId,
             expectedRevision: body.expectedRevision,

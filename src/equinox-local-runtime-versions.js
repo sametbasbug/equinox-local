@@ -1,4 +1,31 @@
 export const EQUINOX_LOCAL_NODE_VERSION = "26.13.0";
+// Optional Electron 46 UI-child admission catalog. This metadata does not
+// install, start or package Chromium; native shells remain lifecycle owners.
+// Hashes/sizes are pinned against Electron's official GitHub v46.0.0-alpha.5
+// SHASUMS256.txt and release asset metadata.
+export const EQUINOX_LOCAL_ELECTRON_VERSION = "46.0.0-alpha.5";
+export const ELECTRON_DISTRIBUTIONS = Object.freeze({
+    "darwin-arm64": Object.freeze({
+        filename: `electron-v${EQUINOX_LOCAL_ELECTRON_VERSION}-darwin-arm64.zip`,
+        bytes: 123_072_517,
+        sha256: "e68bc869ada1035066a268dd962ba2bf34661c7bf6158dc7daf7a93b5783ca08",
+    }),
+    "darwin-x64": Object.freeze({
+        filename: `electron-v${EQUINOX_LOCAL_ELECTRON_VERSION}-darwin-x64.zip`,
+        bytes: 128_719_351,
+        sha256: "0bf9e0d388b77773df2daa050ce6d07de2380260c972be16ad9a93e402e20114",
+    }),
+    "win32-arm64": Object.freeze({
+        filename: `electron-v${EQUINOX_LOCAL_ELECTRON_VERSION}-win32-arm64.zip`,
+        bytes: 158_048_288,
+        sha256: "dd4fd0035759e919c64a76735cd2ae687da8ed782ccb77a4bcfa11352139817f",
+    }),
+    "win32-x64": Object.freeze({
+        filename: `electron-v${EQUINOX_LOCAL_ELECTRON_VERSION}-win32-x64.zip`,
+        bytes: 162_984_694,
+        sha256: "209e11cbcdec04b38b30eed6c92d301f6860d74ee2057086c5a8cb1c64f0b247",
+    }),
+});
 export const EQUINOX_LOCAL_DUGITE_VERSION = "2.56.0-1";
 export const EQUINOX_LOCAL_DUGITE_BUILD = "7ce66f8";
 export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.19";

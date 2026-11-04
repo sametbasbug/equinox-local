@@ -122,7 +122,7 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
           : `Equinox Local CLI chat for ${id} is connected. Reply only EQL_CLI_READY. Do not run the Task Capsule objective yet or invoke tools; wait for the next CLI message.`;
         const started = await chat.startTaskChat({taskId: id, checkpointRevision: task.checkpointRevision, ...(initialMessage ? {initialMessage} : {})});
         if (!started?.confirmed || !started.binding) throw new Error("Chat creation was not confirmed; inspect the task before retrying.");
-        const updated = await tasks.bindChat({taskId: id, binding: started.binding});
+        const updated = await tasks.bindChat({taskId: id, binding: started.binding, expectUnbound: true});
         const receipt = {userEpoch: started.userEpoch, previousAssistantTurnKey: started.previousAssistantTurnKey};
         return {task: updated, receipt, initialTurn: receipt};
       } finally { inflight.delete(id); }
