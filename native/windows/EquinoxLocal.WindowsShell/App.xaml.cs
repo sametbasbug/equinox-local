@@ -8,6 +8,7 @@ public partial class App : System.Windows.Application
     private TrayIconController? _trayIcon;
     private ShellPresentationMonitor? _presentationStatus;
     private RuntimeSupervisor? _runtimeSupervisor;
+    private WindowsHostedWorkspaceSupervisor? _hostedWorkspace;
     private StartupRegistration? _startupRegistration;
     private MainWindow? _window;
     private bool _startedAtLogin;
@@ -82,6 +83,9 @@ public partial class App : System.Windows.Application
         try { WindowsShellRegistration.EnsureForActiveManagedShell(); }
         catch (Exception error) { WindowsShellDiagnostics.RecordRuntimeFailure("windows-shell-registration", error); }
 
+        if (Environment.GetEnvironmentVariable("EQUINOX_LOCAL_NATIVE_ELECTRON_UI") == "1")
+            _hostedWorkspace = new WindowsHostedWorkspaceSupervisor();
+
         _startupRegistration = new StartupRegistration();
         var startupStatus = _startupRegistration.Read();
 
@@ -92,7 +96,9 @@ public partial class App : System.Windows.Application
             restartRuntime: () => _ = RestartRuntimeAsync(),
             stopRuntime: () => _ = StopRuntimeAsync(),
             toggleStartup: ToggleStartupRegistration,
-            exitApplication: () => _ = ExitApplicationAsync());
+            exitApplication: () => _ = ExitApplicationAsync(),
+            openHostedWorkspace: _hostedWorkspace is null ? null :
+                () => Dispatcher.BeginInvoke(new Action(() => _ = OpenHostedWorkspaceAsync())));
 
         _trayIcon.SetStartupStatus(startupStatus);
 
@@ -127,15 +133,37 @@ public partial class App : System.Windows.Application
         catch (Exception error) { WindowsShellDiagnostics.RecordRuntimeFailure("runtime-start", error); }
     }
 
+    private async Task OpenHostedWorkspaceAsync()
+    {
+        if (_hostedWorkspace is null) return;
+        try
+        {
+            if (_runtimeSupervisor is null || !_runtimeSupervisor.DesiredRunning)
+                throw new InvalidOperationException("Signed Main runtime is not running.");
+            await _hostedWorkspace.OpenAsync();
+        }
+        catch
+        {
+            // User-triggered preview only: deny safely without printing
+            // private installed paths or launching any browser fallback.
+            WindowsShellDiagnostics.RecordRuntimeState("workspace-ui", "signed-admission-denied");
+            System.Windows.MessageBox.Show(
+                "The signed Electron Workspace is unavailable. Verify the current Main installation.",
+                "Equinox Local", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     private async Task RestartRuntimeAsync()
     {
         if (_runtimeSupervisor is null) return;
+        if (_hostedWorkspace is not null) await _hostedWorkspace.StopAsync();
         try { await _runtimeSupervisor.RestartAsync(); }
         catch (Exception error) { WindowsShellDiagnostics.RecordRuntimeFailure("runtime-restart", error); }
     }
 
     private async Task StopRuntimeAsync()
     {
+        if (_hostedWorkspace is not null) await _hostedWorkspace.StopAsync();
         if (_runtimeSupervisor is null) return;
         try { await _runtimeSupervisor.StopAsync(); } catch { }
     }
@@ -143,11 +171,14 @@ public partial class App : System.Windows.Application
     private async Task ExitApplicationAsync()
     {
         _window?.PrepareForExit();
+        if (_hostedWorkspace is not null) await _hostedWorkspace.StopAsync();
         if (_runtimeSupervisor is not null) await _runtimeSupervisor.StopAsync();
         _presentationStatus?.Dispose();
         _presentationStatus = null;
         if (_runtimeSupervisor is not null) await _runtimeSupervisor.DisposeAsync();
         _runtimeSupervisor = null;
+        if (_hostedWorkspace is not null) await _hostedWorkspace.DisposeAsync();
+        _hostedWorkspace = null;
         _trayIcon?.Dispose();
         _trayIcon = null;
         Shutdown();
@@ -155,6 +186,11 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        if (_hostedWorkspace is not null)
+        {
+            _hostedWorkspace.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            _hostedWorkspace = null;
+        }
         _presentationStatus?.Dispose();
         _presentationStatus = null;
         if (_runtimeSupervisor is not null)

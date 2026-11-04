@@ -12,7 +12,7 @@ internal sealed class TrayIconController : IDisposable
     private readonly ToolStripMenuItem _presentationDetailItem;
     private readonly ToolStripMenuItem _startupItem;
 
-    internal TrayIconController(Action openControlCenter, Action openBrowser, Action startRuntime, Action restartRuntime, Action stopRuntime, Action toggleStartup, Action exitApplication)
+    internal TrayIconController(Action openControlCenter, Action openBrowser, Action startRuntime, Action restartRuntime, Action stopRuntime, Action toggleStartup, Action exitApplication, Action? openHostedWorkspace = null)
     {
         _menu = new ContextMenuStrip();
         _presentationStatusItem = new ToolStripMenuItem("Status: Connecting") { Enabled = false };
@@ -21,6 +21,9 @@ internal sealed class TrayIconController : IDisposable
         _menu.Items.Add(_presentationDetailItem);
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Open Control Center", null, (_, _) => openControlCenter()));
+        if (openHostedWorkspace is not null)
+            _menu.Items.Add(new ToolStripMenuItem("Workspace · Electron preview", null,
+                (_, _) => openHostedWorkspace()));
         _menu.Items.Add(new ToolStripMenuItem("Open in browser", null, (_, _) => openBrowser()));
         _startupItem = new ToolStripMenuItem("Start at login", null, (_, _) => toggleStartup());
         _menu.Items.Add(_startupItem);
