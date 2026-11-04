@@ -40,8 +40,6 @@ type ControlApiOptions={
   disconnectTelegram?:Callback|null;getHttpProfiles?:Callback|null;setHttpProfileManagement?:Callback|null;
   upsertHttpProfile?:Callback|null;testHttpProfile?:Callback|null;deleteHttpProfile?:Callback|null;
   recordInternalError?:Callback|null;
-  getWorkspaceChatStatus?:Callback|null;sendWorkspaceChat?:Callback|null;acknowledgeWorkspaceChat?:Callback|null;
-  createWorkspaceTask?:Callback|null;startWorkspaceChat?:Callback|null;
 };
 type MutableControlState={
   server:Server|null;startedAt:string|null;actualPort:number|null;
@@ -93,24 +91,6 @@ const CONTROL_CENTER_ASSETS:ReadonlyMap<string,AssetDescriptor> = new Map<string
       new URL("../equinox-control-center.html", import.meta.url),
     ]),
     contentType: "text/html; charset=utf-8",
-  })],
-  ["/workspace", Object.freeze({
-    urls: Object.freeze([
-      new URL("./equinox-desktop-workspace.html", import.meta.url),
-      new URL("../equinox-desktop-workspace.html", import.meta.url),
-    ]),
-    contentType: "text/html; charset=utf-8",
-  })],
-  ["/assets/desktop-workspace.css", Object.freeze({
-    urls: Object.freeze([
-      new URL("./equinox-desktop-workspace.css", import.meta.url),
-      new URL("../equinox-desktop-workspace.css", import.meta.url),
-    ]),
-    contentType: "text/css; charset=utf-8",
-  })],
-  ["/assets/desktop-workspace.js", Object.freeze({
-    url: new URL("./equinox-desktop-workspace.js", import.meta.url),
-    contentType: "text/javascript; charset=utf-8",
   })],
   ["/assets/control-center.css", Object.freeze({
     urls: Object.freeze([
@@ -465,41 +445,6 @@ function validateUninstallRequest(body:JsonBoundary) {
   return Object.freeze({ removeUserData: body.removeUserData });
 }
 
-function parseWorkspaceChatRoute(pathname:string) {
-  const match = /^\/api\/v1\/tasks\/(task-[a-z0-9-]{6,80})\/chat\/(status|send|acknowledge|start)$/u.exec(pathname);
-  return match ? {taskId: match[1]!, action: match[2]!} : null;
-}
-
-function validateWorkspaceTaskCreate(body:JsonBoundary) {
-  const value = validateExactObject(body, ["title", "objective"], "New workspace task");
-  if (Object.keys(value).length !== 2 || typeof value.title !== "string" || typeof value.objective !== "string") {
-    throw badRequest("Task title and objective are required.");
-  }
-  const title = value.title.trim();
-  const objective = value.objective.trim();
-  if (title.length < 1 || title.length > 160 || objective.length < 12 || objective.length > 6000
-    || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(title + objective)) {
-    throw badRequest("Task title must contain 1–160 characters and objective 12–6000 characters.");
-  }
-  return {title, objective};
-}
-
-function validateWorkspaceChatMessage(body:JsonBoundary) {
-  const value = validateExactObject(body, ["message", "requestId"], "Workspace chat send");
-  if (Object.keys(value).length !== 2 || typeof value.message !== "string"
-    || !value.message.trim() || value.message.length > 3800
-    || /[\r\n\u0000]/u.test(value.message)) throw badRequest("Workspace chat requires a single-line message of up to 3800 characters.");
-  if (typeof value.requestId !== "string" || !/^[a-z0-9-]{8,64}$/u.test(value.requestId)) throw badRequest("Workspace chat requestId is invalid.");
-  return {message: value.message, requestId: value.requestId};
-}
-
-function validateWorkspaceChatAcknowledge(body:JsonBoundary) {
-  const value = validateExactObject(body, ["requestId"], "Workspace chat acknowledge");
-  if (Object.keys(value).length !== 1 || typeof value.requestId !== "string"
-    || !/^[a-z0-9-]{8,64}$/u.test(value.requestId)) throw badRequest("Workspace chat requestId is invalid.");
-  return value.requestId as string;
-}
-
 function parseTaskRoute(pathname:string) {
   const match = /^\/api\/v1\/tasks\/(task-[a-z0-9-]{6,80})(?:\/(complete|cancel|delete|continuation\/cancel|fresh-resume\/cancel|fresh-resume\/abandon))?$/u.exec(pathname);
   if (!match) return null;
@@ -598,11 +543,6 @@ export function createEquinoxLocalControlApi({
   testHttpProfile = null,
   deleteHttpProfile = null,
   recordInternalError = null,
-  createWorkspaceTask = null,
-  startWorkspaceChat = null,
-  getWorkspaceChatStatus = null,
-  sendWorkspaceChat = null,
-  acknowledgeWorkspaceChat = null,
   host = LOOPBACK_HOST,
   port,
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
@@ -769,43 +709,6 @@ export function createEquinoxLocalControlApi({
       if (req.method === "GET" && url.pathname === "/api/v1/tasks") {
         if (typeof getTasks !== "function") { const error:ControlError = new Error("Task controls are unavailable on this installation."); error.statusCode = 503; throw error; }
         jsonBody(res, 200, { ok: true, tasks: await getTasks() });
-        return;
-      }
-
-      if (req.method === "POST" && url.pathname === "/api/v1/tasks/create") {
-        assertMutationRequest(req, {port: actualPort, csrfToken: state.csrfToken});
-        if (typeof createWorkspaceTask !== "function") {const error:ControlError = new Error("Workspace task creation unavailable."); error.statusCode = 503; throw error;}
-        const task = await createWorkspaceTask(validateWorkspaceTaskCreate(await readJsonRequest(req)));
-        state.mutationCount += 1;
-        jsonBody(res, 201, {ok: true, task});
-        return;
-      }
-
-      const workspaceChatRoute = parseWorkspaceChatRoute(url.pathname);
-      if (workspaceChatRoute && req.method === "GET" && workspaceChatRoute.action === "status") {
-        if (typeof getWorkspaceChatStatus !== "function") { const error:ControlError = new Error("Workspace chat unavailable."); error.statusCode = 503; throw error; }
-        jsonBody(res, 200, {ok: true, chat: await getWorkspaceChatStatus(workspaceChatRoute.taskId)});
-        return;
-      }
-      if (workspaceChatRoute && req.method === "POST" && workspaceChatRoute.action !== "status") {
-        assertMutationRequest(req, {port: actualPort, csrfToken: state.csrfToken});
-        if (workspaceChatRoute.action === "start") {
-          if (typeof startWorkspaceChat !== "function") {const error:ControlError = new Error("Workspace chat start unavailable."); error.statusCode = 503; throw error;}
-          validateEmptyObject(await readJsonRequest(req), "Workspace chat start");
-          const task = await startWorkspaceChat(workspaceChatRoute.taskId);
-          state.mutationCount += 1;
-          jsonBody(res, 200, {ok: true, task});
-        } else if (workspaceChatRoute.action === "send") {
-          if (typeof sendWorkspaceChat !== "function") {const error:ControlError = new Error("Workspace chat unavailable."); error.statusCode = 503; throw error;}
-          const chat = await sendWorkspaceChat(workspaceChatRoute.taskId, validateWorkspaceChatMessage(await readJsonRequest(req)));
-          state.mutationCount += 1;
-          jsonBody(res, 200, {ok: true, chat});
-        } else {
-          if (typeof acknowledgeWorkspaceChat !== "function") {const error:ControlError = new Error("Workspace chat unavailable."); error.statusCode = 503; throw error;}
-          const chat = await acknowledgeWorkspaceChat(workspaceChatRoute.taskId, validateWorkspaceChatAcknowledge(await readJsonRequest(req)));
-          state.mutationCount += 1;
-          jsonBody(res, 200, {ok: true, chat});
-        }
         return;
       }
 

@@ -17,8 +17,7 @@
     "verify:typed-browser": "node scripts/verify-typescript-browser.mjs",
     "build:typed-runtime": "tsc --project tsconfig.runtime.json --outDir src",
     "build:typed-tooling": "node scripts/verify-typescript-tooling.mjs --build",
-    "verify:typed-tooling": "node scripts/verify-typescript-tooling.mjs",
-    "desktop:dev": "electron desktop/electron/main.cjs"
+    "verify:typed-tooling": "node scripts/verify-typescript-tooling.mjs"
   },
   "engines": {
     "node": ">=26.10.0"
@@ -59,7 +58,6 @@
   },
   "devDependencies": {
     "@types/node": "26.6.6",
-    "electron": "46.0.0-alpha.5",
     "typescript": "7.0.2"
   }
 }

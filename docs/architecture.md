@@ -56,11 +56,6 @@ flowchart TB
 
 The human UI and agent surface intentionally converge on the same configuration and operation layer rather than implementing separate privileged backends.
 
-### Electron 46 shared desktop preview (unreleased)
-
-The Electron 46 development preview adds a Turkish-first, task-focused Workspace at the existing Control Center loopback origin. It uses the same status/Task Capsule APIs and existing task-bound Equinox Browser Chat Bridge, rather than another browser automation route, agent process or public model API. Users can create a Task Capsule, explicitly start a neutral ChatGPT conversation in Your Browser, then send and inspect its latest assistant response in Workspace; older chat history remains in ChatGPT. The original native AppKit/WPF shells continue to own production application identity, permissions, startup, process supervision and signed Main installation until cross-platform parity is demonstrated. See the staged migration plan in docs/plans/electron46-unified-workspace.md.
-
-
 ## Configuration
 
 Machine-specific project roots live outside the repository in the user's Equinox Local configuration. The loaded registry defines:

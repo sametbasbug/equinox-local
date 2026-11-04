@@ -439,7 +439,7 @@ export function createTaskCapsuleStore({rootDir,now=()=>Date.now(),randomId=()=>
     emit({ component: "task-capsule", type: "task.deleted", severity: "info", status: "deleted", message: "Terminal Task Capsule was deleted.", details: { taskId: record.taskId, previousStatus: record.status } });
     return Object.freeze({ taskId: record.taskId, status: record.status, deleted: true });
   });
-  const bindChat = ({taskId,binding,expectUnbound=false}:{taskId:string;binding:Binding;expectUnbound?:boolean}={} as {taskId:string;binding:Binding}) => withMutation(async () => {
+  const bindChat = ({taskId,binding}:{taskId:string;binding:Binding}={} as {taskId:string;binding:Binding}) => withMutation(async () => {
     await initialize();
     const record = requireTask(taskId);
     if (record.status !== "active") return publicTask(record);
@@ -448,9 +448,6 @@ export function createTaskCapsuleStore({rootDir,now=()=>Date.now(),randomId=()=>
     const current = record.chatBinding;
     if (current && current.browserContext === normalized.browserContext && current.browserInstanceId === normalized.browserInstanceId && current.tabId === normalized.tabId && current.conversationId === normalized.conversationId && current.canonicalUrl === normalized.canonicalUrl) {
       return publicTask(record);
-    }
-    if (expectUnbound && current) {
-      throw new Error("Task already has a different ChatGPT binding; refusing to overwrite it.");
     }
     record.chatBinding = normalized;
     await persist(record);

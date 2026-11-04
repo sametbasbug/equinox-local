@@ -7,7 +7,6 @@ import { promisify } from "node:util";
 
 import { hashFile } from "../lib/package-io.mjs";
 import { productionNodeModulesFilter } from "./production-node-modules.mjs";
-import { stagePinnedElectronArchive } from "./stage-pinned-electron.mjs";
 import { readBoundedNormalFile } from "../../src/equinox-local-safe-file.js";
 import {
   EQUINOX_LOCAL_NODE_VERSION,
@@ -27,7 +26,7 @@ type DarwinTarget = "darwin-arm64" | "darwin-x64";
 type ExecFile = typeof execFile;
 type DownloadOptions = {fetchImpl?: typeof fetch};
 type ReleaseArchiveOptions = {transaction: string; releaseDir: string; artifactPath: string; execFileImpl?: ExecFile};
-type ReleasePackageOptions = {rootDir?: string; target?: string; outputDir?: string; fetchImpl?: typeof fetch; includeElectronPreview?: boolean};
+type ReleasePackageOptions = {rootDir?: string; target?: string; outputDir?: string; fetchImpl?: typeof fetch};
 type ReleaseTreeEntry = Readonly<{absolute: string; relative: string; directory: boolean}>;
 const hasErrorCode = (error: unknown, code: string): boolean =>
   error instanceof Error && "code" in error && error.code === code;
@@ -44,23 +43,6 @@ const LOCAL_MODULE_PATTERN = /(?:from\s+|import\s*\(\s*)["'](\.\.?\/[^"']+)["']/
 const SOURCE_SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const STATIC_RELEASE_FILES = Object.freeze([
   "src/equinox-control-center.html",
-  "src/equinox-desktop-workspace.html",
-  "src/equinox-desktop-workspace.css",
-  "src/equinox-desktop-workspace.js",
-  // Inert, source-integrity-checked UI entrypoint. Electron binaries are NOT
-  // shipped until each target is admitted through the existing signed Main
-  // native artifact pipeline.
-  "desktop/electron/main.cjs",
-  "desktop/electron/unavailable.html",
-  // Dormant, signature-bound macOS UI-child admission. The default installer
-  // still has no activation call; source inclusion is not installation.
-  "scripts/release/activate-signed-electron-macos.mjs",
-  "scripts/release/activate-signed-electron-windows.mjs",
-  "scripts/release/inspect-extracted-electron-macos.mjs",
-  "scripts/release/inspect-extracted-electron-windows.mjs",
-  "scripts/release/inspect-installed-electron-windows.mjs",
-  "scripts/release/inspect-pinned-electron-zip.mjs",
-  "native/windows/EquinoxLocal.WindowsShell/Assets/EquinoxLocal.ico",
   "src/equinox-control-center.css",
   "src/equinox-control-center.js",
   "app/EquinoxLocal.png",
@@ -190,24 +172,13 @@ export async function collectManagedReleaseSourceFiles(rootDir: string): Promise
   return Object.freeze(files);
 }
 
-async function copyFileTree(rootDir: string, releaseDir: string, files: readonly string[],
-  {mirrorSourceForElectron = false}: {mirrorSourceForElectron?: boolean} = {}): Promise<void> {
+async function copyFileTree(rootDir: string, releaseDir: string, files: readonly string[]): Promise<void> {
   for (const relative of files) {
     const source = path.join(rootDir, relative);
     const releaseRelative = relative.startsWith("src/") ? relative.slice(4) : relative;
     const destination = path.join(releaseDir, releaseRelative);
     await fs.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
     await fs.copyFile(source, destination);
-    // Installed opt-in Electron inspectors are intentionally nested under
-    // scripts/release and import ../../src/*.js. The ordinary source runtime
-    // stays flattened for its existing server/installer entrypoints, while
-    // a signed UI-preview candidate additionally retains its ORIGINAL src
-    // module paths. Both copies are immutable data in ONE signed release.
-    if (mirrorSourceForElectron && relative.startsWith("src/")) {
-      const mirror = path.join(releaseDir, relative);
-      await fs.mkdir(path.dirname(mirror), {recursive: true, mode: 0o700});
-      await fs.copyFile(source, mirror);
-    }
   }
 }
 
@@ -571,7 +542,6 @@ export async function packageManagedEquinoxRelease({
   target = equinoxLocalUpdateTarget(),
   outputDir = path.join(rootDir, "backups", "local-packages"),
   fetchImpl = globalThis.fetch,
-  includeElectronPreview = false,
 }: ReleasePackageOptions = {}) {
   const hostTarget = equinoxLocalUpdateTarget();
   if (target !== hostTarget) {
@@ -590,17 +560,11 @@ export async function packageManagedEquinoxRelease({
   await fs.mkdir(releaseDir, { recursive: true, mode: 0o700 });
 
   try {
-    await copyFileTree(rootDir, releaseDir, sourceFiles,
-      {mirrorSourceForElectron: includeElectronPreview});
+    await copyFileTree(rootDir, releaseDir, sourceFiles);
     await copyProductionNodeModules(rootDir, releaseDir);
     await installPinnedNodeBinary(admittedTarget, releaseDir, { fetchImpl });
     await installPinnedTunnelRuntime(admittedTarget, releaseDir, { fetchImpl });
     await installPinnedPeekabooRuntime(releaseDir, { fetchImpl });
-    // Inert signed ZIP, opt-in for native-payload QA only. Production Main
-    // remains unchanged until the installer and host-launch gates are proven.
-    if (includeElectronPreview) {
-      await stagePinnedElectronArchive({releaseDir, target, fetchImpl});
-    }
     const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target: admittedTarget });
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,

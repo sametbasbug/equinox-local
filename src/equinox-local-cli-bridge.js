@@ -135,7 +135,7 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
                 const started = await chat.startTaskChat({ taskId: id, checkpointRevision: task.checkpointRevision, ...(initialMessage ? { initialMessage } : {}) });
                 if (!started?.confirmed || !started.binding)
                     throw new Error("Chat creation was not confirmed; inspect the task before retrying.");
-                const updated = await tasks.bindChat({ taskId: id, binding: started.binding, expectUnbound: true });
+                const updated = await tasks.bindChat({ taskId: id, binding: started.binding });
                 const receipt = { userEpoch: started.userEpoch, previousAssistantTurnKey: started.previousAssistantTurnKey };
                 return { task: updated, receipt, initialTurn: receipt };
             }

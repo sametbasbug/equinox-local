@@ -156,7 +156,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     return { binding: target, state, reacquired: target.tabId !== binding.tabId };
   };
 
-  const deliverTextInternal = async ({ binding, deliveryId, text }: {binding?: Binding; deliveryId?: string; text?: string} = {}) => {
+  const deliverText = async ({ binding, deliveryId, text }: {binding?: Binding; deliveryId?: string; text?: string} = {}) => {
     const message = typeof text === "string" ? text.trim() : "";
     if (!message || message.length > 4_000 || /\0/u.test(message)) throw new Error("Telegram Chat Bridge message must contain 1–4000 safe characters.");
     if (typeof deliveryId !== "string" || !/^tgb-[a-z0-9-]{6,80}$/u.test(deliveryId)) throw new Error("Telegram Chat Bridge delivery id is invalid.");
@@ -210,7 +210,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
   };
 
 
-  const startTaskChatInternal = async ({ taskId, checkpointRevision = 1, initialMessage }: {taskId?: string; checkpointRevision?: number; initialMessage?: string} = {}) => {
+  const startTaskChat = async ({ taskId, checkpointRevision = 1, initialMessage }: {taskId?: string; checkpointRevision?: number; initialMessage?: string} = {}) => {
     if (typeof taskId !== "string" || !/^task-[a-z0-9-]{6,80}$/u.test(taskId)) throw new Error("Telegram new-task id is invalid.");
     if (!Number.isInteger(checkpointRevision) || checkpointRevision < 1) throw new Error("Telegram new-task checkpoint revision is invalid.");
     if (initialMessage !== undefined && (typeof initialMessage !== "string" || !initialMessage.trim() || initialMessage.length > 1500 || /[\r\n]/u.test(initialMessage))) {
@@ -531,47 +531,6 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       truncated: result.truncated === true,
       tabId: target.tabId,
     });
-  };
-
-  // CLI, Telegram and Workspace share this controller. Only one delivery may
-  // inspect/submit against a given conversation at once; a second channel must
-  // not race the first across the read-then-submit browser boundary.
-  const delivering = new Set<string>();
-  const deliverText:BridgeController["deliverText"] = async (args = {}) => {
-    const binding = validateBinding(args.binding);
-    const key = binding.browserContext + ":" + binding.browserInstanceId + ":" + binding.conversationId;
-    if (delivering.has(key)) {
-      const busy = new Error("A Chat Bridge delivery is already in progress for this conversation.") as CodedError;
-      busy.code = "CHAT_BRIDGE_NOT_READY";
-      throw busy;
-    }
-    delivering.add(key);
-    try {
-      return await deliverTextInternal(args);
-    } finally {
-      delivering.delete(key);
-    }
-  };
-
-  // Existing CLI, Telegram and Workspace creation routes must not open two
-  // tabs for the same Task Capsule while one creation is still in progress.
-  const startingTaskChats = new Set<string>();
-  const startTaskChat:BridgeController["startTaskChat"] = async (args = {}) => {
-    const id = args.taskId;
-    if (typeof id !== "string" || !/^task-[a-z0-9-]{6,80}$/u.test(id)) {
-      throw new Error("Task chat id is invalid.");
-    }
-    if (startingTaskChats.has(id)) {
-      const busy = new Error("A Task ChatGPT conversation is already being created.") as CodedError;
-      busy.code = "CHAT_BRIDGE_NOT_READY";
-      throw busy;
-    }
-    startingTaskChats.add(id);
-    try {
-      return await startTaskChatInternal(args);
-    } finally {
-      startingTaskChats.delete(id);
-    }
   };
 
   return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, startTaskChat });
