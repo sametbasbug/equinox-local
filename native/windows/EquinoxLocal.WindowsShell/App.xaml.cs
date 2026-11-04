@@ -83,7 +83,8 @@ public partial class App : System.Windows.Application
         try { WindowsShellRegistration.EnsureForActiveManagedShell(); }
         catch (Exception error) { WindowsShellDiagnostics.RecordRuntimeFailure("windows-shell-registration", error); }
 
-        if (Environment.GetEnvironmentVariable("EQUINOX_LOCAL_NATIVE_ELECTRON_UI") == "1")
+        if (Environment.GetEnvironmentVariable("EQUINOX_LOCAL_NATIVE_ELECTRON_UI") == "1" ||
+            WindowsHostedWorkspaceSupervisor.HasInstalledUi())
             _hostedWorkspace = new WindowsHostedWorkspaceSupervisor();
 
         _startupRegistration = new StartupRegistration();

@@ -1075,6 +1075,35 @@ private final class EquinoxCompanionSpeechView: NSView {
 // final product/native parity gate. AppKit remains the Node/tray/TCC owner;
 // this child presents only the signed, existing Workspace UI.
 private final class NativeHostedWorkspace {
+    // The original signed external installer prepares this SHA-scoped UI tree.
+    // A Finder/login launch does not inherit the installer's opt-in flag, so
+    // expose the optional action when an exact current-Main tree exists.
+    // This is just menu discovery: reveal() STILL performs full signed
+    // selector, pinned ZIP, tree, and native child admission before launch.
+    static func hasInstalledUI() -> Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
+        let install = home.appendingPathComponent("Library/Application Support/Equinox Local")
+        #if arch(arm64)
+        let target = "darwin-arm64"
+        #else
+        let target = "darwin-x64"
+        #endif
+        let selected = install.appendingPathComponent("current")
+            .resolvingSymlinksInPath().standardizedFileURL.path
+        let prefix = install.appendingPathComponent("main-update/native-store/\(target)")
+            .standardizedFileURL.path + "/"
+        guard selected.hasPrefix(prefix), selected.hasSuffix("/release") else { return false }
+        let relative = String(selected.dropFirst(prefix.count))
+        let parts = relative.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[1] == "release", parts[0].count == 40,
+              parts[0].unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdef").contains($0) })
+        else { return false }
+        let executable = install.appendingPathComponent(
+            "main-update/electron-ui/\(target)/\(parts[0])/Electron.app/Contents/MacOS/Electron"
+        )
+        return FileManager.default.isExecutableFile(atPath: executable.path)
+    }
+
     private var inspector: Process?
     private var child: Process?
     private var opening = false
@@ -1237,6 +1266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let runtimeLifecycle = RuntimeLaunchAgentController()
     private let hostedWorkspace = NativeHostedWorkspace()
     private let hostedWorkspaceEnabled = ProcessInfo.processInfo.environment["EQUINOX_LOCAL_NATIVE_ELECTRON_UI"] == "1"
+        || NativeHostedWorkspace.hasInstalledUI()
 
     private var runtimeStartInFlight = false
     private let notificationCenter = UNUserNotificationCenter.current()

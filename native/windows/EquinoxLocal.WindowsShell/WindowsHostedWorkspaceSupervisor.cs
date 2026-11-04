@@ -24,6 +24,33 @@ internal sealed partial class WindowsHostedWorkspaceSupervisor : IAsyncDisposabl
     [GeneratedRegex("^[a-f0-9]{40}$", RegexOptions.CultureInvariant)]
     private static partial Regex SourceShaPattern();
 
+    // Menu discovery only. A normal Start Menu/login launch cannot inherit
+    // an installer-time opt-in flag. OpenAsync still requires the independent
+    // original Guardian audit, signed inspector and private NTFS ACL checks.
+    internal static bool HasInstalledUi()
+    {
+        try
+        {
+            var state = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Equinox Local", "state", "main-update");
+            using var pointer = JsonDocument.Parse(ReadSelectedPointer(Path.Combine(state, "current-native.json")));
+            var selected = pointer.RootElement;
+            var target = RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64 => "win32-x64",
+                Architecture.Arm64 => "win32-arm64",
+                _ => "",
+            };
+            var sha = selected.GetProperty("sourceSha").GetString();
+            if (selected.GetProperty("target").GetString() != target ||
+                string.IsNullOrEmpty(target) || sha is null || !SourceShaPattern().IsMatch(sha))
+                return false;
+            var executable = new FileInfo(Path.Combine(state, "electron-ui", target, sha, "electron.exe"));
+            return executable.Exists && (executable.Attributes & FileAttributes.ReparsePoint) == 0;
+        }
+        catch { return false; }
+    }
+
     private sealed record SignedUi(string Target, string SourceSha, string SourceEntrypoint,
         string InstalledPath, string ExecutablePath);
 
