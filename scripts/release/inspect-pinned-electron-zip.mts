@@ -56,10 +56,15 @@ function resolvedLinkTarget(name: string, target: string): string {
   return parts.join("/");
 }
 
+export type PinnedElectronMember = Readonly<{name: string; kind: ZipKind; bytes: number; sha256: string | null}>;
 export async function inspectPinnedElectronZip({
   archivePath,
   target,
-}: {archivePath: string; target: string}): Promise<Readonly<{target: string; entries: number; links: number; unpackedBytes: number}>> {
+  includeMemberDigests = false,
+}: {archivePath: string; target: string; includeMemberDigests?: boolean}): Promise<Readonly<{
+  target: string; entries: number; links: number; unpackedBytes: number;
+  members?: readonly PinnedElectronMember[];
+}>> {
   if (!Object.hasOwn(ELECTRON_DISTRIBUTIONS, target) || !path.isAbsolute(archivePath)) {
     throw new Error("Pinned Electron ZIP requires a supported target and absolute archive path.");
   }
@@ -239,5 +244,23 @@ export async function inspectPinnedElectronZip({
       throw new Error("Pinned Electron Mach-O architecture does not match the selected macOS target.");
     }
   }
-  return Object.freeze({target, entries: entries.length, links: symlinks.size, unpackedBytes});
+  if (!includeMemberDigests) return Object.freeze({target, entries: entries.length, links: symlinks.size, unpackedBytes});
+  // Optional read-only manifest derives from exact official ZIP bytes checked
+  // above; it never extracts into a live installed program directory.
+  const members: PinnedElectronMember[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== "file") {
+      members.push(Object.freeze({name: entry.name, kind: entry.kind, bytes: 0, sha256: null}));
+      continue;
+    }
+    if (entry.dataOffset === undefined) throw new Error("Pinned Electron member has no admitted data location.");
+    const compressed = bytes.subarray(entry.dataOffset, entry.dataOffset + entry.compressedBytes);
+    const content = entry.method === 0 ? compressed
+      : inflateRawSync(compressed, {maxOutputLength: entry.uncompressedBytes + 1});
+    if (content.length !== entry.uncompressedBytes) throw new Error("Pinned Electron member size changed during content inspection.");
+    members.push(Object.freeze({name: entry.name, kind: entry.kind, bytes: entry.uncompressedBytes,
+      sha256: createHash("sha256").update(content).digest("hex")}));
+  }
+  return Object.freeze({target, entries: entries.length, links: symlinks.size, unpackedBytes,
+    members: Object.freeze(members)});
 }

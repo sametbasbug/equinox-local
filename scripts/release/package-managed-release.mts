@@ -56,6 +56,8 @@ const STATIC_RELEASE_FILES = Object.freeze([
   // still has no activation call; source inclusion is not installation.
   "scripts/release/activate-signed-electron-macos.mjs",
   "scripts/release/inspect-extracted-electron-macos.mjs",
+  "scripts/release/inspect-extracted-electron-windows.mjs",
+  "scripts/release/inspect-installed-electron-windows.mjs",
   "scripts/release/inspect-pinned-electron-zip.mjs",
   "native/windows/EquinoxLocal.WindowsShell/Assets/EquinoxLocal.ico",
   "src/equinox-control-center.css",

@@ -50,7 +50,7 @@ function resolvedLinkTarget(name, target) {
         throw new Error("Pinned Electron symbolic link targets the archive root.");
     return parts.join("/");
 }
-export async function inspectPinnedElectronZip({ archivePath, target, }) {
+export async function inspectPinnedElectronZip({ archivePath, target, includeMemberDigests = false, }) {
     if (!Object.hasOwn(ELECTRON_DISTRIBUTIONS, target) || !path.isAbsolute(archivePath)) {
         throw new Error("Pinned Electron ZIP requires a supported target and absolute archive path.");
     }
@@ -237,5 +237,26 @@ export async function inspectPinnedElectronZip({ archivePath, target, }) {
             throw new Error("Pinned Electron Mach-O architecture does not match the selected macOS target.");
         }
     }
-    return Object.freeze({ target, entries: entries.length, links: symlinks.size, unpackedBytes });
+    if (!includeMemberDigests)
+        return Object.freeze({ target, entries: entries.length, links: symlinks.size, unpackedBytes });
+    // Optional read-only manifest derives from exact official ZIP bytes checked
+    // above; it never extracts into a live installed program directory.
+    const members = [];
+    for (const entry of entries) {
+        if (entry.kind !== "file") {
+            members.push(Object.freeze({ name: entry.name, kind: entry.kind, bytes: 0, sha256: null }));
+            continue;
+        }
+        if (entry.dataOffset === undefined)
+            throw new Error("Pinned Electron member has no admitted data location.");
+        const compressed = bytes.subarray(entry.dataOffset, entry.dataOffset + entry.compressedBytes);
+        const content = entry.method === 0 ? compressed
+            : inflateRawSync(compressed, { maxOutputLength: entry.uncompressedBytes + 1 });
+        if (content.length !== entry.uncompressedBytes)
+            throw new Error("Pinned Electron member size changed during content inspection.");
+        members.push(Object.freeze({ name: entry.name, kind: entry.kind, bytes: entry.uncompressedBytes,
+            sha256: createHash("sha256").update(content).digest("hex") }));
+    }
+    return Object.freeze({ target, entries: entries.length, links: symlinks.size, unpackedBytes,
+        members: Object.freeze(members) });
 }
