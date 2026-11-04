@@ -16,13 +16,13 @@ function parseCliArgs(argv) {
             throw new Error(`Duplicate Main native artifact builder argument: ${key}.`);
         values.set(key, value);
     }
-    const allowed = new Set(["--source-sha", "--target"]);
+    const allowed = new Set(["--source-sha", "--target", "--electron-preview"]);
     for (const key of values.keys())
         if (!allowed.has(key))
             throw new Error(`Unsupported Main native artifact builder argument: ${key}.`);
     return values;
 }
-export async function buildEquinoxLocalMainNativeArtifact({ rootDir, sourceSha, target, outputDir, hostPlatform = process.platform, hostArch = process.arch, packageDarwinImpl = packageManagedEquinoxRelease, packageWindowsImpl = packageManagedEquinoxWindowsRelease, materializeImpl = materializeEquinoxLocalMainNativeArtifact, } = {}) {
+export async function buildEquinoxLocalMainNativeArtifact({ rootDir, sourceSha, target, outputDir, includeElectronPreview = false, hostPlatform = process.platform, hostArch = process.arch, packageDarwinImpl = packageManagedEquinoxRelease, packageWindowsImpl = packageManagedEquinoxWindowsRelease, materializeImpl = materializeEquinoxLocalMainNativeArtifact, } = {}) {
     if (typeof rootDir !== "string" || !rootDir)
         throw new Error("Main native artifact builder root is required.");
     if (typeof sourceSha !== "string" || !SHA_PATTERN.test(sourceSha))
@@ -31,15 +31,19 @@ export async function buildEquinoxLocalMainNativeArtifact({ rootDir, sourceSha, 
         throw new Error("Main native artifact builder target is unsupported.");
     if (typeof outputDir !== "string" || !outputDir)
         throw new Error("Main native artifact builder output directory is required.");
+    if (typeof includeElectronPreview !== "boolean")
+        throw new Error("Electron candidate inclusion must be a boolean.");
     const hostTarget = `${hostPlatform}-${hostArch}`;
     if (hostTarget !== target)
         throw new Error(`Main native artifact builder requires a native host/target match; got host=${hostTarget} target=${target}.`);
     if (hostPlatform !== "darwin" && hostPlatform !== "win32")
         throw new Error(`Main native artifact builder host platform is unsupported: ${hostPlatform}.`);
     const root = path.resolve(rootDir);
+    // Changes CANDIDATE archive bytes only. The production publish workflow
+    // never passes this flag. The signed installer remains separately opted out.
     const candidate = hostPlatform === "win32"
-        ? await packageWindowsImpl({ rootDir: root, target })
-        : await packageDarwinImpl({ rootDir: root, target });
+        ? await packageWindowsImpl({ rootDir: root, target, includeElectronPreview })
+        : await packageDarwinImpl({ rootDir: root, target, includeElectronPreview });
     if (candidate?.target !== target || typeof candidate?.artifactPath !== "string" || !candidate.artifactPath) {
         throw new Error("Main native candidate builder returned invalid target metadata.");
     }
@@ -68,7 +72,14 @@ if (invokedPath && import.meta.url === invokedPath) {
         const sourceSha = args.get("--source-sha");
         const target = args.get("--target");
         const outputDir = path.join(rootDir, "artifacts", "main-native");
-        const result = await buildEquinoxLocalMainNativeArtifact({ rootDir, sourceSha: sourceSha ?? "", target: target ?? "", outputDir });
+        const previewArg = args.get("--electron-preview");
+        if (previewArg !== undefined && previewArg !== "true") {
+            throw new Error("Electron native candidate preview requires explicit true.");
+        }
+        const result = await buildEquinoxLocalMainNativeArtifact({
+            rootDir, sourceSha: sourceSha ?? "", target: target ?? "", outputDir,
+            includeElectronPreview: previewArg === "true",
+        });
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     }
     catch (error) {
