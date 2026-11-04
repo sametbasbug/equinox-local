@@ -1106,6 +1106,7 @@ private final class NativeHostedWorkspace {
 
     private var inspector: Process?
     private var child: Process?
+    private var childStopping = false
     private var opening = false
     private var stopped = false
 
@@ -1113,6 +1114,13 @@ private final class NativeHostedWorkspace {
         // A native quit may wait for asynchronous hard-stop, while an already
         // running source inspector finishes. Never start UI during that wait.
         guard !stopped, canLaunch() else { return }
+        // Process.terminate() is asynchronous. Do not reactivate a dying UI
+        // or launch a second child before its original Process has exited.
+        if childStopping {
+            completion(NSError(domain: "EquinoxLocalHostedUI", code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "Workspace is still closing after runtime restart."]))
+            return
+        }
         if let child, child.isRunning {
             _ = NSRunningApplication(processIdentifier: child.processIdentifier)?
                 .activate(options: [])
@@ -1230,7 +1238,10 @@ private final class NativeHostedWorkspace {
                     self.child = ui
                     ui.terminationHandler = { [weak self] finished in
                         DispatchQueue.main.async {
-                            if self?.child === finished { self?.child = nil }
+                            if self?.child === finished {
+                                self?.child = nil
+                                self?.childStopping = false
+                            }
                         }
                     }
                     completion(nil)
@@ -1247,8 +1258,14 @@ private final class NativeHostedWorkspace {
         // the native owner restarts the one existing Control Center server.
         inspector = nil
         opening = false
-        if let child, child.isRunning { child.terminate() }
-        child = nil
+        if let child, child.isRunning {
+            childStopping = true
+            child.terminate()
+            // The exact child remains owned until its termination callback.
+        } else {
+            child = nil
+            childStopping = false
+        }
     }
 
     func stop() {
