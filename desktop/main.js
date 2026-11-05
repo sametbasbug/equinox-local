@@ -529,12 +529,12 @@ function importLegacyShellPreferences() {
         // retains both that motion and the handoff, rather than importing over it.
         companion?.applySavedPreferences();
         const file = path.join(app.getPath("userData"), "private-shell", "legacy-shell-pending.json");
-        const before = fs.lstatSync(file);
         const normal = (s) => s.isFile() && s.nlink === 1 && s.uid === process.getuid?.() && (s.mode & 0o077) === 0 && s.size <= 2048;
+        fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (fs.constants.O_NONBLOCK ?? 0));
+        const opened = fs.fstatSync(fd);
+        const before = fs.lstatSync(file);
         if (!normal(before) || before.isSymbolicLink())
             throw new Error("Unsafe pending GUI handoff.");
-        fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-        const opened = fs.fstatSync(fd);
         if (!normal(opened) || before.dev !== opened.dev || before.ino !== opened.ino)
             throw new Error("Pending GUI handoff changed.");
         const bytes = Buffer.alloc(2049);

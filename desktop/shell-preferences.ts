@@ -41,11 +41,11 @@ export function openShellPreferences(directory: string) {
     const profile = fs.lstatSync(directory);
     if (process.platform !== "win32" && (profile.uid !== process.getuid?.() || (profile.mode & 0o077) !== 0)) throw new Error("Shell profile is not private.");
     try {
-      const before = fs.lstatSync(file);
-      if (!normal(before) || before.isSymbolicLink()) throw new Error("Unsafe shell preferences.");
-      const fd = fs.openSync(file, fs.constants.O_RDONLY | noFollow);
+      const fd = fs.openSync(file, fs.constants.O_RDONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0));
       try {
         const opened = fs.fstatSync(fd);
+        const before = fs.lstatSync(file);
+        if (!normal(before) || before.isSymbolicLink()) throw new Error("Unsafe shell preferences.");
         if (!normal(opened) || before.ino !== opened.ino || before.dev !== opened.dev) throw new Error("Shell preferences changed.");
         const buffer = Buffer.alloc(8193);
         let count = 0;

@@ -477,10 +477,10 @@ export async function extractDesktopBundle(archivePath, destinationRoot, identit
             if (entry.type === 'SymbolicLink')
                 continue;
             const location = path.join(expanded, relative);
-            const initial = await lstat(location);
-            const handle = await open(location, constants.O_RDONLY | constants.O_NOFOLLOW | (entry.type === 'Directory' ? constants.O_DIRECTORY : 0));
+            const handle = await open(location, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK | (entry.type === 'Directory' ? constants.O_DIRECTORY : 0));
             try {
                 const stat = await handle.stat();
+                const initial = await lstat(location);
                 if (!same(initial, stat) || stat.uid !== process.getuid() || (entry.type === 'Directory' ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1) || (stat.mode & 0o7022) !== 0)
                     fail('expanded entry ownership/type changed');
                 await handle.chmod(entry.mode);

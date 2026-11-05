@@ -404,10 +404,6 @@ export async function preflightMacInstaller(contextFile, validateRelease) {
             // Discovery is read-only and bounded, not an ownership assertion. Follow
             // third-party links only to ordinary files; never block on a FIFO/device.
             try {
-                if ((await fs.lstat(file)).isSymbolicLink()) {
-                    const target = await fs.readlink(file);
-                    identified ||= target.includes(app) || target.includes(wrapper) || /^dev\.equinox\.local(?:[.-]|$)/iu.test(path.basename(target));
-                }
                 const handle = await fs.open(file, constants.O_RDONLY | constants.O_NONBLOCK);
                 try {
                     const stat = await handle.stat();
@@ -444,6 +440,15 @@ export async function preflightMacInstaller(contextFile, validateRelease) {
                 }
             }
             catch { /* Discovery errors must not globally block unrelated agents. */ }
+            // Inspect link text after the bounded open attempt, including dangling
+            // links. This is discovery only, never a pathname precheck for opening.
+            try {
+                if ((await fs.lstat(file)).isSymbolicLink()) {
+                    const target = await fs.readlink(file);
+                    identified ||= target.includes(app) || target.includes(wrapper) || /^dev\.equinox\.local(?:[.-]|$)/iu.test(path.basename(target));
+                }
+            }
+            catch { /* An unreadable link does not admit an unrelated job. */ }
             if (identified) {
                 // All noncanonical identified entries are refused, including unsafe,
                 // unreadable, oversized or malformed ones; none need a second open.
