@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; font-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Equinox Companion · Nyx</title>
+<link rel="stylesheet" href="companion.css">
+<script type="module" src="companion-renderer.js"></script>
+</head>
+<body>
+<button id="pet" aria-label="Nyx companion" aria-describedby="pet-state" title="Nyx"></button>
+<span id="pet-state" hidden></span>
+<nav id="actions" aria-label="Nyx Quick Actions">
+<button data-action="new-chat"><span aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M9 4H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-5M8 12l1-4 7-7 3 3-7 7-4 1ZM14 3l3 3"/></svg></span><span id="new-chat-label">New Chat</span></button>
+<button data-action="control-center"><span aria-hidden="true"><svg viewBox="0 0 20 20"><path d="M2 5h3m4 0h9M2 10h9m4 0h3M2 15h5m4 0h7"/><circle cx="7" cy="5" r="2"/><circle cx="13" cy="10" r="2"/><circle cx="9" cy="15" r="2"/></svg></span><span id="control-center-label">Control Center</span></button>
+<button data-action="hide"><span aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m2 2 16 16M7 5a9 9 0 0 1 3-.5c5 0 8 5.5 8 5.5a17 17 0 0 1-3 3M12 15a9 9 0 0 1-2 .5C5 15.5 2 10 2 10a17 17 0 0 1 3-3M8 8a3 3 0 0 0 4 4"/></svg></span><span id="hide-label">Hide Nyx</span></button>
+</nav>
+<div id="speech" role="status" aria-live="polite"><div id="speech-body"><span id="speech-text"></span></div><i id="tail"></i></div>
+</body>
+</html>

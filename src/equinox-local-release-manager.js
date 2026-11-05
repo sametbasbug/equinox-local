@@ -5,9 +5,10 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
+import { readEquinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
 import { parseEquinoxVersion } from "./equinox-local-updater.js";
 import { walkBoundedReleaseTree } from "./equinox-local-release-tree.js";
+import { readEquinoxLocalNativeAppMetadata } from "./equinox-local-native-app-host.js";
 const execFile = promisify(execFileCallback);
 function hasErrorCode(error, code) { return error !== null && typeof error === "object" && "code" in error && error.code === code; }
 function isRecord(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
@@ -281,7 +282,7 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
     if (!modules.isDirectory() || modules.isSymbolicLink()) {
         throw new Error("Release must contain its production node_modules tree.");
     }
-    const runtimeContract = equinoxLocalReleaseRuntimeContract({ target: expectedTarget, version: metadata.version });
+    const runtimeContract = await readEquinoxLocalReleaseRuntimeContract(releaseDir, { target: expectedTarget, version: metadata.version });
     for (const relative of runtimeContract.runtimeExecutables) {
         const executable = await fs.lstat(path.join(releaseDir, relative));
         if (!executable.isFile()
@@ -291,17 +292,10 @@ async function readReleaseMetadata(releaseDir, expectedVersion, expectedTarget) 
         }
     }
     if (metadata.nativeAppShellVersion !== undefined) {
-        const appExecutable = await fs.lstat(path.join(releaseDir, "runtime", "app", "applet"));
-        if (!appExecutable.isFile() || appExecutable.isSymbolicLink() || (appExecutable.mode & 0o111) === 0) {
-            throw new Error("Release must contain the executable Equinox Local native app shell.");
-        }
-        for (const relative of [
-            path.join("runtime", "app", "EquinoxLocal.png"),
-            path.join("runtime", "app", "native-app.json"),
-        ]) {
-            const appFile = await fs.lstat(path.join(releaseDir, relative));
-            if (!appFile.isFile() || appFile.isSymbolicLink())
-                throw new Error(`Release must contain native app file ${relative}.`);
+        const native = await readEquinoxLocalNativeAppMetadata(releaseDir);
+        if (native.target !== expectedTarget || native.shellVersion !== metadata.nativeAppShellVersion ||
+            ("kind" in native && native.kind === "electron" && native.sourceSha !== metadata.sourceSha)) {
+            throw new Error("Native app payload does not match the authenticated release identity.");
         }
     }
     for (const relative of runtimeContract.runtimeDocuments) {

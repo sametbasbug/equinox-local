@@ -1,6 +1,8 @@
 {
   "name": "equinox-local",
-  "bin": { "eqlocal": "./scripts/eqlocal.mjs" },
+  "bin": {
+    "eqlocal": "./scripts/eqlocal.mjs"
+  },
   "version": "0.0.0-development",
   "private": true,
   "description": "Local control plane for AI agents with bounded projects, browser automation, diagnostics, and human-visible controls.",
@@ -8,6 +10,10 @@
   "scripts": {
     "check": "node scripts/check.mjs",
     "start": "node src/server.js",
+    "desktop:dev": "electron desktop/main.js",
+    "desktop:package": "npm run build:typed-desktop && node scripts/release/package-desktop-shell.mjs",
+    "build:typed-desktop": "tsc --project tsconfig.desktop.json --outDir desktop",
+    "verify:typed-desktop": "node scripts/verify-typescript-desktop.mjs",
     "browser:package": "bash scripts/package-browser-extension.sh",
     "local:release:package": "node scripts/release/package-managed-release.mjs",
     "local:release:package:windows": "node scripts/release/package-managed-release-windows.mjs",
@@ -51,13 +57,17 @@
     "node-pty": "1.2.0-beta.18",
     "pdfjs-dist": "^6.5.438",
     "pngjs": "7.0.0",
+    "tar": "7.5.22",
     "zod": "^4.6.7"
   },
   "allowScripts": {
     "node-pty@1.2.0-beta.18": true
   },
   "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "@types/debug": "4.1.13",
     "@types/node": "26.6.6",
+    "electron": "46.0.0-alpha.5",
     "typescript": "7.0.2"
   }
 }

@@ -31,12 +31,58 @@ const FILE_PATH = "/usr/bin/file";
 const NATIVE_SOURCE_DIR = "app";
 const NATIVE_OUTPUT_DIR = path.join("runtime", "app");
 
+// Factory/source preparation deliberately retains the schema-1 Swift shell.
 export const EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION = 24;
+export const EQUINOX_LOCAL_DESKTOP_SHELL_VERSION = 25;
+export const EQUINOX_LOCAL_DESKTOP_APP_ARCHIVE = "desktop-app.tar.gz";
+export type DesktopAppMetadata = Readonly<{
+  schemaVersion: 2; kind: "electron"; shellVersion: number;
+  sourceSha: string; target: NativeTarget;
+  archive: "desktop-app.tar.gz"; sha256: string; bytes: number;
+}>;
+
+/** Strict wire validator; archive authentication is performed by extractDesktopBundle. */
+export function validateEquinoxLocalDesktopAppMetadata(value: unknown): DesktopAppMetadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Electron desktop metadata.");
+  const raw = value as Record<string, unknown>;
+  const keys = ["schemaVersion", "kind", "shellVersion", "sourceSha", "target", "archive", "sha256", "bytes"];
+  if (Object.keys(raw).length !== keys.length || keys.some(key => !Object.hasOwn(raw, key)) ||
+      raw.schemaVersion !== 2 || raw.kind !== "electron" ||
+      !Number.isSafeInteger(raw.shellVersion) || (raw.shellVersion as number) < EQUINOX_LOCAL_DESKTOP_SHELL_VERSION ||
+      typeof raw.sourceSha !== "string" || !/^[a-f0-9]{40}$/u.test(raw.sourceSha) ||
+      !["darwin-arm64", "darwin-x64"].includes(raw.target as string) ||
+      raw.archive !== EQUINOX_LOCAL_DESKTOP_APP_ARCHIVE ||
+      typeof raw.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(raw.sha256) ||
+      !Number.isSafeInteger(raw.bytes) || (raw.bytes as number) <= 0 || (raw.bytes as number) > 256 * 1024 * 1024) {
+    throw new Error("Invalid Electron desktop metadata.");
+  }
+  return Object.freeze({ ...raw }) as DesktopAppMetadata;
+}
 export const EQUINOX_LOCAL_NATIVE_APP_EXECUTABLE = "applet";
 export const EQUINOX_LOCAL_NATIVE_APP_ICON = "EquinoxLocal.png";
 export const EQUINOX_LOCAL_NATIVE_APP_MENU_ICON = "EquinoxLocalMenuBar.png";
 export const EQUINOX_LOCAL_NATIVE_APP_COMPANION_ASSET = "EquinoxCompanionNyx.webp";
 export const EQUINOX_LOCAL_NATIVE_APP_METADATA = "native-app.json";
+
+/** Small non-UI helper retained when Electron replaces the AppKit executable. */
+export async function buildEquinoxLocalProcessSessionHelper({
+  rootDir, outputDir, target,
+}: { rootDir: string; outputDir: string; target: NativeTarget }): Promise<string> {
+  if (process.platform !== "darwin") throw new Error("The macOS process-session helper requires the native macOS SDK.");
+  const source = path.join(path.resolve(rootDir), "native", "macos", "equinox-local-process-session.c");
+  await assertNormalFile(source, "Equinox Local process-session helper source");
+  const nativeRoot = path.join(path.resolve(outputDir), "native");
+  await fs.mkdir(nativeRoot, { recursive: true, mode: 0o700 });
+  const executable = path.join(nativeRoot, "equinox-local-process-session");
+  await execFile("/usr/bin/xcrun", [
+    "clang", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+    "-target", targetTriple(target), source, "-o", executable,
+  ], { timeout: 120_000, maxBuffer: 1024 * 1024 });
+  await fs.chmod(executable, 0o755);
+  const { stdout } = await execFile(FILE_PATH, [executable], { timeout: 5_000, maxBuffer: 16 * 1024 });
+  if (!stdout.includes(fileArchitecture(target))) throw new Error("Process-session helper architecture does not match its target.");
+  return executable;
+}
 
 function targetTriple(target: unknown): string {
   if (target === "darwin-arm64") return "arm64-apple-macos13.0";

@@ -15,7 +15,7 @@ async function emittedFiles(directory, prefix = "") {
         const relative = path.join(prefix, entry.name);
         if (entry.isDirectory())
             files.push(...await emittedFiles(path.join(directory, entry.name), relative));
-        else if (entry.isFile() && (relative.endsWith(".js") || relative.endsWith(".mjs")))
+        else if (entry.isFile() && /\.(?:js|mjs|cjs)$/u.test(relative))
             files.push(relative);
         else
             throw new Error(`Unexpected TypeScript runtime output: ${relative}`);

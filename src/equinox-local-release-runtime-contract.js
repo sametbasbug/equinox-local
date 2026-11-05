@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION, EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION, EQUINOX_LOCAL_NATIVE_JOB_OBJECT_HELPER_SINCE_VERSION, EQUINOX_LOCAL_NODE_RUNTIME_GATE_SINCE_VERSION, } from "./equinox-local-runtime-versions.js";
 import { compareEquinoxVersions, parseEquinoxVersion } from "./equinox-local-updater.js";
@@ -38,11 +39,33 @@ const SHARED_RUNTIME_DOCUMENTS = Object.freeze([
     path.join("runtime", "tunnel", "LICENSE"),
     path.join("runtime", "tunnel", "NOTICE"),
 ]);
-const WINDOWS_SHELL_FILES = Object.freeze([
+// Read-only compatibility for retained signed WPF archives; publishers use Electron.
+const LEGACY_WINDOWS_SHELL_FILES = Object.freeze([
     path.join("runtime", "shell", "EquinoxLocal.exe"),
     path.join("runtime", "shell", "coreclr.dll"),
     path.join("runtime", "shell", "hostfxr.dll"),
     path.join("runtime", "shell", "Microsoft.Web.WebView2.Core.dll"),
+]);
+const WINDOWS_SHELL_FILES = Object.freeze([
+    path.join("runtime", "shell", "EquinoxLocal.exe"),
+    path.join("runtime", "shell", "chrome_100_percent.pak"),
+    path.join("runtime", "shell", "chrome_200_percent.pak"),
+    path.join("runtime", "shell", "d3dcompiler_47.dll"),
+    path.join("runtime", "shell", "dxcompiler.dll"),
+    path.join("runtime", "shell", "electron_wer.dll"),
+    path.join("runtime", "shell", "ffmpeg.dll"),
+    path.join("runtime", "shell", "icudtl.dat"),
+    path.join("runtime", "shell", "resources.pak"),
+    path.join("runtime", "shell", "snapshot_blob.bin"),
+    path.join("runtime", "shell", "v8_context_snapshot.bin"),
+    path.join("runtime", "shell", "version"),
+    path.join("runtime", "shell", "vk_swiftshader.dll"),
+    path.join("runtime", "shell", "vk_swiftshader_icd.json"),
+    path.join("runtime", "shell", "vulkan-1.dll"),
+    path.join("runtime", "shell", "locales", "en-US.pak"),
+    path.join("runtime", "shell", "resources", "app.asar"),
+    path.join("runtime", "shell", "LICENSE"),
+    path.join("runtime", "shell", "LICENSES.chromium.html"),
 ]);
 const DARWIN_RELEASE_FILES = Object.freeze([
     "server.js",
@@ -62,6 +85,38 @@ const WINDOWS_RELEASE_FILES = Object.freeze([
     "equinox-local-windows-process-gate.ps1",
     "equinox-local-windows-release-zip.ps1",
 ]);
+// Select shape only: callers must retain their normal-tree and signed-byte audits.
+// Version cannot discriminate the migration: both formats can share a product version.
+export async function readEquinoxLocalReleaseRuntimeContract(releaseDir, options = {}) {
+    const { fsImpl = fs } = options;
+    const contract = equinoxLocalReleaseRuntimeContract(options);
+    if (contract.platform !== "win32")
+        return contract;
+    if (!path.isAbsolute(releaseDir))
+        throw new Error("Release shell root must be absolute.");
+    const components = [releaseDir, "runtime", "shell", "resources", "app.asar"];
+    let current = releaseDir;
+    for (let index = 0; index < components.length; index += 1) {
+        if (index > 0)
+            current = path.join(current, components[index]);
+        let stat;
+        try {
+            stat = await fsImpl.lstat(current);
+        }
+        catch (error) {
+            // Only absent resources/app.asar (or its optional resources directory)
+            // selects legacy. Permission, traversal and other failures are fatal.
+            if (index >= 3 && error.code === "ENOENT") {
+                return Object.freeze({ ...contract, nativeShellFiles: LEGACY_WINDOWS_SHELL_FILES });
+            }
+            throw error;
+        }
+        if (stat.isSymbolicLink() || (index === 4 ? !stat.isFile() : !stat.isDirectory())) {
+            throw new Error("Release shell sentinel and its parents must be normal files/directories.");
+        }
+    }
+    return contract;
+}
 export function equinoxLocalReleaseRuntimeContract({ target, version } = {}) {
     const normalizedVersion = parseEquinoxVersion(version).text;
     if (target !== undefined && DARWIN_TARGET_PATTERN.test(target)) {

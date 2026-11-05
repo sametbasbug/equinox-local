@@ -1,3 +1,16 @@
+## [7.0.0] - 2026-11-06
+
+### Shared Electron application shell
+
+- Move new managed macOS and Windows installations to the same pinned Electron 46.0.0-alpha.5 shell, preserving the existing Control Center rather than introducing a new dashboard or chat/provider product.
+- Give one Electron main process ownership of the installed runtime, tray/menu, close-to-tray, explicit Quit and native login preference. Retain only required process-session, Windows Job Object and current-user IPC helpers; historical Source/Factory and signed archive compatibility remain separate roles.
+- Bring the original Nyx companion to both platforms, default-on for new installed profiles while respecting saved visibility, position and language. Local presentation remains sandboxed, output-only and finite; no extra backend or poller is added.
+- Keep the same signed external installers and independent source/archive/ownership checks. The first legacy-to-Electron transition requires the maintained external installer once; old bundled Update callers are rejected before stopping owners or moving program roots. After migration, the release's protocol-aware Update path is available again.
+- Preserve legacy GUI preferences through a bounded private pending transfer with durable retry, and apply initial login intent through a finite admitted helper rather than a potentially discarded GUI launch argument.
+- Package the complete macOS application in an authenticated sealed bundle and the full Windows Electron tree. Retain strict payload identity, observed shutdown and conservative restoration of owned program files without introducing a second updater or rollback engine.
+
+**Rollout:** The maintainer authorized Main publication followed by live Factory and ordinary-user Windows verification. Source review, four-target development packages and ARM64 rendering have passed; native installed migration, Windows/Intel execution, operating-system approval/permission continuity and installed signing idempotence are not claimed as completed by these notes. The Electron runtime remains the explicitly approved alpha.5 pin.
+
 ## [6.3.2] - 2026-11-03
 
 ### macOS login startup control

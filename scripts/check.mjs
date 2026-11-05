@@ -10,7 +10,7 @@ const JSON_FILES = Object.freeze([
 export async function checkPublicProject({ rootDir = root, spawnSyncImpl, shellCommand } = {}) {
     return checkProject({
         rootDir,
-        recursiveDirectories: ["src", "scripts", "extension"],
+        recursiveDirectories: ["src", "scripts", "extension", "desktop"],
         jsonFiles: JSON_FILES,
         spawnSyncImpl,
         shellCommand,

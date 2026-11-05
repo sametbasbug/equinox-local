@@ -7,6 +7,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { hashFile } from "../lib/package-io.mjs";
 import { productionNodeModulesFilter } from "./production-node-modules.mjs";
+import { packageManagedDesktopShell } from "./package-desktop-shell.mjs";
+import { EQUINOX_LOCAL_DESKTOP_SHELL_VERSION } from "../../src/equinox-local-native-app.js";
+import { equinoxLocalReleaseRuntimeContract } from "../../src/equinox-local-release-runtime-contract.js";
 import { collectManagedReleaseSourceFiles, resolveManagedReleaseSourceSha } from "./package-managed-release.mjs";
 import { EQUINOX_LOCAL_NODE_VERSION, EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, EQUINOX_LOCAL_WINAPP_VERSION, NODE_DISTRIBUTIONS, TUNNEL_CLIENT_DISTRIBUTIONS, WINAPP_DISTRIBUTIONS, } from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
@@ -51,12 +54,8 @@ const WINDOWS_EXTRA_RELEASE_FILES = Object.freeze([
     "src/equinox-local-windows-runtime-supervisor.js",
     "src/equinox-local-windows-release-zip.ps1",
 ]);
-const REQUIRED_SHELL_FILES = Object.freeze([
-    "EquinoxLocal.exe",
-    "coreclr.dll",
-    "hostfxr.dll",
-    "Microsoft.Web.WebView2.Core.dll",
-]);
+const REQUIRED_SHELL_FILES = Object.freeze(equinoxLocalReleaseRuntimeContract({ target: "win32-x64", version: EQUINOX_LOCAL_VERSION })
+    .nativeShellFiles.map((relative) => path.relative(path.join("runtime", "shell"), relative)));
 export function windowsManagedReleaseDestinationRelative(relative) {
     if (typeof relative !== "string" || relative.length === 0)
         throw new Error("Windows managed release source path is invalid.");
@@ -315,28 +314,31 @@ async function installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetc
         }
     }
 }
-async function copyPublishedShell(rootDir, releaseDir, shellPublishDir) {
-    const source = path.resolve(rootDir, shellPublishDir);
-    for (const required of REQUIRED_SHELL_FILES) {
-        const stat = await fs.lstat(path.join(source, required));
-        if (!stat.isFile() || stat.isSymbolicLink())
-            throw new Error(`Published Windows shell is missing ${required}.`);
+async function buildManagedShell(rootDir, releaseDir, transaction, sourceSha, contract) {
+    const built = await packageManagedDesktopShell({
+        rootDir,
+        outputDir: path.join(transaction, "desktop"),
+        target: contract.target,
+        sourceSha,
+        shellVersion: EQUINOX_LOCAL_DESKTOP_SHELL_VERSION,
+    });
+    if (built.target !== contract.target || built.role !== "managed" || built.electron !== "46.0.0-alpha.5") {
+        throw new Error("Managed Windows Electron shell identity mismatch.");
     }
-    let loaderFound = false;
-    async function scan(directory) {
-        for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-            const absolute = path.join(directory, entry.name);
-            if (entry.isDirectory())
-                await scan(absolute);
-            else if (entry.isFile() && entry.name === "WebView2Loader.dll")
-                loaderFound = true;
+    await assertNormalTree(built.output);
+    for (const required of contract.requiredShellFiles) {
+        const stat = await fs.lstat(path.join(built.output, required));
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) {
+            throw new Error(`Managed Windows Electron shell is missing ${required}.`);
         }
     }
-    await scan(source);
-    if (!loaderFound)
-        throw new Error("Published Windows shell is missing WebView2Loader.dll.");
-    await assertNormalTree(source);
-    await fs.cp(source, path.join(releaseDir, "runtime", "shell"), { recursive: true, dereference: false });
+    if (await portableExecutableMachine(path.join(built.output, "EquinoxLocal.exe")) !== contract.peMachine) {
+        throw new Error(`Managed Windows Electron shell architecture mismatch for ${contract.target}.`);
+    }
+    // Copy the complete distribution; backend modules remain in pinned Node, not app.asar.
+    await fs.cp(built.output, path.join(releaseDir, "runtime", "shell"), {
+        recursive: true, dereference: false, force: false, errorOnExist: true,
+    });
 }
 async function portableExecutableMachine(filePath) {
     const bytes = await fs.readFile(filePath);
@@ -468,7 +470,7 @@ async function copyPrecompiledBrowserLauncher(browserLauncherPath, releaseDir, c
     await fs.copyFile(source, path.join(browserDir, "equinox-browser-native-host.exe"));
 }
 async function compileWindowsGuardian(rootDir, releaseDir, transaction, contract) {
-    // Independent native launcher lives outside the replaceable WPF directory
+    // Independent native launcher lives outside the replaceable Electron shell directory
     // after installation. Packaging on a Windows CI/build host is allowed to use
     // dotnet; the installed runtime never compiles any of its own components.
     const guardianDir = path.join(releaseDir, "runtime", "guardian");
@@ -549,7 +551,10 @@ async function createManagedZip(rootDir, releaseDir, artifactPath) {
         throw error;
     }
 }
-export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), outputDir = path.join(rootDir, "backups", "local-packages"), target = process.env.EQUINOX_WINDOWS_PACKAGE_TARGET || `${process.platform}-${process.arch}`, shellPublishDir = process.env.EQUINOX_WINDOWS_SHELL_PUBLISH_DIR || null, browserLauncherPath = process.env.EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH || null, nativeHelperCacheDir = process.env.GITHUB_ACTIONS === "true" ? process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR || null : null, nativeHelperCacheHit = process.env.GITHUB_ACTIONS === "true" && process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT === "true", fetchImpl = globalThis.fetch, } = {}) {
+export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."), outputDir = path.join(rootDir, "backups", "local-packages"), target = process.env.EQUINOX_WINDOWS_PACKAGE_TARGET || `${process.platform}-${process.arch}`, browserLauncherPath = process.env.EQUINOX_WINDOWS_BROWSER_LAUNCHER_PATH || null, nativeHelperCacheDir = process.env.GITHUB_ACTIONS === "true" ? process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_DIR || null : null, nativeHelperCacheHit = process.env.GITHUB_ACTIONS === "true" && process.env.EQUINOX_WINDOWS_NATIVE_HELPER_CACHE_HIT === "true", fetchImpl = globalThis.fetch, ...obsoleteOptions } = {}) {
+    if ("shellPublishDir" in obsoleteOptions || process.env.EQUINOX_WINDOWS_SHELL_PUBLISH_DIR !== undefined) {
+        throw new Error("Obsolete Windows shell publish input: remove shellPublishDir/EQUINOX_WINDOWS_SHELL_PUBLISH_DIR; the managed Electron shell is built from the exact clean source checkout.");
+    }
     const hostTarget = `${process.platform}-${process.arch}`;
     const contract = windowsManagedPackageContract({ target });
     const supportedHost = process.platform === "win32" && ["x64", "arm64"].includes(process.arch);
@@ -558,7 +563,6 @@ export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resol
         throw new Error(`Windows managed release packaging requires a supported native or x64-to-ARM64 Windows host/target pair; got host=${hostTarget} target=${target}.`);
     }
     const sourceSha = await resolveManagedReleaseSourceSha(rootDir);
-    const resolvedShellPublishDir = shellPublishDir || path.join("artifacts", "windows-shell", contract.shellRid);
     if (nativeHelperCacheHit && (!nativeHelperCacheDir || !path.isAbsolute(nativeHelperCacheDir))) {
         throw new Error("Windows native helper cache hit requires an absolute cache directory.");
     }
@@ -596,7 +600,7 @@ export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resol
             component("node", () => installPinnedWindowsNode(transaction, releaseDir, fetchImpl, admittedTarget, { canExecuteTarget })),
             component("tunnel", () => installPinnedWindowsTunnel(transaction, releaseDir, fetchImpl, admittedTarget, { canExecuteTarget })),
             component("winapp", () => installPinnedWindowsWinapp(transaction, rootDir, releaseDir, fetchImpl, admittedTarget, { canExecuteTarget })),
-            component("shell", () => copyPublishedShell(rootDir, releaseDir, resolvedShellPublishDir)),
+            component("shell", () => buildManagedShell(rootDir, releaseDir, transaction, sourceSha, contract)),
             component("guardian", () => nativeHelperCacheHit
                 ? restoreCachedWindowsNativeHelper(nativeHelperCacheDir, "guardian", releaseDir, contract)
                 : compileWindowsGuardian(rootDir, releaseDir, transaction, contract)),
@@ -653,7 +657,9 @@ export async function packageManagedEquinoxWindowsRelease({ rootDir = path.resol
 }
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 if (invokedPath && import.meta.url === invokedPath) {
-    packageManagedEquinoxWindowsRelease()
+    (process.argv.length > 2
+        ? Promise.reject(new Error("Windows managed release packaging accepts no CLI arguments; obsolete shell-output inputs are not supported."))
+        : packageManagedEquinoxWindowsRelease())
         .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
         .catch((error) => { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
 }

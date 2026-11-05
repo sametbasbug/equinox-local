@@ -41,6 +41,8 @@ function childEnv(parent, mode) {
     const env = Object.fromEntries(keys.filter((key) => typeof parent[key] === "string" && parent[key]).map((key) => [key, parent[key]]));
     env.PATHEXT = repairWindowsPathext(env.PATHEXT);
     env.EQUINOX_LOCAL_SUPERVISOR_MODE = mode;
+    if (parent.EQUINOX_LOCAL_DESKTOP_OWNER === "1")
+        env.EQUINOX_LOCAL_DESKTOP_OWNER = "1";
     return env;
 }
 export async function runWindowsSupervisorChild(command, args, options, { spawnImpl = spawn, processLike = process, setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout, } = {}) {

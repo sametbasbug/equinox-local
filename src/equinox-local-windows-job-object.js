@@ -54,6 +54,35 @@ export async function createWindowsJobObjectLease({ platform = process.platform,
     let closed = false;
     let closing = false;
     const pending = new Map();
+    let helperClosed = false;
+    const helperExit = new Promise((resolve) => {
+        child.once("close", () => { helperClosed = true; resolve(); });
+    });
+    const waitForHelperExit = (timeout) => {
+        if (helperClosed)
+            return Promise.resolve(true);
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(false), timeout);
+            void helperExit.then(() => { clearTimeout(timer); resolve(true); });
+        });
+    };
+    const retireHelper = async () => {
+        closing = true;
+        try {
+            child.stdin?.end();
+        }
+        catch { /* Owned-child exit remains the required proof. */ }
+        if (!await waitForHelperExit(1_000)) {
+            try {
+                if (!child.killed)
+                    child.kill();
+            }
+            catch { /* Observe a concurrent exit below. */ }
+            if (!await waitForHelperExit(1_000))
+                throw new Error("Windows Job Object helper did not terminate; ownership cleanup is unconfirmed.");
+        }
+        closed = true;
+    };
     child.stderr?.on("data", (chunk) => { stderr = boundedTail(stderr, chunk); });
     const failAll = (error) => {
         for (const { reject, timer } of pending.values()) {
@@ -121,7 +150,18 @@ export async function createWindowsJobObjectLease({ platform = process.platform,
                 request.reject(new Error(String(response.error || "Windows Job Object helper request failed.")));
         }
     });
-    await waitReady;
+    try {
+        await waitReady;
+    }
+    catch (error) {
+        try {
+            await retireHelper();
+        }
+        catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], "Windows Job Object readiness and helper cleanup failed.");
+        }
+        throw error;
+    }
     const request = (op, payload = {}) => {
         if (closed || !child.stdin?.writable)
             return Promise.reject(new Error("Windows Job Object helper is not available."));
@@ -155,12 +195,19 @@ export async function createWindowsJobObjectLease({ platform = process.platform,
             return request("terminate", { exitCode });
         },
         async close() {
-            if (closed)
+            if (helperClosed)
                 return;
             closing = true;
-            await request("close");
-            closed = true;
-            child.stdin?.end();
+            try {
+                if (!closed && child.stdin?.writable)
+                    await request("close");
+            }
+            catch {
+                // A failed acknowledgement is safe only after the actual helper exits and closes its kernel job.
+            }
+            finally {
+                await retireHelper();
+            }
         },
     });
 }

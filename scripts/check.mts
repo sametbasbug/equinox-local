@@ -14,7 +14,7 @@ type PublicCheckOptions = {rootDir?: string; spawnSyncImpl?: NonNullable<Paramet
 export async function checkPublicProject({ rootDir = root, spawnSyncImpl, shellCommand }: PublicCheckOptions = {}) {
   return checkProject({
     rootDir,
-    recursiveDirectories: ["src", "scripts", "extension"],
+    recursiveDirectories: ["src", "scripts", "extension", "desktop"],
     jsonFiles: JSON_FILES,
     spawnSyncImpl,
     shellCommand,

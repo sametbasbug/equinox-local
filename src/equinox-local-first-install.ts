@@ -50,7 +50,9 @@ import { readEquinoxLocalCurrentVersionPointer, writeEquinoxLocalCurrentVersionP
 import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
 import {preserveOriginalSignedWindowsArchive} from "./equinox-local-signed-windows-archive.js";
 import { initializeManagedOnboardingState } from "./equinox-local-onboarding.js";
-import { equinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
+import { readEquinoxLocalReleaseRuntimeContract } from "./equinox-local-release-runtime-contract.js";
+import { readEquinoxLocalNativeAppMetadata } from "./equinox-local-native-app-host.js";
+import {assertMacInstallerStopped, launchMacInstallerElectron, macInstallerLifecycle, preflightMacInstaller} from "./equinox-local-macos-installer.js";
 import { equinoxLocalToolchainContract } from "./equinox-local-toolchain-contract.js";
 import {
   launchWindowsStableShell,
@@ -179,7 +181,7 @@ export async function validateFirstInstallRelease(releaseDir:string,{
   const metadataPath = path.join(releaseDir, "release.json");
   await assertNormalFile(metadataPath, "Release metadata", { maxBytes: MAX_RELEASE_METADATA_BYTES, fsImpl });
   const metadata:Metadata = JSON.parse(await fsImpl.readFile(metadataPath, "utf8"));
-  const runtimeContract = equinoxLocalReleaseRuntimeContract({ target, version: metadata.version });
+  const runtimeContract = await readEquinoxLocalReleaseRuntimeContract(releaseDir, { target, version: metadata.version, fsImpl });
   const sourceIdentityKeys = Object.hasOwn(metadata, "sourceSha") ? ["sourceSha"] : [];
   const metadataKeys = runtimeContract.platform === "darwin"
     ? ["schemaVersion", "version", "target", ...sourceIdentityKeys, "nodeVersion", "tunnelClientVersion", "nativeAppShellVersion", "serverEntry"]
@@ -213,9 +215,11 @@ export async function validateFirstInstallRelease(releaseDir:string,{
     await assertNormalFile(path.join(releaseDir, relative), `Native shell ${relative}`, { fsImpl });
   }
   if (runtimeContract.nativeAppKind === "macos-app") {
-    await assertNormalFile(path.join(releaseDir, "runtime", "app", "applet"), "Native app executable", { executable: true, fsImpl });
-    await assertNormalFile(path.join(releaseDir, "runtime", "app", "EquinoxLocal.png"), "Native app icon", { fsImpl });
-    await assertNormalFile(path.join(releaseDir, "runtime", "app", "native-app.json"), "Native app metadata", { fsImpl });
+    const native = await readEquinoxLocalNativeAppMetadata(releaseDir, fsImpl);
+    if (native.target !== target || native.shellVersion !== metadata.nativeAppShellVersion ||
+        ("kind" in native && native.kind === "electron" && native.sourceSha !== metadata.sourceSha)) {
+      throw new Error("Native app payload does not match the authenticated release identity.");
+    }
   }
   for (const relative of runtimeContract.requiredReleaseFiles) {
     await assertNormalFile(path.join(releaseDir, relative), `Release ${relative}`, { fsImpl });
@@ -349,10 +353,24 @@ async function firstInstallActivationDiagnostics({homeDir,uid,execFileImpl=execF
   return boundedDiagnostic(parts.join(" | "), 1_800);
 }
 
+async function refuseHistoricalElectronLifecycle(releaseDir:string, fsImpl:FsImpl=fs) {
+  let native;
+  try { native=await readEquinoxLocalNativeAppMetadata(releaseDir,fsImpl); }
+  catch(error) { if((error as ErrorCode).code==="ENOENT")return; throw error; }
+  if("kind" in native && native.kind==="electron")throw new Error("Electron installation requires the signed direct external installer, not historical launchd activation/recovery.");
+}
+
 async function reloadLaunchAgent(installation:Install,{
   uid,
   execFileImpl = execFile,
 }:{uid:number|null;execFileImpl?:ExecImpl}) {
+  if (installation.releaseDir) {
+    const native = await readEquinoxLocalNativeAppMetadata(installation.releaseDir);
+    if ("kind" in native && native.kind === "electron") {
+      throw new Error("Historical launchd activation cannot start an Electron release; use the signed external installer.");
+    }
+  }
+  if (!installation.launchAgentPath) throw new Error("A legacy launchd plist is required.");
   if (!Number.isInteger(uid) || uid! < 1) throw new Error("A non-root user id is required to load Equinox Local.");
   const domain = "gui/" + uid;
   const service = domain + "/" + EQUINOX_LOCAL_LAUNCH_AGENT_LABEL;
@@ -689,6 +707,14 @@ export async function installManagedEquinoxRelease({
     throw new Error("Existing Stable-to-Main migration requires an explicit boolean opt-in.");
   }
   const paths = managedSupervisorPaths(homeDir, { platform, arch, env });
+  if(platform==="darwin") {
+    // Retained legacy APIs must never reintroduce launchd ownership of schema 2.
+    for(const release of [stagedReleaseDir, paths.currentLink!,
+      pathApi.join(paths.installRoot,".stable-repair-backup","release"),
+      pathApi.join(paths.installRoot,".stable-repair-backup","failed-release")]) {
+      await refuseHistoricalElectronLifecycle(release,fsImpl);
+    }
+  }
   const stagingRoot = pathApi.join(paths.installRoot, "staging");
   await assertOwnedNormalDirectory(paths.installRoot, { uid, platform, fsImpl, create: true });
   await assertOwnedNormalDirectory(paths.releasesRoot, { uid, platform, fsImpl, create: true });
@@ -1610,6 +1636,8 @@ export async function prepareSignedMainInstallerMacActivation({
     throw new Error("Signed Main Mac coordinator requires an exact non-root user and transaction identity.");
   }
   const initial=await inspectImpl({signedPointer,homeDir,platform,arch,env,fsImpl});
+  await refuseHistoricalElectronLifecycle(initial.releaseDir,fsImpl);
+  if(initial.previousReleaseDir)await refuseHistoricalElectronLifecycle(initial.previousReleaseDir,fsImpl);
   if(initial.action==="verify_or_repair") {
     // A full source SHA is the installation identity, not the displayed
     // semantic version. A healthy identical SHA is a true no-op: no new
@@ -1871,6 +1899,7 @@ export async function recoverAbandonedSignedMainMacAdmission({
      target!=="darwin-"+arch){
     throw new Error("Main update active owner differs from this signed native Mac transaction.");
   }
+  await refuseHistoricalElectronLifecycle(path.posix.join(root,"native-store",target,sha,"release"),fsImpl);
   const owner={transactionRoot:root,transactionId,sourceSha:sha,target,
     runtimeContractSha256:contract};
   const recovery=await import("./equinox-local-main-native-recovery.js");
@@ -2014,13 +2043,24 @@ export async function recoverAbandonedSignedMainMacAdmission({
 export async function installFreshSignedMainRelease({
   signedPointer,sourceArchivePath,
   homeDir=os.homedir(),platform=process.platform,arch=process.arch,
-  env=process.env,uid=process.getuid?.()??null,
-}:{signedPointer:unknown;sourceArchivePath:string;homeDir?:string;
+  env=process.env,uid=process.getuid?.()??null,macInstallerContext,desktopLifecycle,
+}:{signedPointer:unknown;sourceArchivePath:string;homeDir?:string;macInstallerContext?:string;desktopLifecycle?:string;
   platform?:string;arch?:string;env?:NodeJS.ProcessEnv;uid?:number|null}){
   const target=equinoxLocalUpdateTarget({platform,arch});
   const signed=validateTrustedMainInstallPointer(signedPointer);
   const targetRow=signed.targets.find(row=>row.target===target);
   if(!targetRow)throw new Error("Production signed Main lacks the current native target.");
+  if(platform==="win32" && desktopLifecycle!=="electron-v1") {
+    throw new Error("Use the maintained external Windows installer for the Electron lifecycle.");
+  }
+  // Defense in depth: absence of a pointer alone does not prove that the old
+  // owner stopped. This gate precedes staging, pointer/config/bootstrap writes.
+  if(platform==="darwin") {
+    if(homeDir!==os.homedir() || !macInstallerContext || !path.isAbsolute(macInstallerContext)) {
+      throw new Error("Use the maintained external macOS installer; a stopped-owner context is required.");
+    }
+    await assertMacInstallerStopped(macInstallerContext,signed.sourceSha,target);
+  }
   const paths=managedSupervisorPaths(homeDir,{platform,arch,env});
   const main=equinoxLocalManagedSourcePaths({platform,arch,homeDir,env});
   const pointerPath=(platform==="win32"?path.win32:path.posix)
@@ -2056,7 +2096,11 @@ export async function installFreshSignedMainRelease({
   const bootstrap=await bootstrapManagedEquinoxUser({homeDir,platform,arch,env});
   await initializeManagedOnboardingState({installation,homeDir});
   if(platform==="darwin"){
-    await reloadLaunchAgent(installation,{uid,execFileImpl:execFile});
+    const native=await readEquinoxLocalNativeAppMetadata(staged.releaseDir);
+    if("kind" in native && native.kind==="electron") {
+      if(!("launchAgentPath" in bootstrap) || bootstrap.launchAgentPath!==null)throw new Error("Electron bootstrap unexpectedly created a launchd owner.");
+      await launchMacInstallerElectron(macInstallerContext);
+    } else await reloadLaunchAgent(installation,{uid,execFileImpl:execFile});
   }else{
     const shell=await synchronizeFreshWindowsShell({
       releaseDir:staged.releaseDir,programRoot:paths.programRoot,
@@ -2094,6 +2138,12 @@ function parseCli(argv:string[]) {
 }
 
 function parseSignedMainInspectionCli(argv:string[]) {
+  let desktopLifecycle:string|null=null;
+  if(argv.at(-2)==="--desktop-lifecycle") {
+    if(argv.at(-1)!=="electron-v1")throw new Error("Unsupported desktop installer lifecycle protocol.");
+    desktopLifecycle="electron-v1";
+    argv=argv.slice(0,-2);
+  }
   if ((argv.length !== 9 && argv.length !== 11) || argv[0] !== "--inspect-signed-main" ||
       argv[1] !== "--staged-release" || argv[3] !== "--source-sha" ||
       argv[5] !== "--version" || argv[7] !== "--target" ||
@@ -2102,7 +2152,7 @@ function parseSignedMainInspectionCli(argv:string[]) {
     throw new Error("Signed Main admission requires staged release, full source SHA, version and target.");
   }
   return {releaseDir:argv[2]!,sourceSha:argv[4]!,version:argv[6]!,target:argv[8]!,
-    signedPointerFile:argv.length===11 ? argv[10]! : null};
+    signedPointerFile:argv.length===11 ? argv[10]! : null,desktopLifecycle};
 }
 
 function parseSignedMainStageCli(argv:string[]){
@@ -2125,10 +2175,31 @@ function parseSignedMainActivateCli(argv:string[]) {
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
 if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(import.meta.url))) {
-  if (process.argv[2] === "--install-main-fresh") {
+  if (process.argv[2] === "--mac-installer") {
     Promise.resolve().then(async()=>{
+      const [action,contextFile,...extra]=process.argv.slice(3);
+      if(process.platform!=="darwin" || !action || !contextFile || !path.isAbsolute(contextFile) || extra.length ||
+         !["preflight","stop","stop-replacement","restart"].includes(action))throw new Error("Invalid finite macOS installer operation.");
+      if(action==="preflight")await preflightMacInstaller(contextFile,release=>validateFirstInstallRelease(release,{
+        target:equinoxLocalUpdateTarget({platform:process.platform,arch:process.arch}),
+      }));
+      else await macInstallerLifecycle(action,contextFile);
+    }).catch(()=>{process.stderr.write("Managed macOS installer lifecycle verification failed; no unsafe fallback was attempted.\n");process.exitCode=1;});
+  } else if (process.argv[2] === "--install-main-fresh") {
+    Promise.resolve().then(async()=>{
+      const args=process.argv.slice(3);
+      let macInstallerContext:string|undefined;
+      let desktopLifecycle:string|undefined;
+      if(args.at(-2)==="--desktop-lifecycle") {
+        if(args.at(-1)!=="electron-v1")throw new Error("Unsupported desktop installer lifecycle protocol.");
+        desktopLifecycle="electron-v1";args.splice(-2,2);
+      }
+      if(args[0]==="--mac-installer-context") {
+        if(process.platform!=="darwin" || !args[1] || !path.isAbsolute(args[1]))throw new Error("Invalid macOS installer context.");
+        macInstallerContext=args[1];args.splice(0,2);
+      }
       const cli=parseSignedMainStageCli([
-        "--stage-signed-main",...process.argv.slice(3),
+        "--stage-signed-main",...args,
       ]);
       const {data}=await readBoundedNormalFile(cli.signedPointerFile,{
         minBytes:200,maxBytes:16*1024,encoding:"utf8",
@@ -2136,6 +2207,8 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
       });
       const result=await installFreshSignedMainRelease({
         signedPointer:JSON.parse(data),sourceArchivePath:cli.sourceArchivePath,
+        ...(macInstallerContext ? {macInstallerContext} : {}),
+        ...(desktopLifecycle ? {desktopLifecycle} : {}),
       });
       process.stdout.write(JSON.stringify(result)+"\n");
     }).catch((error)=>{
@@ -2184,6 +2257,20 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
         expectedMainSourceSha: input.sourceSha,
         expectedMainVersion: input.version,
       });
+      // Read-only compatibility admission MUST precede the old immutable
+      // installer's stop/move sequence. Never hand off or mutate from inspection.
+      let electron=false;
+      if(candidate.target.startsWith("darwin-")) {
+        const native=await readEquinoxLocalNativeAppMetadata(candidate.releaseDir);
+        electron="kind" in native && native.kind==="electron";
+      } else if(candidate.target.startsWith("win32-")) {
+        const contract=await readEquinoxLocalReleaseRuntimeContract(candidate.releaseDir,{target:candidate.target,version:candidate.version});
+        electron=contract.nativeShellFiles.includes(path.join("runtime","shell","resources","app.asar"));
+      }
+      if(electron && input.desktopLifecycle!=="electron-v1") {
+        throw Object.assign(new Error("Use the maintained external installer once to migrate to Electron; this old installer cannot perform the lifecycle handoff."),
+          {code:"EQUINOX_INSTALLER_LIFECYCLE_REQUIRED"});
+      }
       process.stdout.write(JSON.stringify({
         status: "admitted", sourceSha: candidate.metadata.sourceSha,
         version: candidate.version, target: candidate.target,
@@ -2194,7 +2281,9 @@ if (invokedPath && path.basename(invokedPath) === path.basename(fileURLToPath(im
         } : {}),
       }) + "\n");
     }).catch((error) => {
-      process.stderr.write("Signed Main native candidate admission failed.\n");
+      process.stderr.write((error as ErrorCode)?.code==="EQUINOX_INSTALLER_LIFECYCLE_REQUIRED"
+        ? "Electron migration requires the maintained external installer. No installed owner was stopped by candidate inspection.\n"
+        : "Signed Main native candidate admission failed.\n");
       process.exitCode = 1;
     });
   } else if (process.argv.length === 3 && process.argv[2] === "--help") {

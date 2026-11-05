@@ -14,6 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
+    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;getLanguage:()=>"en"|"tr"|null};
     chrome?: { webview?: UiRemoteData };
     webkit?: { messageHandlers?: { equinoxNativeLanguage?: { postMessage:(language:string)=>void } } };
     __equinoxNativeLanguage?: string;
@@ -46,6 +47,7 @@ function isAbsoluteLocalFolderPath(value: UiRemoteData) {
 }
 
 async function pickLocalFolder() {
+  if (window.equinoxShell) return window.equinoxShell.pickFolder();
   const bridge = window.chrome?.webview;
   if (
     typeof bridge?.postMessage !== "function"
@@ -136,12 +138,17 @@ function initialLanguage() {
   } catch {
     // A blocked localStorage must not prevent Control Center from loading.
   }
+  try {
+    const native = window.equinoxShell?.getLanguage();
+    if (native === "en" || native === "tr") return native;
+  } catch { /* Optional readonly native preference; external-browser behavior is unchanged. */ }
   if (SUPPORTED_LANGUAGES.includes(window.__equinoxNativeLanguage as string)) return window.__equinoxNativeLanguage;
   return String(navigator.language || "").toLowerCase().startsWith("tr") ? "tr" : "en";
 }
 
 function notifyNativeLanguage() {
   try {
+    window.equinoxShell?.setLanguage(state.language);
     window.webkit?.messageHandlers?.equinoxNativeLanguage?.postMessage(state.language);
   } catch {
     // External browsers do not expose the native bridge; language still works normally.

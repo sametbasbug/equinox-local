@@ -12,3 +12,4 @@ coverage/
 native/windows/**/bin/
 native/windows/**/obj/
 artifacts/windows-shell/
+artifacts/desktop/

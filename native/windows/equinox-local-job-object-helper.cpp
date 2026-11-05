@@ -14,6 +14,8 @@
 #include <sstream>
 #include <string>
 
+#include "equinox-local-shell-control.h"
+
 namespace {
 constexpr DWORD kKillOnJobClose = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 constexpr uint64_t kWindowsFileTimeToDotNetTicks = 504911232000000000ULL;
@@ -415,6 +417,7 @@ int RunOwnedProcessGate(int argc, wchar_t* argv[]) {
 }  // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
+  if (argc == 2 && std::wstring(argv[1]) == L"--shell-control") ExitProcess(equinox_shell_control::Run());
   if (argc == 2 && std::wstring(argv[1]) == L"--inspect-process") return InspectWorkerProcess();
   if (argc == 2 && std::wstring(argv[1]) == L"--inspect-owned-wpf") return InspectOwnedWpfProcess();
   if (argc >= 2 && std::wstring(argv[1]) == L"--owned-process-gate") return RunOwnedProcessGate(argc, argv);
