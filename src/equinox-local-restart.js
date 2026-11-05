@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
 import { projectDarwinDetachedHelperEnvironment } from "./equinox-local-darwin-helper-environment.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
+import { requestDesktopRuntimeRestart } from "./equinox-local-desktop-control.js";
 const DEFAULT_HELPER_PATH = fileURLToPath(new URL("./equinox-local-restart-helper.js", import.meta.url));
 export function restartHelperEnvironment(installation, sourceEnv = process.env) {
     return projectDarwinDetachedHelperEnvironment({ installation, sourceEnv });
@@ -23,6 +24,12 @@ export async function scheduleEquinoxLocalRestart({ installation, spawnImpl = sp
     }
     if (platform !== "darwin")
         throw new Error("Runtime restart is unsupported on this platform.");
+    if (sourceEnv.EQUINOX_LOCAL_DESKTOP_OWNER === "1") {
+        const response = await requestDesktopRuntimeRestart({ platform });
+        if (response.requested !== true)
+            throw new Error("Desktop owner did not accept the runtime restart request.");
+        return Object.freeze({ scheduled: true });
+    }
     await launchDetachedHelper({
         spawnImpl,
         command: nodePath,
@@ -37,6 +44,15 @@ export async function scheduleEquinoxLocalRestart({ installation, spawnImpl = sp
     return Object.freeze({ scheduled: true });
 }
 export async function scheduleSourceCheckoutRestart({ fsImpl = fs, pathImpl = path, processImpl = process, spawnImpl = spawnChild, moduleUrl = import.meta.url, } = {}) {
+    if (processImpl.env.EQUINOX_LOCAL_DESKTOP_OWNER === "1") {
+        const home = processImpl.env.HOME;
+        if (!home || !path.isAbsolute(home))
+            throw new Error("Source desktop restart requires the canonical user home.");
+        const response = await requestDesktopRuntimeRestart({ platform: process.platform, homeDir: home });
+        if (response.requested !== true)
+            throw new Error("Source desktop owner did not accept restart.");
+        return Object.freeze({ scheduled: true, logPath: pathImpl.join(home, "Library", "Logs", "Equinox Local Source.log") });
+    }
     const serverPath = fileURLToPath(moduleUrl);
     const moduleDir = pathImpl.dirname(serverPath);
     const sourceRoot = pathImpl.basename(moduleDir) === "src"
@@ -71,7 +87,7 @@ export async function scheduleSourceCheckoutRestart({ fsImpl = fs, pathImpl = pa
 export function registerRestartRuntimeTool({ registerTextTool, installation, scheduleManagedRestart = scheduleEquinoxLocalRestart, scheduleSourceRestart = scheduleSourceCheckoutRestart, sourceModuleUrl = import.meta.url, fsImpl = fs, pathImpl = path, processImpl = process, markRestartPending = () => { }, beforeRestart = async () => { }, restartFailed = async () => { }, textResult, errorResult, }) {
     registerTextTool("restart_runtime", {
         description: "Equinox Local runtime'ını kurulum türüne uygun güvenli restart yoluyla yeniden başlatmayı zamanlar. " +
-            "Managed kurulumlar bundled LaunchAgent helper'ını, source checkout geliştirme ortamları ise private developer runtime config'ini kullanır. " +
+            "Kurulumun aktif uygulama sahibine uygun restart yolunu ve mevcut source/managed ayrımını korur. " +
             "Bu araç başarılı döndükten sonra AYNI ASİSTAN TURUNDA başka Equinox Local aracı çağırma; kullanıcıya hemen final durum yanıtı ver.",
         inputSchema: {},
         annotations: {
@@ -94,7 +110,7 @@ export function registerRestartRuntimeTool({ registerTextTool, installation, sch
                 markRestartPending();
                 return textResult([
                     "Equinox Local managed yeniden başlatması zamanlandı.",
-                    "Bundled LaunchAgent helper kısa bir gecikmeden sonra aktif sürümü yeniden başlatacak; açık foreground shell varsa yeni bundle ile güvenli biçimde yenilenecek.",
+                    "Aktif uygulama sahibi kısa bir gecikmeden sonra çalışma zamanını güvenli biçimde yeniden başlatacak.",
                     "Bu çağrıdan sonra aynı asistan turunda başka Equinox Local aracı çağrılmamalı.",
                     "MCP bağlantısı kısa süreliğine kesilip yeniden kurulabilir.",
                 ].join("\n"));
@@ -108,7 +124,9 @@ export function registerRestartRuntimeTool({ registerTextTool, installation, sch
             markRestartPending();
             return textResult([
                 "Equinox Local source-checkout yeniden başlatması zamanlandı.",
-                "Private developer runtime config üzerinden yaklaşık 8 saniye içinde başlayacak; açık foreground shell varsa yeni native bundle ile otomatik yenilenecek.",
+                processImpl.env.EQUINOX_LOCAL_DESKTOP_OWNER === "1"
+                    ? "Uygulama sahibi aynı source checkout çalışma zamanını kısa bir gecikmeyle yeniden başlatacak."
+                    : "Private developer runtime config üzerinden yaklaşık 8 saniye içinde başlayacak; açık foreground shell varsa yeni native bundle ile otomatik yenilenecek.",
                 "Bu çağrıdan sonra aynı asistan turunda başka Equinox Local aracı çağrılmamalı.",
                 "MCP bağlantısı kısa süreliğine kesilip yeniden kurulabilir.",
                 `Kayıt: ${sourceRestart.logPath}`,

@@ -15,7 +15,7 @@ async function emittedFiles(directory: string, prefix = ""): Promise<string[]> {
     if (entry.isSymbolicLink()) throw new Error("TypeScript generated a symbolic link.");
     const relative = path.join(prefix, entry.name);
     if (entry.isDirectory()) files.push(...await emittedFiles(path.join(directory, entry.name), relative));
-    else if (entry.isFile() && (relative.endsWith(".js") || relative.endsWith(".mjs"))) files.push(relative);
+    else if (entry.isFile() && /\.(?:js|mjs|cjs)$/u.test(relative)) files.push(relative);
     else throw new Error(`Unexpected TypeScript runtime output: ${relative}`);
   }
   return files.sort();

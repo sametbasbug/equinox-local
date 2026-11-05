@@ -86,6 +86,27 @@ export async function createWindowsJobObjectLease({
   let closed = false;
   let closing = false;
   const pending = new Map<string, PendingRequest>();
+  let helperClosed = false;
+  const helperExit = new Promise<void>((resolve) => {
+    child.once("close", () => { helperClosed = true; resolve(); });
+  });
+
+  const waitForHelperExit = (timeout: number): Promise<boolean> => {
+    if (helperClosed) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeout);
+      void helperExit.then(() => { clearTimeout(timer); resolve(true); });
+    });
+  };
+  const retireHelper = async (): Promise<void> => {
+    closing = true;
+    try { child.stdin?.end(); } catch { /* Owned-child exit remains the required proof. */ }
+    if (!await waitForHelperExit(1_000)) {
+      try { if (!child.killed) child.kill(); } catch { /* Observe a concurrent exit below. */ }
+      if (!await waitForHelperExit(1_000)) throw new Error("Windows Job Object helper did not terminate; ownership cleanup is unconfirmed.");
+    }
+    closed = true;
+  };
 
   child.stderr?.on("data", (chunk) => { stderr = boundedTail(stderr, chunk); });
 
@@ -151,7 +172,12 @@ export async function createWindowsJobObjectLease({
     }
   });
 
-  await waitReady;
+  try { await waitReady; }
+  catch (error) {
+    try { await retireHelper(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "Windows Job Object readiness and helper cleanup failed."); }
+    throw error;
+  }
 
   const request = (op: string, payload: Record<string, number> = {}): Promise<JobHelperResponse> => {
     if (closed || !child.stdin?.writable) return Promise.reject(new Error("Windows Job Object helper is not available."));
@@ -183,11 +209,13 @@ export async function createWindowsJobObjectLease({
       return request("terminate", { exitCode });
     },
     async close() {
-      if (closed) return;
+      if (helperClosed) return;
       closing = true;
-      await request("close");
-      closed = true;
-      child.stdin?.end();
+      try {
+        if (!closed && child.stdin?.writable) await request("close");
+      } catch {
+        // A failed acknowledgement is safe only after the actual helper exits and closes its kernel job.
+      } finally { await retireHelper(); }
     },
   });
 }

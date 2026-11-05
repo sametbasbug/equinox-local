@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
+import { constants } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { list as listTar } from "tar";
 
 import {
   EQUINOX_LOCAL_APP_BUNDLE_ID,
@@ -10,7 +12,8 @@ import {
   equinoxLocalAppPath,
   validateEquinoxLocalAppHost,
 } from "./equinox-local-app-host.js";
-import { equinoxLocalNativeAppArtifactPaths } from "./equinox-local-native-app.js";
+import { equinoxLocalNativeAppArtifactPaths, validateEquinoxLocalDesktopAppMetadata, type DesktopAppMetadata } from "./equinox-local-native-app.js";
+import { extractDesktopBundle, sealDesktopBundle } from "./equinox-local-desktop-bundle.js";
 import { fingerprintEquinoxLocalNativeState } from "./equinox-local-native-state-fingerprint.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
@@ -46,7 +49,11 @@ const NATIVE_PERMISSION_IDENTITY_VERSION = "v1";
 // invalidates TCC grants whenever the native shell binary changes. Keep this requirement
 // stable across shell versions; release authenticity remains enforced by the existing
 // signed release/update pipeline rather than by this local permission identity.
-function nativePermissionDesignatedRequirementSource() {
+export function nativePermissionIdentityInfoPlist(): Readonly<Record<string, string>> {
+  return Object.freeze({ [NATIVE_PERMISSION_IDENTITY_PLIST_KEY]: NATIVE_PERMISSION_IDENTITY_VERSION });
+}
+
+export function nativePermissionDesignatedRequirementSource() {
   return `designated => identifier "${EQUINOX_LOCAL_APP_BUNDLE_ID}" and info[${NATIVE_PERMISSION_IDENTITY_PLIST_KEY}] = "${NATIVE_PERMISSION_IDENTITY_VERSION}"`;
 }
 
@@ -187,7 +194,7 @@ function nativeInfoPlist(shellVersion:number,executableSha256:string,payloadSha2
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>CFBundleDevelopmentRegion</key><string>en</string>\n  <key>CFBundleDisplayName</key><string>${EQUINOX_LOCAL_APP_NAME}</string>\n  <key>CFBundleExecutable</key><string>applet</string>\n  <key>CFBundleIconFile</key><string>EquinoxLocal</string>\n  <key>CFBundleIdentifier</key><string>${EQUINOX_LOCAL_APP_BUNDLE_ID}</string>\n  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n  <key>CFBundleName</key><string>${EQUINOX_LOCAL_APP_NAME}</string>\n  <key>CFBundlePackageType</key><string>APPL</string>\n  <key>CFBundleShortVersionString</key><string>${shellVersion}</string>\n  <key>CFBundleVersion</key><string>${shellVersion}</string>\n  <key>LSMinimumSystemVersion</key><string>13.0</string>\n  <key>${NATIVE_SHELL_PLIST_KEY}</key><integer>${shellVersion}</integer>\n  <key>${NATIVE_EXECUTABLE_SHA_PLIST_KEY}</key><string>${executableSha256}</string>\n  <key>${NATIVE_PAYLOAD_SHA_PLIST_KEY}</key><string>${payloadSha256}</string>\n  <key>${NATIVE_PERMISSION_IDENTITY_PLIST_KEY}</key><string>${NATIVE_PERMISSION_IDENTITY_VERSION}</string>\n  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>\n  <key>NSHighResolutionCapable</key><true/>\n</dict>\n</plist>\n`;
 }
 
-async function createIcns(sourcePng:string,destination:string,workingRoot:string,execFileImpl:HostExec = execFile,fsImpl:HostFs = fs) {
+export async function createIcns(sourcePng:string,destination:string,workingRoot:string,execFileImpl:HostExec = execFile,fsImpl:HostFs = fs) {
   const iconset = path.join(workingRoot, "EquinoxLocal.iconset");
   await fsImpl.mkdir(iconset, { recursive: true, mode: 0o700 });
   const sizes: readonly (readonly [number,string])[] = [
@@ -250,6 +257,142 @@ async function atomicReplaceApp(appPath:string,replacement:string,fsImpl:HostFs 
   }
 }
 
+/** Bounded metadata and complete sealed-archive authentication for admission. */
+export async function readEquinoxLocalNativeAppMetadata(releaseDir:string, fsImpl:HostFs = fs) {
+  const paths = equinoxLocalNativeAppArtifactPaths(releaseDir);
+  const file = await readBoundedNormalFile(paths.metadata, { fsImpl, minBytes: 1, maxBytes: 16 * 1024, encoding: "utf8", label: "Native app metadata" });
+  const raw:unknown = JSON.parse(file.data);
+  if (isRecord(raw) && raw.schemaVersion === 2) {
+    const metadata = validateEquinoxLocalDesktopAppMetadata(raw);
+    const archive = path.join(paths.root, metadata.archive);
+    const handle = await fsImpl.open(archive, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      const stat = await handle.stat();
+      const real = await fsImpl.realpath(archive);
+      const canonical = process.platform === "win32" ? real.toLowerCase() === archive.toLowerCase() : real === archive;
+      if (!stat.isFile() || stat.nlink !== 1 || stat.size !== metadata.bytes || !canonical ||
+          (process.platform === "darwin" && (stat.uid !== process.getuid!() || (stat.mode & 0o022) !== 0))) {
+        throw new Error("Sealed desktop archive is not a normal owned payload.");
+      }
+      const hash = createHash("sha256");
+      const buffer = Buffer.alloc(64 * 1024);
+      let bytes = 0;
+      for (;;) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (!bytesRead) break;
+        bytes += bytesRead;
+        if (bytes > metadata.bytes) throw new Error("Sealed desktop archive exceeded its authenticated size.");
+        hash.update(buffer.subarray(0, bytesRead));
+      }
+      const after = await handle.stat();
+      if (bytes !== metadata.bytes || after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs || hash.digest("hex") !== metadata.sha256) {
+        throw new Error("Sealed desktop archive authentication failed.");
+      }
+    } finally { await handle.close(); }
+    return metadata;
+  }
+  // Preserve all historical schema-1 validation and payload authentication.
+  return (await readNativeMetadata(releaseDir, fsImpl)).metadata;
+}
+
+function isDesktopMetadata(metadata: NativeMetadata | DesktopAppMetadata): metadata is DesktopAppMetadata {
+  return "schemaVersion" in metadata && metadata.schemaVersion === 2;
+}
+
+function desktopPayloadIdentity(metadata:DesktopAppMetadata):string {
+  return createHash("sha256").update(`equinox-local-desktop-payload-v2\0${JSON.stringify(metadataFields(metadata))}`).digest("hex");
+}
+function metadataFields(m:DesktopAppMetadata) {
+  return [m.schemaVersion,m.kind,m.sourceSha,m.target,m.shellVersion,m.archive,m.sha256,m.bytes];
+}
+
+async function desktopPlist(appPath:string,key:string,execFileImpl:HostExec):Promise<string> {
+  const {stdout} = await execFileImpl("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, path.join(appPath,"Contents","Info.plist")], {encoding:"utf8",timeout:5000,maxBuffer:16384});
+  return String(stdout).trim();
+}
+
+async function validateDesktopHost(appPath:string,metadata:DesktopAppMetadata,fsImpl:HostFs,execFileImpl:HostExec) {
+  for (const directory of [appPath,path.join(appPath,"Contents"),path.join(appPath,"Contents","MacOS")]) {
+    const stat = await fsImpl.lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid!()) throw new Error("Unsafe Electron bundle directory.");
+  }
+  await assertNormalFile(path.join(appPath,"Contents","Info.plist"),"Electron Info.plist",fsImpl);
+  if (await desktopPlist(appPath,"CFBundleIdentifier",execFileImpl) !== EQUINOX_LOCAL_APP_BUNDLE_ID ||
+      await desktopPlist(appPath,"EquinoxLocalSourceSha",execFileImpl) !== metadata.sourceSha ||
+      await readBundleNativeShellVersion(appPath,execFileImpl) !== metadata.shellVersion ||
+      !(await hasStableNativePermissionIdentity(appPath,execFileImpl))) throw new Error("Electron bundle identity mismatch.");
+  const executable = await desktopPlist(appPath,"CFBundleExecutable",execFileImpl);
+  if (executable !== "applet") throw new Error("Electron executable must preserve the installed applet contract.");
+  const executablePath = path.join(appPath,"Contents","MacOS",executable);
+  await assertNormalFile(executablePath,"Electron executable",fsImpl);
+  const {stdout} = await execFileImpl("/usr/bin/lipo",["-archs",executablePath],{encoding:"utf8",timeout:5000,maxBuffer:16384});
+  if (String(stdout).trim() !== (metadata.target === "darwin-arm64" ? "arm64" : "x86_64")) throw new Error("Electron executable architecture mismatch.");
+  await execFileImpl("/usr/bin/codesign",["--verify","--deep","--strict",appPath],{timeout:60000,maxBuffer:1024*1024});
+  return executablePath;
+}
+
+async function stampDesktopHost(bundle:string,payload:string,execFileImpl:HostExec) {
+  const plist = path.join(bundle,"Contents","Info.plist");
+  // Preserve the complete Electron plist; re-sign only the outer bundle.
+  try { await execFileImpl("/usr/bin/plutil",["-replace",NATIVE_PAYLOAD_SHA_PLIST_KEY,"-string",payload,plist],{timeout:5000}); }
+  catch { await execFileImpl("/usr/bin/plutil",["-insert",NATIVE_PAYLOAD_SHA_PLIST_KEY,"-string",payload,plist],{timeout:5000}); }
+  await execFileImpl("/usr/bin/codesign",["--force","--sign","-","--identifier",EQUINOX_LOCAL_APP_BUNDLE_ID,"-r",`=${nativePermissionDesignatedRequirementSource()}`,bundle],{timeout:60000,maxBuffer:1024*1024});
+}
+
+// Only consume archives just produced and validated by the bundle-only sealer.
+// Tar timestamps/uid are not payload; paths, types, modes, links and every byte are.
+async function sealedDesktopContentIdentity(archive:string):Promise<string> {
+  const entries: string[] = [];
+  await listTar({file:archive,strict:true,onReadEntry(entry) {
+    const hash = createHash("sha256");
+    entry.on("data",(chunk:Buffer) => hash.update(chunk));
+    entry.on("end",() => entries.push(JSON.stringify([entry.path,entry.type,entry.mode,entry.size,entry.linkpath,hash.digest("hex")])));
+    entry.resume();
+  }});
+  return createHash("sha256").update(entries.sort().join("\n")).digest("hex");
+}
+// Bundle-only sealing validates framework links; never use the generic expanded-tree fingerprint.
+async function sameCompleteDesktopPayload(installed:string,candidate:string,stage:string):Promise<boolean> {
+  const expected = path.join(stage,"expected.tar.gz");
+  const actual = path.join(stage,"installed.tar.gz");
+  await sealDesktopBundle(candidate,expected);
+  await sealDesktopBundle(installed,actual);
+  return await sealedDesktopContentIdentity(actual) === await sealedDesktopContentIdentity(expected);
+}
+
+async function synchronizeDesktopHost(homeDir:string,releaseDir:string,metadata:DesktopAppMetadata,fsImpl:HostFs,execFileImpl:HostExec) {
+  if (metadata.target !== `darwin-${process.arch}`) throw new Error("Electron payload requires its native target host.");
+  const appPath = equinoxLocalAppPath(homeDir);
+  const payload = desktopPayloadIdentity(metadata);
+  // Always authenticate the complete candidate before reuse, even for legacy callers.
+  const applications = path.dirname(appPath);
+  await fsImpl.mkdir(applications,{recursive:true,mode:0o700});
+  const stage = path.join(applications,`.Equinox-Local-electron-${process.pid}-${randomBytes(8).toString("hex")}`);
+  const archive = path.join(path.dirname(equinoxLocalNativeAppArtifactPaths(releaseDir).metadata),metadata.archive);
+  let stageOwned = false;
+  try {
+    const bundle = await extractDesktopBundle(archive,stage,metadata);
+    stageOwned = true;
+    await validateDesktopHost(bundle,metadata,fsImpl,execFileImpl);
+    await stampDesktopHost(bundle,payload,execFileImpl);
+    await validateDesktopHost(bundle,metadata,fsImpl,execFileImpl);
+    try {
+      const executablePath = await validateDesktopHost(appPath,metadata,fsImpl,execFileImpl);
+      if (await readBundleNativePayloadIdentity(appPath,execFileImpl) === payload && await sameCompleteDesktopPayload(appPath,bundle,stage)) return Object.freeze({appPath,executablePath,shellVersion:metadata.shellVersion,changed:false,migratedLegacy:false});
+    } catch {
+      // A foreign bundle must not be replaced; accept only an owned stable legacy host.
+      try { await fsImpl.lstat(appPath); } catch (error) { if (!hasErrorCode(error,"ENOENT")) throw error; }
+    }
+    try {
+      const stat = await fsImpl.lstat(appPath);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid!() || await desktopPlist(appPath,"CFBundleIdentifier",execFileImpl) !== EQUINOX_LOCAL_APP_BUNDLE_ID) throw new Error("Refusing foreign Electron replacement target.");
+    } catch (error) { if (!hasErrorCode(error,"ENOENT")) throw error; }
+    const executable = await desktopPlist(bundle,"CFBundleExecutable",execFileImpl);
+    await atomicReplaceApp(appPath,bundle,fsImpl);
+    return Object.freeze({appPath,executablePath:path.join(appPath,"Contents","MacOS",executable),shellVersion:metadata.shellVersion,changed:true,migratedLegacy:true});
+  } finally { if (stageOwned) await fsImpl.rm(stage,{recursive:true,force:true}); }
+}
+
 export async function synchronizeEquinoxLocalNativeAppHost({
   homeDir,
   releaseDir,
@@ -259,6 +402,11 @@ export async function synchronizeEquinoxLocalNativeAppHost({
 }:HostPaths & {requirePayloadIdentity?:boolean} = {}) {
   if (process.platform !== "darwin") throw new Error("Equinox Local native app synchronization is supported only on macOS.");
   if (typeof homeDir !== "string" || !path.isAbsolute(homeDir)) throw new Error("A trusted user home directory is required for native app synchronization.");
+  const selected = await readEquinoxLocalNativeAppMetadata(releaseDir!, fsImpl);
+  if (isDesktopMetadata(selected)) {
+    try { return await synchronizeDesktopHost(homeDir,releaseDir!,selected,fsImpl,execFileImpl); }
+    catch (cause) { throw new Error("Electron sealed payload synchronization failed; legacy fallback is forbidden.", {cause}); }
+  }
   const { paths, metadata } = await readNativeMetadata(releaseDir!, fsImpl);
   const payloadSha256 = nativePayloadIdentity(metadata);
   const appPath = equinoxLocalAppPath(homeDir!);
@@ -335,8 +483,25 @@ export async function assertEquinoxLocalFreshNativeAppHostOwned({
      !path.isAbsolute(releaseDir)){
     throw new Error("Clean Main native app ownership requires canonical macOS paths.");
   }
-  const {metadata}=await readNativeMetadata(releaseDir,fsImpl);
+  const selected=await readEquinoxLocalNativeAppMetadata(releaseDir,fsImpl);
   const appPath=equinoxLocalAppPath(homeDir);
+  if (isDesktopMetadata(selected)) {
+    await validateDesktopHost(appPath,selected,fsImpl,execFileImpl);
+    if (await readBundleNativePayloadIdentity(appPath,execFileImpl) !== desktopPayloadIdentity(selected)) throw new Error("Clean Main Electron app no longer matches original full payload.");
+    const archive = path.join(path.dirname(equinoxLocalNativeAppArtifactPaths(releaseDir).metadata),selected.archive);
+    const stage = path.join(path.dirname(appPath),`.Equinox-Local-owned-${process.pid}-${randomBytes(8).toString("hex")}`);
+    let stageOwned = false;
+    try {
+      const candidate = await extractDesktopBundle(archive,stage,selected);
+      stageOwned = true;
+      await validateDesktopHost(candidate,selected,fsImpl,execFileImpl);
+      await stampDesktopHost(candidate,desktopPayloadIdentity(selected),execFileImpl);
+      await validateDesktopHost(candidate,selected,fsImpl,execFileImpl);
+      if (!(await sameCompleteDesktopPayload(appPath,candidate,stage))) throw new Error("Clean Main Electron full bundle bytes no longer match original payload.");
+    } finally { if (stageOwned) await fsImpl.rm(stage,{recursive:true,force:true}); }
+    return Object.freeze({appPath,owned:true});
+  }
+  const {metadata}=await readNativeMetadata(releaseDir,fsImpl);
   await validateEquinoxLocalAppHost(appPath,{fsImpl,execFileImpl});
   if(await readBundleNativePayloadIdentity(appPath,execFileImpl)!==nativePayloadIdentity(metadata) ||
      await readBundleNativeShellVersion(appPath,execFileImpl)!==metadata.shellVersion ||

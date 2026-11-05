@@ -138,7 +138,7 @@ prepare_verified_main() {
     [ -f "$inspector" ] && [ ! -L "$inspector" ] ||
     fail "verified Main candidate lacks a normal native release/inspector"
   /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$node" "$inspector" --inspect-signed-main     --staged-release "$candidate" --source-sha "$signed_sha"     --version "$signed_version" --target "$TARGET" \
-    --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" >/dev/null ||
+    --signed-pointer-file "$TEMP_ROOT/main-signed-pointer.json" --desktop-lifecycle electron-v1 >/dev/null ||
     fail "Main native release metadata does not match the signed full SHA"
   VERIFIED_MAIN_SHA="$signed_sha"
   VERIFIED_MAIN_VERSION="$signed_version"
@@ -156,7 +156,6 @@ TEMP_ROOT="$(/usr/bin/mktemp -d /private/tmp/equinox-local-install.XXXXXX)" || f
 REINSTALL_BACKUP_ROOT=""
 REINSTALL_BACKUP_OWNED=false
 REINSTALL_SERVICE_STOPPED=false
-REINSTALL_HAD_OLD_AGENT=false
 REINSTALL_NEW_INSTALL_STARTED=false
 REINSTALL_COMMITTED=false
 # These are only the product-owned executables/launchers that the signed
@@ -172,61 +171,59 @@ owned_executable_path() {
   esac
 }
 REINSTALL_EXECUTABLES=(current releases runtime main-update control-center-app equinox-local-app-runtime launch-agent equinox-browser-native-host native-host-manifest)
+# Only signed, independently admitted candidate code owns these finite operations.
+mac_installer() {
+  /usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER" \
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin" "$MAIN_NODE" "$MAIN_INSTALLER" \
+    --mac-installer "$1" "$REINSTALL_CONTEXT"
+}
 cleanup() {
+  local recovery_ok=true
   if [ "$REINSTALL_COMMITTED" != true ] && [ "$REINSTALL_BACKUP_OWNED" = true ] &&
      [ -n "$REINSTALL_BACKUP_ROOT" ] &&
      [ -d "$REINSTALL_BACKUP_ROOT" ] && [ ! -L "$REINSTALL_BACKUP_ROOT" ]; then
-    # Never stop a still-healthy old service merely because preservation
-    # failed before the installer took ownership of the service.
-    if [ "$REINSTALL_SERVICE_STOPPED" = true ]; then
-      /bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+    # Observe replacement exit and unregister only a newly introduced app-login
+    # item BEFORE restoring any executable. No broad kill or launchd fallback.
+    if [ "$REINSTALL_NEW_INSTALL_STARTED" = true ]; then
+      if ! mac_installer stop-replacement; then
+        recovery_ok=false
+        printf 'Equinox Local installer: replacement cleanup unverified; leaving all preserved files untouched.\n' >&2
+      fi
     fi
-    local recovery_ok=true
-    for entry in "${REINSTALL_EXECUTABLES[@]}"; do
-      saved="$REINSTALL_BACKUP_ROOT/$entry"
-      if [ -e "$saved" ] || [ -L "$saved" ]; then
-        current="$(owned_executable_path "$entry")"
-        if ! { /bin/rm -rf "$current" && /bin/mv "$saved" "$current"; }; then
-          recovery_ok=false
-          printf 'Equinox Local installer: recovery failed; preserved %s at %s\n' "$entry" "$saved" >&2
+    if [ "$recovery_ok" = true ]; then
+      for entry in "${REINSTALL_EXECUTABLES[@]}"; do
+        saved="$REINSTALL_BACKUP_ROOT/$entry"
+        if [ -e "$saved" ] || [ -L "$saved" ]; then
+          current="$(owned_executable_path "$entry")"
+          if ! { /bin/rm -rf "$current" && /bin/mv "$saved" "$current"; }; then
+            recovery_ok=false
+            printf 'Equinox Local installer: recovery failed; preserved %s at %s\n' "$entry" "$saved" >&2
+          fi
+        elif [ "$REINSTALL_NEW_INSTALL_STARTED" = true ]; then
+          if ! /bin/rm -rf "$(owned_executable_path "$entry")"; then
+            recovery_ok=false
+            printf 'Equinox Local installer: failed to clean new executable: %s\n' "$entry" >&2
+          fi
         fi
-      elif [ "$REINSTALL_NEW_INSTALL_STARTED" = true ]; then
-        # No prior entry existed. Remove only the product-owned entry the
-        # failed fresh installer may have created; never touch user state.
-        if ! /bin/rm -rf "$(owned_executable_path "$entry")"; then
+      done
+      # Restoration must be complete before restarting the prior owner. The
+      # context was persisted before shutdown, including the before-move gap.
+      if [ "$recovery_ok" = true ] && [ "$REINSTALL_SERVICE_STOPPED" = true ]; then
+        if ! mac_installer restart; then
           recovery_ok=false
-          printf 'Equinox Local installer: failed to clean new executable: %s\n' "$entry" >&2
-        fi
-      fi
-    done
-    if [ "$recovery_ok" = true ] && [ -z "$(/bin/ls -A "$REINSTALL_BACKUP_ROOT" 2>/dev/null)" ]; then
-      /bin/rmdir "$REINSTALL_BACKUP_ROOT" || true
-      if [ "$REINSTALL_SERVICE_STOPPED" = true ] && [ "$REINSTALL_HAD_OLD_AGENT" = true ]; then
-        local login_disabled=false login_state=""
-        login_state="$(/bin/launchctl print-disabled "gui/$CURRENT_UID" 2>/dev/null)" || {
-          printf 'Equinox Local installer: cannot inspect previous login startup setting for recovery.\n' >&2
-          recovery_ok=false
-        }
-        if [ "$recovery_ok" = true ]; then
-          if printf '%s\n' "$login_state" | /usr/bin/grep -Fq '"dev.equinox.local" => disabled'; then
-            login_disabled=true
-            /bin/launchctl enable "gui/$CURRENT_UID/dev.equinox.local" ||
-              printf 'Equinox Local installer: could not temporarily enable the old service.\n' >&2
-          fi
-          if ! /bin/launchctl bootstrap "gui/$CURRENT_UID" "$HOME_DIR/Library/LaunchAgents/dev.equinox.local.plist" >/dev/null 2>&1; then
-            printf 'Equinox Local installer: old executable files restored, but launchd bootstrap failed; restart the old service manually.\n' >&2
-          elif ! /bin/launchctl kickstart "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1; then
-            printf 'Equinox Local installer: old executable files restored, but launchd kickstart failed; restart the old service manually.\n' >&2
-          fi
-          if [ "$login_disabled" = true ]; then
-            /bin/launchctl disable "gui/$CURRENT_UID/dev.equinox.local" ||
-              printf 'Equinox Local installer: could not restore disabled login startup; disable it in the menu.\n' >&2
-          fi
+          printf 'Equinox Local installer: files restored but prior owner restart unverified.\n' >&2
         fi
       fi
+    fi
+    if [ "$recovery_ok" = true ]; then
+      /bin/rmdir "$REINSTALL_BACKUP_ROOT" || recovery_ok=false
     fi
   fi
-  /bin/rm -rf "$TEMP_ROOT" 2>/dev/null || true
+  if [ "$recovery_ok" = true ]; then
+    /bin/rm -rf "$TEMP_ROOT" 2>/dev/null || true
+  else
+    printf 'Equinox Local installer: recovery incomplete; retained preservation at %s and private diagnostics/context at %s\n' "$REINSTALL_BACKUP_ROOT" "$TEMP_ROOT" >&2
+  fi
 }
 
 handle_signal() {
@@ -238,6 +235,11 @@ trap cleanup EXIT
 trap handle_signal HUP INT TERM
 
 prepare_verified_main
+MAIN_NODE="$TEMP_ROOT/node-v$MAIN_NODE_VERSION-$TARGET/bin/node"
+MAIN_INSTALLER="$TEMP_ROOT/main-extracted/release/equinox-local-first-install.js"
+MAIN_ARCHIVE="$TEMP_ROOT/main-native.tar.gz"
+MAIN_POINTER="$TEMP_ROOT/main-signed-pointer.json"
+REINSTALL_CONTEXT="$TEMP_ROOT/managed-owner-context.json"
 info "replacing product executables with signed Main (settings preserved)"
 INSTALL_ROOT="$HOME_DIR/Library/Application Support/Equinox Local"
 require_private_directory "$INSTALL_ROOT"
@@ -263,14 +265,17 @@ for entry in "${REINSTALL_EXECUTABLES[@]}"; do
       fail "prior executable is not on the installation volume: $entry"
   fi
 done
+# Candidate admission and managed/source ownership are independent gates.
+# Snapshot only owner/login intent into private transient context, never config.
+mac_installer preflight || fail "managed ownership preflight failed; Source/Factory and ambiguous installations are not replaced"
 # Make the recovery directory BEFORE touching the running service. Failure
 # here must leave the previous healthy installation running.
 /bin/mkdir -m 700 "$REINSTALL_BACKUP_ROOT" || fail "cannot preserve previous executable roots"
 REINSTALL_BACKUP_OWNED=true
-if [ -f "$(owned_executable_path launch-agent)" ]; then REINSTALL_HAD_OLD_AGENT=true; fi
-# Stop only the product's launchd service after the above fail-closed checks.
+# Set recovery intent BEFORE the request, including lost acknowledgement and
+# interruption immediately after shutdown but before any root is renamed.
 REINSTALL_SERVICE_STOPPED=true
-/bin/launchctl bootout "gui/$CURRENT_UID/dev.equinox.local" >/dev/null 2>&1 || true
+mac_installer stop || fail "exact prior owner exit was not verified; refusing executable replacement"
 for entry in "${REINSTALL_EXECUTABLES[@]}"; do
   old="$(owned_executable_path "$entry")"
   if [ -L "$old" ] && [ "$entry" != "current" ]; then
@@ -285,16 +290,13 @@ done
 # Every old entry has now been moved; a failed replacement may safely remove
 # new product-owned entries that did not exist before this installation.
 REINSTALL_NEW_INSTALL_STARTED=true
-MAIN_NODE="$TEMP_ROOT/node-v$MAIN_NODE_VERSION-$TARGET/bin/node"
-MAIN_INSTALLER="$TEMP_ROOT/main-extracted/release/equinox-local-first-install.js"
-MAIN_ARCHIVE="$TEMP_ROOT/main-native.tar.gz"
-MAIN_POINTER="$TEMP_ROOT/main-signed-pointer.json"
 # Exit code alone cannot prove installation: a prior pinned verifier once
 # silently returned success without executing its entrypoint. Require the
 # exact signed SHA/version/target completion receipt before retiring A.
 fresh_completion="$(/usr/bin/env -i HOME="$HOME_DIR" USER="$CURRENT_USER" LOGNAME="$CURRENT_USER" \
   TMPDIR="/private/tmp" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
   "$MAIN_NODE" "$MAIN_INSTALLER" --install-main-fresh \
+  --mac-installer-context "$REINSTALL_CONTEXT" \
   --signed-pointer-file "$MAIN_POINTER" --archive "$MAIN_ARCHIVE")" ||
   fail "fresh signed Main installation failed; attempting to restore previous executables"
 printf '%s' "$fresh_completion" | /usr/bin/env -i HOME="$HOME_DIR" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \

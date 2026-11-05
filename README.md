@@ -125,6 +125,17 @@ npm ci
 npm run check
 ```
 
+### Electron shell development
+
+The shell migration in this development tree uses pinned **Electron 46.0.0-alpha.5** to display the existing Control Center. It does not introduce a Workspace, another backend or a native-chat/provider product. See the [migration plan](docs/plans/electron46-shell-migration.md) for current evidence and unfinished native gates; this section is not a release or installed-conversion announcement.
+
+```bash
+npm run build:typed-desktop
+npm run desktop:dev
+```
+
+Development is **attach-only**, with separate Chromium storage: it expects an existing local backend and never takes ownership of or stops the installed Factory. `npm run desktop:package` builds a separate development-identity package for the current host into `artifacts/desktop`; choose a fresh output directory for subsequent builds. Managed packaging uses the original signed release pipeline and requires an exact clean source identity. A development package is not an authenticated managed release and must not replace the installed app to obtain verification evidence.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for supported Node tooling, platform prerequisites and contribution guidelines. Use [issues](https://github.com/sametbasbug/equinox-local/issues/new/choose) for bugs and the [private security channel](SECURITY.md) for vulnerabilities.
 
 ## License

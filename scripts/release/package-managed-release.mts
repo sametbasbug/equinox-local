@@ -18,7 +18,7 @@ import {
   TUNNEL_CLIENT_DISTRIBUTIONS,
 } from "../../src/equinox-local-runtime-versions.js";
 import { EQUINOX_LOCAL_VERSION } from "../../src/equinox-local-version.js";
-import { buildEquinoxLocalNativeAppArtifacts } from "../../src/equinox-local-native-app.js";
+import { buildManagedMacDesktopPayload } from "./package-macos-desktop.mjs";
 import { equinoxLocalUpdateTarget } from "../../src/equinox-local-updater.js";
 
 const execFile = promisify(execFileCallback);
@@ -565,7 +565,7 @@ export async function packageManagedEquinoxRelease({
     await installPinnedNodeBinary(admittedTarget, releaseDir, { fetchImpl });
     await installPinnedTunnelRuntime(admittedTarget, releaseDir, { fetchImpl });
     await installPinnedPeekabooRuntime(releaseDir, { fetchImpl });
-    const nativeApp = await buildEquinoxLocalNativeAppArtifacts({ rootDir, releaseDir, target: admittedTarget });
+    const nativeApp = await buildManagedMacDesktopPayload({ rootDir, releaseDir, target: admittedTarget, sourceSha });
     await fs.writeFile(path.join(releaseDir, "release.json"), `${JSON.stringify({
       schemaVersion: 1,
       version: EQUINOX_LOCAL_VERSION,

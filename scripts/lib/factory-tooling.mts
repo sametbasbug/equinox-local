@@ -63,7 +63,7 @@ export async function checkProject({
   recursiveDirectories = [],
   skipDirectoryNames = [],
   includeRootFiles = false,
-  includeFile = (_absolute, name) => /\.(?:js|mjs)$/u.test(name) || name.endsWith(".sh"),
+  includeFile = (_absolute, name) => /\.(?:js|mjs|cjs)$/u.test(name) || name.endsWith(".sh"),
   includeRootFile = includeFile,
   deduplicate = false,
   jsonFiles = [],
@@ -79,7 +79,7 @@ export async function checkProject({
     includeRootFile,
   });
   const relativeFiles = discovered.map((file) => path.relative(rootDir, file));
-  const javascriptFiles = relativeFiles.filter((file) => /\.(?:js|mjs)$/u.test(file));
+  const javascriptFiles = relativeFiles.filter((file) => /\.(?:js|mjs|cjs)$/u.test(file));
   const shellFiles = relativeFiles.filter((file) => file.endsWith(".sh"));
   const javascript = deduplicate ? [...new Set(javascriptFiles)] : javascriptFiles;
   const shell = deduplicate ? [...new Set(shellFiles)] : shellFiles;

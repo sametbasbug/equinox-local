@@ -24,6 +24,7 @@ export function projectDarwinDetachedHelperEnvironment({
     PATH: DARWIN_HELPER_PATH,
     EQUINOX_LOCAL_INSTALL_ROOT: installation?.installRoot,
     EQUINOX_LOCAL_RELEASE_DIR: installation?.releaseDir,
+    EQUINOX_LOCAL_DESKTOP_OWNER: sourceEnv.EQUINOX_LOCAL_DESKTOP_OWNER === "1" ? "1" : undefined,
     EQUINOX_LOCAL_DEV_RUNTIME_CONFIG: includeDeveloperRuntimeConfig
       ? sourceEnv.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG
       : undefined,

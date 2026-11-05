@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createEquinoxLocalConfigManager, serializeEquinoxLocalConfig, } from "./equinox-local-config.js";
 import { equinoxLocalAppExecutablePath, equinoxLocalAppRuntimeWrapperPath, launchAgentLogMaintenanceShell, } from "./equinox-local-app-host.js";
-import { synchronizeEquinoxLocalNativeAppHost } from "./equinox-local-native-app-host.js";
+import { readEquinoxLocalNativeAppMetadata, synchronizeEquinoxLocalNativeAppHost } from "./equinox-local-native-app-host.js";
 import { registerWindowsNativeMessagingHost, windowsNativeMessagingLauncherPath, } from "./equinox-browser-windows-native-messaging.js";
 import { readEquinoxLocalCurrentVersionPointer } from "./equinox-local-current-release.js";
 import { readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
@@ -216,7 +216,7 @@ export function appRuntimeWrapper({ installRoot }) {
         stdoutName: "Equinox Local.log",
         stderrName: "Equinox Local.error.log",
     });
-    return `#!/bin/bash\nset -euo pipefail\n${logMaintenance}RUNTIME_HOST_PID=$PPID\nSUPERVISOR_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\ncleanup() {\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$SUPERVISOR_PID\" ]; then\n    kill \"$SUPERVISOR_PID\" >/dev/null 2>&1 || true\n    wait \"$SUPERVISOR_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\nwatch_runtime_host() {\n  local log_check_ticks=0\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n    log_check_ticks=$((log_check_ticks + 1))\n    if [ \"$log_check_ticks\" -ge \"$LAUNCH_LOG_CHECK_INTERVAL_SECONDS\" ]; then\n      maintain_launch_logs\n      log_check_ticks=0\n    fi\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n${shellQuote(nodeBinary)} ${shellQuote(supervisor)} &\nSUPERVISOR_PID=$!\nwait \"$SUPERVISOR_PID\"\n`;
+    return `#!/bin/bash\nset -euo pipefail\numask 077\n${logMaintenance}exec >>\"$HOME/Library/Logs/Equinox Local.log\" 2>>\"$HOME/Library/Logs/Equinox Local.error.log\"\nRUNTIME_HOST_PID=$PPID\nSUPERVISOR_PID=\"\"\nPARENT_WATCHDOG_PID=\"\"\ncleanup() {\n  if [ -n \"$PARENT_WATCHDOG_PID\" ]; then\n    kill \"$PARENT_WATCHDOG_PID\" >/dev/null 2>&1 || true\n    wait \"$PARENT_WATCHDOG_PID\" 2>/dev/null || true\n  fi\n  if [ -n \"$SUPERVISOR_PID\" ]; then\n    kill \"$SUPERVISOR_PID\" >/dev/null 2>&1 || true\n    wait \"$SUPERVISOR_PID\" 2>/dev/null || true\n  fi\n}\nshutdown() {\n  exit 0\n}\ntrap cleanup EXIT\ntrap shutdown INT TERM HUP\nwatch_runtime_host() {\n  local log_check_ticks=0\n  while kill -0 \"$RUNTIME_HOST_PID\" >/dev/null 2>&1; do\n    sleep 1\n    log_check_ticks=$((log_check_ticks + 1))\n    if [ \"$log_check_ticks\" -ge \"$LAUNCH_LOG_CHECK_INTERVAL_SECONDS\" ]; then\n      maintain_launch_logs\n      log_check_ticks=0\n    fi\n  done\n  kill -TERM \"$$\" >/dev/null 2>&1 || true\n}\nwatch_runtime_host &\nPARENT_WATCHDOG_PID=$!\n${shellQuote(nodeBinary)} ${shellQuote(supervisor)} &\nSUPERVISOR_PID=$!\nwait \"$SUPERVISOR_PID\"\n`;
 }
 export function launchAgentPlist({ homeDir, installRoot }) {
     const appExecutable = equinoxLocalAppExecutablePath(homeDir);
@@ -373,15 +373,25 @@ export async function bootstrapManagedEquinoxUser({ homeDir = os.homedir(), plat
             controlCenterUrl: "http://127.0.0.1:24891/",
         });
     }
+    // An explicit custom host retains its historical lifecycle policy. The
+    // default signed schema-2 host, unlike the legacy applet, owns its runtime.
+    const native = ensureAppHostImpl ? null : await readEquinoxLocalNativeAppMetadata(release.releaseDir, fsImpl);
+    const desktopOwner = native !== null && "kind" in native && native.kind === "electron";
+    if (desktopOwner && (native.target !== target || native.shellVersion !== release.metadata.nativeAppShellVersion || native.sourceSha !== release.metadata.sourceSha)) {
+        throw new Error("Electron bootstrap payload does not match the selected release.");
+    }
     const appHost = ensureAppHostImpl
         ? await ensureAppHostImpl({ homeDir })
         : await synchronizeEquinoxLocalNativeAppHost({ homeDir, releaseDir: release.releaseDir });
     const appRuntimeWrapperPath = equinoxLocalAppRuntimeWrapperPath(homeDir);
     await atomicWrite(appRuntimeWrapperPath, appRuntimeWrapper({ installRoot: paths.installRoot }), 0o700);
-    const launchAgentsRoot = path.posix.join(homeDir, "Library", "LaunchAgents");
-    await ensureDirectory(launchAgentsRoot, 0o700, { enforceMode: false });
-    const launchAgentPath = path.posix.join(launchAgentsRoot, `${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}.plist`);
-    await atomicWrite(launchAgentPath, launchAgentPlist({ homeDir, installRoot: paths.installRoot }), 0o600);
+    let launchAgentPath = null;
+    if (!desktopOwner) {
+        const launchAgentsRoot = path.posix.join(homeDir, "Library", "LaunchAgents");
+        await ensureDirectory(launchAgentsRoot, 0o700, { enforceMode: false });
+        launchAgentPath = path.posix.join(launchAgentsRoot, `${EQUINOX_LOCAL_LAUNCH_AGENT_LABEL}.plist`);
+        await atomicWrite(launchAgentPath, launchAgentPlist({ homeDir, installRoot: paths.installRoot }), 0o600);
+    }
     const nativeHostRoot = paths.nativeMessagingManifestRoot;
     await ensureDirectory(nativeHostRoot, 0o700, { enforceMode: false });
     const hostWrapperPath = path.posix.join(paths.installRoot, "equinox-browser-native-host");

@@ -25,6 +25,8 @@ function isAbsoluteLocalFolderPath(value) {
     return /^\\\\[^\\/]+[\\/][^\\/]+[\\/].+/u.test(value);
 }
 async function pickLocalFolder() {
+    if (window.equinoxShell)
+        return window.equinoxShell.pickFolder();
     const bridge = window.chrome?.webview;
     if (typeof bridge?.postMessage !== "function"
         || typeof bridge?.addEventListener !== "function"
@@ -114,12 +116,19 @@ function initialLanguage() {
     catch {
         // A blocked localStorage must not prevent Control Center from loading.
     }
+    try {
+        const native = window.equinoxShell?.getLanguage();
+        if (native === "en" || native === "tr")
+            return native;
+    }
+    catch { /* Optional readonly native preference; external-browser behavior is unchanged. */ }
     if (SUPPORTED_LANGUAGES.includes(window.__equinoxNativeLanguage))
         return window.__equinoxNativeLanguage;
     return String(navigator.language || "").toLowerCase().startsWith("tr") ? "tr" : "en";
 }
 function notifyNativeLanguage() {
     try {
+        window.equinoxShell?.setLanguage(state.language);
         window.webkit?.messageHandlers?.equinoxNativeLanguage?.postMessage(state.language);
     }
     catch {

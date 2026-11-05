@@ -353,6 +353,8 @@ internal static partial class Program
                     throw new InvalidDataException("A managed WPF tree contains a reparse point.");
                 if ((attributes & FileAttributes.Directory) != 0)
                 {
+                    if (Compare.Equals(relative, Path.Combine("resources", "app.asar")))
+                        throw new InvalidDataException("Managed Electron shell sentinel must be a normal file.");
                     // Match the existing product's exact known legacy cache
                     // exceptions; never ignore arbitrary folders or files.
                     if (ignoreWebViewCache && directory == root &&
@@ -384,8 +386,22 @@ internal static partial class Program
                 }
             }
         }
-        if (!result.ContainsKey("EquinoxLocal.exe") || !result.ContainsKey("coreclr.dll"))
-            throw new InvalidDataException("Managed native WPF executable tree is incomplete.");
+        if (result.ContainsKey("resources"))
+            throw new InvalidDataException("Managed shell resources path must be a normal directory.");
+        // The sentinel selects only the required shape, never bypasses the
+        // signed ZIP baseline or the complete reference/installed digest audit.
+        var electron = result.ContainsKey(Path.Combine("resources", "app.asar"));
+        string[] required = electron
+            ? ["EquinoxLocal.exe", "chrome_100_percent.pak", "chrome_200_percent.pak",
+               "d3dcompiler_47.dll", "dxcompiler.dll", "electron_wer.dll", "ffmpeg.dll", "icudtl.dat",
+               "resources.pak", "snapshot_blob.bin", "v8_context_snapshot.bin", "version", "vk_swiftshader.dll",
+               "vk_swiftshader_icd.json", "vulkan-1.dll", Path.Combine("locales", "en-US.pak"),
+               Path.Combine("resources", "app.asar"), "LICENSE", "LICENSES.chromium.html"]
+            : ["EquinoxLocal.exe", "coreclr.dll", "hostfxr.dll", "Microsoft.Web.WebView2.Core.dll"];
+        if (required.Any(relative => !result.ContainsKey(relative)))
+            throw new InvalidDataException(electron
+                ? "Managed native Electron executable tree is incomplete."
+                : "Managed legacy native WPF executable tree is incomplete.");
         return result;
     }
 

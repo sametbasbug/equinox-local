@@ -10,6 +10,9 @@ Set-StrictMode -Version 2.0
 
 $Target = $null
 $MaxArtifactBytes = 1073741824
+# Match the independently audited whole-shell bound; pinned Electron executables
+# exceed the historical WPF-only 200 MB executable cap.
+$MaxShellExecutableBytes = 450 * 1024 * 1024
 $MainVerifyUrl = 'https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs'
 $MainVerifySha256 = '7a34d70e65c5b641c63baba1b5bd00f6b64ab9237d47f01fabce67702c4f99a5'
 $MainVerifyBytes = 9728
@@ -182,7 +185,7 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $inspector = Join-Path $candidate 'equinox-local-first-install.js'
   Assert-NormalFile $inspector 1 2097152 | Out-Null
   Write-Info 'checking unpacked signed Main before changing the existing installation'
-  $admitted = @(Invoke-PinnedMainNode $node @($inspector, '--inspect-signed-main', '--staged-release', $candidate, '--source-sha', ([string]$parsed.sourceSha), '--version', ([string]$parsed.version), '--target', $Target, '--signed-pointer-file', (Join-Path $PrivateTemp 'main-signed-pointer.json')))
+  $admitted = @(Invoke-PinnedMainNode $node @($inspector, '--inspect-signed-main', '--staged-release', $candidate, '--source-sha', ([string]$parsed.sourceSha), '--version', ([string]$parsed.version), '--target', $Target, '--signed-pointer-file', (Join-Path $PrivateTemp 'main-signed-pointer.json'), '--desktop-lifecycle', 'electron-v1'))
   if ($admitted.Count -ne 1) { Fail 'Main native candidate exact source SHA admission failed' }
   try { $matched = $admitted[0] | ConvertFrom-Json -ErrorAction Stop }
   catch { Fail 'Main native candidate admission receipt is invalid' }
@@ -283,7 +286,7 @@ function Restore-OldEquinoxChromeHost($Suspended) {
 }
 
 function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramRoot) {
-  # Shut down the verified old WPF process TREE before stopping individual
+  # Shut down the verified old product shell TREE before stopping individual
   # children. Stop-Process on only the root leaves detached old Node/job
   # helpers running, and those processes can keep the previous native-store
   # executable directory alive throughout the rename transaction.
@@ -297,7 +300,7 @@ function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramR
     if ($null -eq $still -or $still.CreationDate -ne $shell.CreationDate -or
         -not [string]::Equals([string]$still.ExecutablePath,$app,[StringComparison]::OrdinalIgnoreCase)) { continue }
     # taskkill /T terminates only descendants of this exact, revalidated
-    # signed product WPF root, never all instances of a process by name.
+    # signed product shell root, never all instances of a process by name.
     # taskkill can return nonzero when a descendant already exited. In
     # Windows PowerShell 5.1 native stderr is terminating under Stop. Always
     # re-check exact owned process identities in the loop below instead.
@@ -382,12 +385,12 @@ function Restore-PreviousEquinoxExecutables([string]$InstallRoot, [string]$Saved
   }
 }
 # If a signed B fails, restoring old files is not enough when the previous
-# WPF shell was running before the installer stopped it. Relaunch ONLY that
+# app shell was running before the installer stopped it. Relaunch ONLY that
 # exact, restored product-owned shell; do not start a previously closed app.
 function Resume-PreviousEquinoxShell([string]$ProgramRoot, [bool]$WasRunning) {
   if (-not $WasRunning) { return }
   $shellPath = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'EquinoxLocal.exe'))
-  Assert-NormalFile $shellPath 1 200000000 | Out-Null
+  Assert-NormalFile $shellPath 1 $MaxShellExecutableBytes | Out-Null
   $alreadyRunning = @(Get-CimInstance Win32_Process -Filter "Name='EquinoxLocal.exe'" -ErrorAction Stop | Where-Object {
     [string]::Equals([string]$_.ExecutablePath, $shellPath, [StringComparison]::OrdinalIgnoreCase)
   })
@@ -477,7 +480,7 @@ function Invoke-EquinoxLocalInstall {
       Write-Info 'activating verified signed Main; existing program files are preserved until healthy'
       $freshResult = @(Invoke-PinnedMainNode $mainNode @($mainInstaller,
         '--install-main-fresh', '--signed-pointer-file', $mainSelector,
-        '--archive', $mainArchive))
+        '--archive', $mainArchive, '--desktop-lifecycle', 'electron-v1'))
       if ($freshResult.Count -ne 1) { Fail 'signed Main has no verified completion receipt' }
       try { $installed = $freshResult[0] | ConvertFrom-Json -ErrorAction Stop }
       catch { Fail 'signed Main completion receipt is invalid' }
@@ -495,7 +498,7 @@ function Invoke-EquinoxLocalInstall {
       }
       Restore-OldEquinoxChromeHost $suspendedHost
       try { Resume-PreviousEquinoxShell $programRoot $priorShellWasRunning }
-      catch { Write-Warning ('old product files were recovered, but WPF relaunch failed: ' + $_.Exception.Message) }
+      catch { Write-Warning ('old product files were recovered, but shell relaunch failed: ' + $_.Exception.Message) }
       throw $failed
     }
     # Healthy, signed exact-SHA receipt is the sole commit point. A cleanup

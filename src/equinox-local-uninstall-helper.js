@@ -13,6 +13,7 @@ import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 import { removeEquinoxLocalCli } from "./equinox-local-cli-installation.js";
 import { readManagedCurrentRelease } from "./equinox-local-update-activation.js";
 import { assertWindowsStableShellOwnedByRelease } from "./equinox-local-windows-stable-shell.js";
+import { requestDesktopUninstallShutdown } from "./equinox-local-desktop-control.js";
 const execFile = promisify(execFileCallback);
 const START_DELAY_MS = 1_500;
 const NATIVE_HOST_NAME = "dev.equinox.browser";
@@ -313,14 +314,14 @@ async function waitForProcessExit(pid, { processAliveImpl = (value) => {
     }
 }, sleepImpl = (ms) => new Promise((resolve) => setTimeout(resolve, ms)), attempts = 150, } = {}) {
     if (!Number.isInteger(pid) || pid < 1)
-        throw new Error("Windows uninstall requires the exact native shell pid.");
+        throw new Error("Uninstall requires the exact application owner pid.");
     for (let attempt = 0; attempt < attempts; attempt += 1) {
         if (!processAliveImpl(pid))
             return;
         if (attempt + 1 < attempts)
             await sleepImpl(100);
     }
-    throw new Error("Windows native shell did not exit before managed uninstall cleanup.");
+    throw new Error("Application owner did not exit before managed uninstall cleanup.");
 }
 async function removeNormalPath(target, { recursive = false, fsImpl = fs } = {}) {
     let stat;
@@ -412,13 +413,20 @@ export async function runEquinoxLocalUninstallHelper({ argv = process.argv.slice
     if (!removeUserData)
         await verifyUninstallDirectoryIfPresent(layout.runtimeRoot, { fsImpl });
     await sleepImpl(START_DELAY_MS);
-    await execFileImpl("/bin/launchctl", [
-        "bootout",
-        `gui/${uid}/${installation.launchAgentLabel}`,
-    ], { timeout: 15_000, maxBuffer: 1024 * 1024 }).catch(() => ({ stdout: "", stderr: "" }));
+    const desktopOwner = env.EQUINOX_LOCAL_DESKTOP_OWNER === "1";
+    if (desktopOwner) {
+        const receipt = await requestDesktopUninstallShutdown({ platform: "darwin", homeDir: homeDir });
+        await waitForProcessExit(receipt.ownerPid, { sleepImpl });
+    }
+    else {
+        await execFileImpl("/bin/launchctl", [
+            "bootout", `gui/${uid}/${installation.launchAgentLabel}`,
+        ], { timeout: 15_000, maxBuffer: 1024 * 1024 }).catch(() => ({ stdout: "", stderr: "" }));
+    }
     await removeEquinoxLocalCli({ platform: "darwin", homeDir: homeDir, installRoot: installation.installRoot });
     await removeOwnedNativeHostManifest({ homeDir: homeDir, installRoot: installation.installRoot, fsImpl });
-    await removeIfExists(installation.launchAgentPath, { fsImpl });
+    if (!desktopOwner)
+        await removeIfExists(installation.launchAgentPath, { fsImpl });
     await removeOwnedEquinoxLocalAppHost({ homeDir: homeDir, fsImpl, execFileImpl });
     for (const logName of ["Equinox Local.log", "Equinox Local.error.log"]) {
         await removeIfExists(path.join(homeDir, "Library", "Logs", logName), { fsImpl });
@@ -451,9 +459,81 @@ export async function runEquinoxLocalUninstallHelper({ argv = process.argv.slice
         userDataPreserved: !removeUserData,
     });
 }
+// This gate exists only on the direct desktop-uninstall entry, not on the
+// exported uninstall implementation or any generic execution protocol.
+async function runDirectUninstallEntry() {
+    const argv = process.argv.slice(2);
+    if (!argv.includes("--wait-for-desktop-release")) {
+        await runEquinoxLocalUninstallHelper();
+        return;
+    }
+    if (process.platform !== "win32" || argv.length !== 3 || argv[2] !== "--wait-for-desktop-release") {
+        throw new Error("Invalid desktop uninstall gate arguments.");
+    }
+    const uninstallArgv = argv.slice(0, 2);
+    parseMode(uninstallArgv);
+    const owner = process.env.EQUINOX_LOCAL_UNINSTALL_SHELL_PID;
+    if (!owner || !/^[1-9][0-9]*$/u.test(owner) || !Number.isSafeInteger(Number(owner))
+        || Number(owner) === process.pid)
+        throw new Error("Invalid desktop uninstall owner pid.");
+    const command = process.env.EQUINOX_LOCAL_EXPECTED_STARTUP_COMMAND;
+    if (!command || /[\r\n\0]/u.test(command))
+        throw new Error("Invalid desktop uninstall startup command.");
+    const installation = resolveEquinoxLocalInstallation({
+        platform: process.platform, arch: process.arch, homeDir: process.env.USERPROFILE, env: process.env,
+    });
+    if (!installation.managed || !installation.selfUpdateSupported) {
+        throw new Error("Desktop uninstall gate requires a managed installation.");
+    }
+    await new Promise((resolve, reject) => {
+        const expected = Buffer.from("EQUINOX_UNINSTALL_GO\n");
+        let received = Buffer.alloc(0);
+        let settled = false;
+        const timer = setTimeout(() => finish(new Error("Desktop uninstall release timed out.")), 30_000);
+        const finish = (error) => {
+            if (settled)
+                return;
+            settled = true;
+            clearTimeout(timer);
+            process.stdin.off("data", onData);
+            process.stdin.off("end", onEnd);
+            process.stdin.off("close", onEnd);
+            process.stdin.pause();
+            process.stdin.destroy();
+            // Keep stream errors handled even if teardown races a pending write.
+            if (error)
+                reject(error);
+            else
+                resolve();
+        };
+        const onEnd = () => finish(new Error("Desktop uninstall release transport closed."));
+        const onData = (chunk) => {
+            if (received.length + chunk.length > expected.length) {
+                finish(new Error("Invalid desktop uninstall release."));
+                return;
+            }
+            received = Buffer.concat([received, chunk]);
+            if (!expected.subarray(0, received.length).equals(received)) {
+                finish(new Error("Invalid desktop uninstall release."));
+                return;
+            }
+            if (received.length === expected.length)
+                finish();
+        };
+        process.stdin.on("error", finish);
+        process.stdout.on("error", finish);
+        process.stdin.on("data", onData);
+        process.stdin.once("end", onEnd);
+        process.stdin.once("close", onEnd);
+        process.stdout.write("EQUINOX_UNINSTALL_READY\n", (error) => { if (error)
+            finish(error); });
+    });
+    process.stdout.destroy();
+    await runEquinoxLocalUninstallHelper({ argv: uninstallArgv });
+}
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 if (invokedPath && import.meta.url === invokedPath) {
-    runEquinoxLocalUninstallHelper().catch(() => {
+    runDirectUninstallEntry().catch(() => {
         process.exitCode = 1;
     });
 }

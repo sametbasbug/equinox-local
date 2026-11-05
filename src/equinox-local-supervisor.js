@@ -194,10 +194,12 @@ export function supervisorChildEnvironment({ paths, releaseDir, sourceEnv = proc
         EQUINOX_LOCAL_RELEASE_DIR: releaseDir,
         EQUINOX_PEEKABOO_PATH: path.join(releaseDir, "runtime", "peekaboo", "peekaboo"),
     };
-    for (const key of ["USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSH_AUTH_SOCK", "EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE"]) {
+    for (const key of ["USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "SSH_AUTH_SOCK", "EQUINOX_LOCAL_BROWSER_SOCKET_NAMESPACE", "EQUINOX_LOCAL_NATIVE_PROCESS_HELPER"]) {
         if (typeof sourceEnv[key] === "string" && sourceEnv[key])
             env[key] = sourceEnv[key];
     }
+    if (sourceEnv.EQUINOX_LOCAL_DESKTOP_OWNER === "1")
+        env.EQUINOX_LOCAL_DESKTOP_OWNER = "1";
     return Object.freeze(env);
 }
 export function tunnelInitArguments({ paths, releaseDir, transport, nodePath = null, serverPath = null }) {

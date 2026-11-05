@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "rootDir": "desktop"
+  },
+  "include": ["desktop/**/*.ts", "desktop/**/*.cts"],
+  "exclude": ["node_modules"]
+}

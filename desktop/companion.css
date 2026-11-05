@@ -1,0 +1,20 @@
+:root { color-scheme: light dark; --surface: rgba(247,247,247,.98); --text: #252525; --line: rgba(80,80,80,.2); --hover: rgba(70,130,225,.16); }
+@media (prefers-color-scheme: dark) { :root { --surface: rgba(36,36,39,.98); --text: #eee; --line: rgba(170,170,175,.22); } }
+* { box-sizing: border-box; }
+html,body { margin:0; width:100%; height:100%; overflow:hidden; background:transparent; user-select:none; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); }
+button { border:0; font:inherit; color:inherit; background:transparent; outline-offset:-3px; }
+#pet,#actions,#speech { display:none; }
+body[data-surface="pet"] #pet { display:block; width:131.076923px; height:142px; margin:0 auto; padding:0; background-image:url("../app/EquinoxCompanionNyx.webp"); background-repeat:no-repeat; background-size:1048.615384px 1562px; image-rendering:pixelated; cursor:grab; touch-action:none; }
+body[data-surface="pet"] #pet:active { cursor:grabbing; }
+body[data-surface="actions"] #actions { display:flex; flex-direction:column; gap:2px; margin:1px; height:122px; padding:8px 9px; border: .5px solid var(--line); border-radius:14px; background:var(--surface); backdrop-filter:blur(22px); }
+#actions button { display:flex; align-items:center; flex:none; gap:9px; width:168px; height:34px; padding:0 10px; border-radius:9px; font-size:12.5px; font-weight:500; text-align:left; white-space:nowrap; }
+#actions button span:first-child { display:inline-flex; width:16px; justify-content:center; color:color-mix(in srgb,var(--text) 65%, transparent); font-size:16px; }
+#actions svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.3; stroke-linecap:round; stroke-linejoin:round; }
+#actions button:hover { background:var(--hover); }
+#actions button:active { background:color-mix(in srgb,var(--hover) 80%,#4285d9 20%); }
+body[data-surface="speech"] #speech { display:block; position:relative; width:100%; height:100%; padding-bottom:10px; }
+#speech-body { display:flex; align-items:center; height:100%; padding:10px 16px; border:.7px solid var(--line); border-radius:14px; background:var(--surface); font-size:13px; font-weight:500; line-height:17px; overflow:hidden; overflow-wrap:anywhere; }
+#speech-text { display:block; flex-shrink:0; max-width:100%; }
+#tail { position:absolute; width:13px; height:13px; background:var(--surface); border-right:.7px solid var(--line); border-bottom:.7px solid var(--line); bottom:4px; left:42px; transform:rotate(45deg); }
+#speech.top-tail { padding-bottom:0; padding-top:10px; }
+#speech.top-tail #tail { top:4px; bottom:auto; transform:rotate(225deg); }

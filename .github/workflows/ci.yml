@@ -163,21 +163,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Publish Windows native shell payload
-        if: ${{ matrix.platform == 'win32' }}
-        shell: pwsh
-        env:
-          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/${{ matrix.shellRid }}
-          EQUINOX_WINDOWS_SHELL_BIN_DIR: ${{ runner.temp }}/windows-shell-bin/${{ matrix.shellRid }}/
-          EQUINOX_WINDOWS_SHELL_OBJ_DIR: ${{ runner.temp }}/windows-shell-obj/${{ matrix.shellRid }}/
-        run: |
-          dotnet publish native/windows/EquinoxLocal.WindowsShell/EquinoxLocal.WindowsShell.csproj --configuration Release --runtime '${{ matrix.shellRid }}' --self-contained true -p:Platform='${{ matrix.dotnetPlatform }}' -p:BaseOutputPath="$env:EQUINOX_WINDOWS_SHELL_BIN_DIR" -p:BaseIntermediateOutputPath="$env:EQUINOX_WINDOWS_SHELL_OBJ_DIR" --output "$env:EQUINOX_WINDOWS_SHELL_PUBLISH_DIR"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if ((git status --porcelain=v1 --untracked-files=all)) { throw 'Windows native shell publish dirtied the exact-SHA checkout' }
-
       - name: Build exact-SHA Main native artifact
-        env:
-          EQUINOX_WINDOWS_SHELL_PUBLISH_DIR: ${{ runner.temp }}/windows-shell/${{ matrix.shellRid }}
         run: node scripts/release/build-main-native-artifact.mjs --source-sha "${{ needs.main-native-plan.outputs.target-sha }}" --target "${{ matrix.target }}"
 
       - name: Upload exact-SHA Main native candidate
