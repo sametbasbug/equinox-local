@@ -192,6 +192,9 @@ async function retainLegacyShellPending(value:LegacyShell) {
   const parent=await fs.open(directory,constants.O_RDONLY|constants.O_NOFOLLOW);
   try { await parent.sync(); } finally { await parent.close(); }
 }
+// Shared finite primitives only. Each installer/preparer still owns its own
+// role admission; exporting these does not admit a managed candidate as Source.
+export { readLegacyShellPreferences as readLegacyMacShellPreferences, retainLegacyShellPending as retainLegacyMacShellPending, login as configureInstalledMacDesktopLogin };
 async function login(mode:"read"|"cleanup"|"enabled"|"disabled") {
   const temporaryRoot=await fs.realpath(os.tmpdir());
   await trusted(temporaryRoot);

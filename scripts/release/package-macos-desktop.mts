@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { packageManagedDesktopShell } from "./package-desktop-shell.mjs";
+import { packageManagedDesktopShell, packageSourceDesktopShell } from "./package-desktop-shell.mjs";
 import { sealDesktopBundle } from "../../src/equinox-local-desktop-bundle.js";
 import {
   EQUINOX_LOCAL_DESKTOP_APP_ARCHIVE,
@@ -13,7 +13,16 @@ import type { DesktopAppMetadata } from "../../src/equinox-local-native-app.js";
 type Options = { rootDir: string; releaseDir: string; target: "darwin-arm64" | "darwin-x64"; sourceSha: string };
 
 /** Build tooling only. The public runtime never imports Electron packaging dependencies. */
-export async function buildManagedMacDesktopPayload({ rootDir, releaseDir, target, sourceSha }: Options): Promise<DesktopAppMetadata> {
+export async function buildManagedMacDesktopPayload(options: Options): Promise<DesktopAppMetadata> {
+  return await buildMacDesktopPayload(options, "managed");
+}
+
+/** Explicit source-role archive, built as source before sealing; never relabel a managed ASAR. */
+export async function buildSourceMacDesktopPayload(options: Options): Promise<DesktopAppMetadata> {
+  return await buildMacDesktopPayload(options, "source");
+}
+
+async function buildMacDesktopPayload({ rootDir, releaseDir, target, sourceSha }: Options, role: "managed" | "source"): Promise<DesktopAppMetadata> {
   if (process.platform !== "darwin" || target !== `darwin-${process.arch}`) throw new Error("Managed macOS desktop payload requires its native target host.");
   for (const directory of [rootDir, releaseDir]) {
     if (!path.isAbsolute(directory) || await fs.realpath(directory) !== directory) throw new Error("Desktop payload build paths must be canonical.");
@@ -25,8 +34,9 @@ export async function buildManagedMacDesktopPayload({ rootDir, releaseDir, targe
   await fs.mkdir(output, { mode: 0o700 });
   const outputStat = await fs.lstat(output);
   try {
-    const built = await packageManagedDesktopShell({ rootDir, outputDir: output, target, sourceSha, shellVersion: EQUINOX_LOCAL_DESKTOP_SHELL_VERSION });
-    if (built.role !== "managed" || built.target !== target) throw new Error("Desktop packager returned the wrong installation role.");
+    const packageShell = role === "source" ? packageSourceDesktopShell : packageManagedDesktopShell;
+    const built = await packageShell({ rootDir, outputDir: output, target, sourceSha, shellVersion: EQUINOX_LOCAL_DESKTOP_SHELL_VERSION });
+    if (built.role !== role || built.target !== target) throw new Error("Desktop packager returned the wrong installation role.");
     // No legacy executable/assets alongside the sealed Electron representation.
     await fs.mkdir(payloadRoot, { mode: 0o700 });
     const identity = await sealDesktopBundle(path.join(built.output, "Equinox Local.app"), path.join(payloadRoot, EQUINOX_LOCAL_DESKTOP_APP_ARCHIVE));

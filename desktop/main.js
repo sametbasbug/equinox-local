@@ -72,7 +72,7 @@ try {
     if (installerLoginModes.length || installerProfileArgs.length) {
         if (installerLoginModes.length !== 1 || installerProfileArgs.length !== 1 ||
             !["read", "cleanup", "enabled", "disabled"].includes(installerMode ?? "") || process.platform !== "darwin" ||
-            runtimeRole !== "managed" || !installedIdentity ||
+            (runtimeRole !== "managed" && runtimeRole !== "source") || !installedIdentity ||
             process.execPath !== path.join(app.getPath("home"), "Applications", "Equinox Local.app", "Contents", "MacOS", "applet") ||
             fs.realpathSync(process.execPath) !== process.execPath ||
             process.argv.some(value => value === "--startup" || value === "--uninstall" || value.startsWith("--migrate-startup=") || value.startsWith("--migrate-shell="))) {
@@ -517,7 +517,7 @@ async function initializeOwner() {
         throw new Error("Application lifecycle ownership was lost during initialization.");
 }
 function importLegacyShellPreferences() {
-    if (runtimeRole !== "managed" || process.platform !== "darwin" || !installedIdentity || !shellPreferences || controlLost || quitting)
+    if ((runtimeRole !== "managed" && runtimeRole !== "source") || process.platform !== "darwin" || !installedIdentity || !shellPreferences || controlLost || quitting)
         return;
     let fd;
     try {
