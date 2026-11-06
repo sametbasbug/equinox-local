@@ -673,11 +673,12 @@ function createWindow(): void {
     window?.hide();
   });
   window.on("closed", () => { window = null; });
+  // The original macOS status item was plain "EL" text, not the app logo.
   const trayImage = process.platform === "darwin"
-    ? nativeImage.createFromPath(path.join(root, "app", "EquinoxLocalMenuBar.png")).resize({ width: 18, height: 18 })
+    ? nativeImage.createEmpty()
     : nativeImage.createFromPath(path.join(root, "app", "EquinoxLocal.png")).resize({ width: 32, height: 32 });
-  if (process.platform === "darwin") trayImage.setTemplateImage(true);
   tray = new Tray(trayImage);
+  if (process.platform === "darwin") tray.setTitle("EL");
   tray.on("double-click", showControlCenter);
   updateMenus();
 }
