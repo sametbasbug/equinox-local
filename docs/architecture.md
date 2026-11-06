@@ -171,3 +171,23 @@ The Mac mini Factory installation is a **live source development role**, not an 
 ## Agent-first CLI
 
 The `eqlocal` CLI is a client of a local, token-authenticated IPC bridge inside the existing runtime. The server delegates `tools.*` calls to the same capability registry and desktop handler as MCP, `tasks.*` to Task Capsules, and `chat.*` to the existing exact-conversation Browser Chat Bridge. CLI-created chats use a neutral READY handshake by default (explicit `--run-task` opts in to Telegram-style immediate Task objective execution), preventing surprise recursive agent starts without changing Telegram's contract. No extra HTTP listener, browser backend, AI model or shell management route is introduced. The CLI discovery descriptor belongs to user-private application state and is regenerated on runtime startup. Managed-install shims use pinned Node with owned PATH/uninstall cleanup. Signed Main runtimes reconcile the CLI launchers to their own reauthenticated native release after startup only when the signed update-owner marker is gone, so updates and rollbacks need no new A/B mutation pathway. macOS Factory/source-checkout runtime startup also reconciles a user-owned `~/.local/bin/eqlocal` launcher using the running source CLI and resolved Node executable, without requiring or claiming a signed managed release. The current source and installed-runtime CLI launchers are available without a separate agent process; see [CLI docs](cli.md) for syntax and device notes.
+
+## macOS Factory Source updates
+
+The installed Source-role Electron Factory is separate from the public signed Main
+installation. Its Control Center Update button compares the currently installed
+Electron ASAR source SHA to the **local clean `main` checkout**. It never fetches
+Git or checks the public signed release channel. When behind, one detached
+operation asks the existing native desktop owner to quit, invokes the existing
+`prepare-source-app-host --electron-source` packaging/synchronization logic,
+then reopens the installed Source app. Public managed installers retain their
+original signed external update path. A normal runtime restart alone cannot
+replace the sealed Electron ASAR.
+
+The `update_runtime` agent capability uses the exact same Control Center update
+check/apply callbacks without opening a UI. Source Factory compares installed
+versus local clean `main` SHA; public managed macOS/Windows uses the existing
+protected signed installer. When the update is scheduled, the tool instructs
+the agent to stop calling Local tools and deliver its final status immediately;
+installation verification belongs to a new turn. An already-current install
+returns without scheduling anything.

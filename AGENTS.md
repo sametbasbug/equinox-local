@@ -46,6 +46,7 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - Retain required native platform packaging, signed Main release publication and production Ed25519/hash/source-integrity checks. Do not downgrade runtime or distribution security checks as a substitute for tests.
 - Static code inspection is allowed. No build, installation or health claim may be made without actual evidence.
 - After a successful Equinox Local runtime restart, do not invoke another Equinox Local tool in the same assistant turn. Verify only in a fresh turn.
+- After `update_runtime` successfully schedules a local Factory or public signed update, invoke no more Equinox Local tools in that assistant turn; immediately provide the user a final status. Confirm the installed version and health only in a fresh turn. A no-update result does not enter this boundary.
 
 ## Architecture references
 

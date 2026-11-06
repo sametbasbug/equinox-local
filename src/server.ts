@@ -5,11 +5,13 @@ import * as z from "zod/v4";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { execFile as execFileCallback } from "node:child_process";
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { maybeScheduleMacStableMainBridge } from "./equinox-local-mac-main-bridge.js";
+import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
+import { projectDarwinDetachedHelperEnvironment } from "./equinox-local-darwin-helper-environment.js";
 import { pruneVerifiedMainLargeStorage, pruneDisenrolledWindowsMainLargeStorage } from "./equinox-local-main-storage-retention.js";
 import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
 import { createEquinoxLocalToolRegistrar } from "./equinox-local-tool-registration.js";
@@ -598,6 +600,52 @@ const equinoxLocalInstallation:RuntimeBoundary = await resolveEquinoxLocalManage
   homeDir: runtimeHomeDir,
   env: runtimeEnv,
 });
+// Factory is an installed Source-role Electron app, not a public signed Main client.
+// Its update button only compares the installed ASAR source SHA with this checkout.
+const factorySourceUpdate = platform === "darwin" && equinoxLocalInstallation.kind === "source"
+  && runtimeEnv.EQUINOX_LOCAL_DESKTOP_OWNER === "1"
+  && runtimeEnv.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG === path.join(runtimeHomeDir, "Library", "Application Support", "Equinox Local Developer", "runtime", "source-runtime.conf");
+const factoryCheckout = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const factoryApp = path.join(runtimeHomeDir, "Applications", "Equinox Local.app");
+let factoryUpdatePending:string|null=null;
+let factoryUpdateRequestedAt=0;
+async function factoryUpdateStatus() {
+  if (!factorySourceUpdate) return null;
+  const current = factoryUpdatePending && Date.now()-factoryUpdateRequestedAt < 5*60_000;
+  try {
+    const git = async (...args:string[]) => (await execFile("/usr/bin/git",["-C",factoryCheckout,...args],{timeout:6000,maxBuffer:1024*1024})).stdout.trim();
+    const plist = async (key:string) => (await execFile("/usr/bin/plutil",["-extract",key,"raw",path.join(factoryApp,"Contents","Info.plist")],{timeout:5000,maxBuffer:16384})).stdout.trim();
+    const [targetSha,branch,dirty,repositoryRoot,role,installedSha] = await Promise.all([
+      git("rev-parse","HEAD"),git("branch","--show-current"),git("status","--porcelain=v1","--untracked-files=all"),
+      git("rev-parse","--show-toplevel"),plist("EquinoxLocalRuntimeRole"),plist("EquinoxLocalSourceSha"),
+    ]);
+    if (repositoryRoot !== factoryCheckout || branch !== "main" || dirty || role !== "source" ||
+        !/^[a-f0-9]{40}$/u.test(installedSha) || !/^[a-f0-9]{40}$/u.test(targetSha)) {
+      return {mode:"factory-source",state:"blocked",currentSha:installedSha,targetSha,applying:Boolean(current),reason:"Factory requires a clean main checkout and an installed Source-role Electron application."};
+    }
+    return {mode:"factory-source",state:installedSha===targetSha?"up_to_date":"behind",currentSha:installedSha,targetSha,
+      updateAvailable:installedSha!==targetSha,applying:Boolean(current),restartScheduledFor:current?factoryUpdatePending:null};
+  } catch {
+    return {mode:"factory-source",state:"unavailable",applying:Boolean(current),reason:"Factory source identity could not be verified."};
+  }
+}
+async function scheduleFactorySourceUpdate() {
+  const status=await factoryUpdateStatus();
+  if (!factorySourceUpdate || !status || status.state!=="behind" || status.applying || !status.updateAvailable ||
+      !/^[a-f0-9]{40}$/u.test(status.targetSha??"")) {
+    throw Object.assign(new Error("Factory update requires a newer clean local main checkout and the original Source application."),{statusCode:409});
+  }
+  const script=path.join(factoryCheckout,"scripts","release","prepare-source-app-host.mjs");
+  const nodePath=runtimeEnv.EQUINOX_LOCAL_DEV_NODE || process.execPath;
+  const env=projectDarwinDetachedHelperEnvironment({sourceEnv:runtimeEnv,includeDeveloperRuntimeConfig:true});
+  await launchDetachedHelper({spawnImpl:spawn,command:nodePath,
+    args:[script,"--electron-source-refresh",status.targetSha!,status.currentSha!],
+    options:{cwd:factoryCheckout,detached:true,stdio:"ignore",env:{...env,EQUINOX_LOCAL_DEV_NODE:nodePath}},
+    label:"Factory Source Electron update"});
+  factoryUpdatePending=status.targetSha!;
+  factoryUpdateRequestedAt=Date.now();
+  return {status:"scheduled",targetSha:status.targetSha};
+}
 const equinoxLocalUpdater:RuntimeBoundary = createEquinoxLocalUpdater({
   currentVersion: SERVER_VERSION,
   installation: equinoxLocalInstallation.kind === "managed-main"
@@ -638,6 +686,7 @@ const signedMainInstallerPending=()=>{
   return false;
 };
 const checkInstalledChannelForUpdates = async ({ force = false } = {}) => {
+  if (factorySourceUpdate) return; // Never query public Main from the Factory update button.
   if (equinoxLocalInstallation.kind === "managed-main") {
     // This is a BOUNDED read-only original production-signed Ed25519
     // selector check. The old Git source Main/Stable updater is not a
@@ -660,7 +709,9 @@ setInterval(automaticUpdateCheck, 6 * 60 * 60_000).unref?.();
 const getCombinedUpdateStatus = async () => Object.freeze({
   ...equinoxLocalUpdateCoordinator.snapshot(),
   mainNotice: equinoxMainChannelNotice.snapshot(),
-  main: equinoxLocalInstallation.kind === "managed-main" && signedNativeMainNotice
+  factory: await factoryUpdateStatus(),
+  main: factorySourceUpdate ? Object.freeze({checkSupported:false,mode:"factory-source"})
+    : equinoxLocalInstallation.kind === "managed-main" && signedNativeMainNotice
     ? Object.freeze((()=>{
         const signed=signedNativeMainNotice.snapshot();
         return {
@@ -811,7 +862,7 @@ function runtimeRestartGuardError(toolName:RuntimeBoundary) {
   }
 
   return new Error(
-    `Equinox Local yeniden başlatma beklemede. ${toolName} çağrısı bu process üzerinde çalıştırılmadı; ` +
+    `Equinox Local güncellemesi veya yeniden başlatması beklemede. ${toolName} çağrısı bu process üzerinde çalıştırılmadı; ` +
       `yaklaşık ${Math.ceil(remainingMs / 1000)} saniye sonra yeni runtime üzerinden tekrar deneyin.`,
   );
 }
@@ -3036,6 +3087,49 @@ async function getControlCenterOnboardingStatus() {
   });
 }
 
+const checkUpdateForControlCenter = async () => {
+    if (factorySourceUpdate) return getCombinedUpdateStatus();
+    await checkInstalledChannelForUpdates({ force: true });
+    if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) equinoxLocalMainApplyController.resetError();
+    if(equinoxLocalInstallation.kind==="managed-main" && !signedMainInstallerPending())signedMainInstallerError=null;
+    return getCombinedUpdateStatus();
+};
+const applyUpdateForControlCenter = async () => withMutationLocks(["local-update"], async () => {
+    if (factorySourceUpdate) return scheduleFactorySourceUpdate();
+    if (equinoxLocalInstallation.kind === "managed-main") {
+      if(signedMainInstallerPending()){
+        throw Object.assign(new Error("The original signed Main installer is already scheduled."),{statusCode:409});
+      }
+      const checked=await signedNativeMainNotice?.check({force:true});
+      if(!checked || !["available","up_to_date"].includes(checked.status) ||
+         typeof checked.targetSha!=="string" ||
+         checked.installedSha!==equinoxLocalInstallation.mainNativeSha){
+        throw Object.assign(new Error("No authenticated Main installer SHA is currently available."),{statusCode:409});
+      }
+      signedMainInstallerError=null;
+      try{
+        const schedule=equinoxLocalInstallation.platform==="win32"
+          ? scheduleEquinoxLocalSignedNativeWindowsInstaller
+          : scheduleEquinoxLocalSignedNativeMacInstaller;
+        const handoff=await schedule({
+          installation:equinoxLocalInstallation,homeDir:runtimeHomeDir,
+          sourceEnv:runtimeEnv,
+        });
+        // The detached original .sh re-verifies the actual NEW selector
+        // before it can reinstall the verified Main program files.
+        signedMainInstallerRequestedSha=checked.targetSha;
+        signedMainInstallerRequestedAt=Date.now();
+        return Object.freeze({...handoff,targetSha:checked.targetSha});
+      }catch{
+        signedMainInstallerError="The original signed Main installer could not be launched. No update was started.";
+        throw Object.assign(new Error(signedMainInstallerError),{statusCode:503});
+      }
+    }
+    return equinoxLocalInstallation.kind === "managed-source"
+      ? equinoxLocalMainApplyController.apply()
+      : equinoxLocalUpdateCoordinator.apply();
+});
+
 equinoxLocalControlApi = createEquinoxLocalControlApi({
   configManager: equinoxLocalConfigManager,
   port: EQUINOX_LOCAL_CONFIG.controlCenter.port,
@@ -3225,46 +3319,8 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       removeUserData,
     })
   )),
-  checkForUpdates: async () => {
-    await checkInstalledChannelForUpdates({ force: true });
-    if (["source", "managed-source"].includes(equinoxLocalInstallation.kind)) equinoxLocalMainApplyController.resetError();
-    if(equinoxLocalInstallation.kind==="managed-main" && !signedMainInstallerPending())signedMainInstallerError=null;
-    return getCombinedUpdateStatus();
-  },
-  applyUpdate: async () => withMutationLocks(["local-update"], async () => {
-    if (equinoxLocalInstallation.kind === "managed-main") {
-      if(signedMainInstallerPending()){
-        throw Object.assign(new Error("The original signed Main installer is already scheduled."),{statusCode:409});
-      }
-      const checked=await signedNativeMainNotice?.check({force:true});
-      if(!checked || !["available","up_to_date"].includes(checked.status) ||
-         typeof checked.targetSha!=="string" ||
-         checked.installedSha!==equinoxLocalInstallation.mainNativeSha){
-        throw Object.assign(new Error("No authenticated Main installer SHA is currently available."),{statusCode:409});
-      }
-      signedMainInstallerError=null;
-      try{
-        const schedule=equinoxLocalInstallation.platform==="win32"
-          ? scheduleEquinoxLocalSignedNativeWindowsInstaller
-          : scheduleEquinoxLocalSignedNativeMacInstaller;
-        const handoff=await schedule({
-          installation:equinoxLocalInstallation,homeDir:runtimeHomeDir,
-          sourceEnv:runtimeEnv,
-        });
-        // The detached original .sh re-verifies the actual NEW selector
-        // before it can reinstall the verified Main program files.
-        signedMainInstallerRequestedSha=checked.targetSha;
-        signedMainInstallerRequestedAt=Date.now();
-        return Object.freeze({...handoff,targetSha:checked.targetSha});
-      }catch{
-        signedMainInstallerError="The original signed Main installer could not be launched. No update was started.";
-        throw Object.assign(new Error(signedMainInstallerError),{statusCode:503});
-      }
-    }
-    return equinoxLocalInstallation.kind === "managed-source"
-      ? equinoxLocalMainApplyController.apply()
-      : equinoxLocalUpdateCoordinator.apply();
-  }),
+  checkForUpdates: checkUpdateForControlCenter,
+  applyUpdate: applyUpdateForControlCenter,
   chooseFolder: chooseLocalFolder,
   openAgentBrowser: async () => withMutationLocks(["browser:agent"], async () => (
     equinoxAgentBrowser.launch({ setup: false })
@@ -3397,6 +3453,59 @@ const desktopCapabilityProvider = registerDesktopGatewayTools(({
   assertMutationAllowed: (operationName:RuntimeBoundary) => agentControl.assertMutationAllowed(operationName),
   turnBudgetController,
 }) as RuntimeBoundary);
+
+// Same update/check/apply path as the Control Center button. Public installations
+// keep their signed external installer, while the macOS Source Factory only
+// packages its already-checked-out clean main commit.
+registerTextTool("update_runtime", {
+  description: "Equinox Local güncellemesini kurulum türüne uygun mevcut Control Center Update yoluyla kontrol eder ve varsa başlatır. " +
+    "Mac Factory yalnız temiz yerel main checkout'tan Source Electron paketini yeniler; public macOS/Windows mevcut imzalı Main installer'ını kullanır. " +
+    "Güncelleme gerçekten zamanlandıktan sonra AYNI ASİSTAN TURUNDA başka Equinox Local aracı çağırma, bekleme veya doğrulama yapma; kullanıcıya hemen final durum yanıtını ver. " +
+    "Sonraki turda yeni runtime üzerinden kurulumu doğrula. Güncelleme yoksa hiçbir işlem başlatmaz.",
+  inputSchema: {},
+  annotations: {title:"Equinox Local'i güncelle",readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false},
+}, async () => {
+  try {
+    const update=await checkUpdateForControlCenter();
+    const mode=update.factory?.mode === "factory-source" ? "factory"
+      : equinoxLocalInstallation.kind === "managed-main" ? "signed-main"
+      : equinoxLocalInstallation.kind === "managed-source" ? "managed-source"
+      : equinoxLocalInstallation.managed && equinoxLocalInstallation.selfUpdateSupported ? "managed" : null;
+    if (!mode) return errorResult(new Error("This installation has no authorized Control Center update path."));
+    if (mode === "factory") {
+      if (update.factory.state === "up_to_date") return textResult("Mac Factory zaten yerel main commit'iyle güncel. Güncelleme başlatılmadı.");
+      if (update.factory.state !== "behind" || update.factory.updateAvailable !== true) {
+        return errorResult(new Error(update.factory.reason || "Factory Source update is unavailable."));
+      }
+    } else if (mode === "signed-main" || mode === "managed-source") {
+      if (update.main.state === "up_to_date" && update.main.currentSha === update.main.targetSha) {
+        return textResult("Equinox Local zaten doğrulanmış Main commit'iyle güncel. Güncelleme başlatılmadı.");
+      }
+      if (update.main.state !== "behind" || update.main.applyAvailable !== true) {
+        return errorResult(new Error(update.main.applyError || update.main.reason || "A verified Main update is not available."));
+      }
+    } else if (update.updateAvailable !== true || update.lastError) {
+      if (update.updateAvailable === false && !update.lastError) return textResult("Equinox Local zaten güncel. Güncelleme başlatılmadı.");
+      return errorResult(new Error("The managed update channel is not ready or has no verified candidate."));
+    }
+    let scheduled:RuntimeBoundary;
+    try {
+      await quiesceContinuityForRestart();
+      scheduled=await applyUpdateForControlCenter();
+    } catch(error) {
+      await resumeContinuityAfterFailedRestart();
+      throw error;
+    }
+    runtimeRestartPendingUntil=Date.now()+RUNTIME_RESTART_GUARD_MS;
+    return textResult([
+      `Equinox Local ${mode === "factory" ? "Factory Source" : "public"} güncellemesi zamanlandı.`,
+      "Control Center'daki Update düğmesiyle aynı kurulum mekanizması kullanıldı.",
+      "Bu çağrıdan sonra AYNI ASİSTAN TURUNDA başka Equinox Local aracı çağırma; kullanıcıya hemen final durum mesajını ver.",
+      "MCP bağlantısı güncelleme sırasında kapanabilir. Kurulumu ve yeni SHA'yı ancak sonraki turda doğrula.",
+      typeof scheduled?.targetSha === "string" ? `Hedef SHA: ${scheduled.targetSha}` : "",
+    ].filter(Boolean).join("\n"));
+  } catch(error) { return errorResult(error); }
+}, {projectAware:false,mutationScopes:["global"]});
 
 registerRestartRuntimeTool({
   registerTextTool,

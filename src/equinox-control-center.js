@@ -959,7 +959,9 @@ function renderSidebarUpdateNotice(update, main, mainChannel) {
     badge.hidden = true;
     badge.classList.remove("is-main", "is-warning");
     let label = null;
-    if (mainChannel && main.state === "behind")
+    if (update.factory?.mode === "factory-source" && update.factory.state === "behind")
+        label = "Factory update available";
+    else if (mainChannel && main.state === "behind")
         label = "Update available";
     else if (mainChannel && main.state === "unavailable") {
         label = "Check unavailable";
@@ -983,6 +985,43 @@ function renderUpdate() {
     const mainMeta = $("update-main-meta");
     const current = update.currentVersion || state.status?.server?.version || null;
     renderSidebarUpdateNotice(update, main, mainChannel);
+    const factory = update.factory?.mode === "factory-source" ? update.factory : null;
+    if (factory) {
+        const busy = state.updateBusy || state.updateApplyBusy || factory.applying;
+        const pending = Boolean(factory.restartScheduledFor);
+        const available = factory.state === "behind" && factory.updateAvailable === true;
+        const currentSha = shortUpdateSha(factory.currentSha);
+        const targetSha = shortUpdateSha(factory.targetSha);
+        mainMeta.hidden = true;
+        setText("update-version", `Factory · ${currentSha || "unknown"}`);
+        setText("update-checked-at", "Local Source checkout · no public update channel");
+        if (pending || state.updateApplyBusy) {
+            setText("update-title", "Updating Factory");
+            setText("update-copy", `Preparing the local Source package${targetSha ? ` (${targetSha})` : ""}. The application will close and reopen; private settings will be preserved.`);
+            setBadge("update-badge", "Updating", "warn");
+        }
+        else if (factory.state === "behind") {
+            setText("update-title", `Factory update available${targetSha ? ` · ${targetSha}` : ""}`);
+            setText("update-copy", "Rebuild the Mac Factory application from the current clean main checkout. No public downloads or Git pull.");
+            setBadge("update-badge", "Local update", "good");
+        }
+        else if (factory.state === "up_to_date") {
+            setText("update-title", "Factory is up to date");
+            setText("update-copy", "The installed Source application matches the local main commit.");
+            setBadge("update-badge", "Up to date", "good");
+        }
+        else {
+            setText("update-title", "Factory source update unavailable");
+            setText("update-copy", factory.reason || "Verify the installed Source application and the clean main checkout.");
+            setBadge("update-badge", "Unavailable", "warn");
+        }
+        checkButton.disabled = Boolean(busy || pending);
+        checkButton.textContent = localizeUiText(state.updateBusy ? "Checking…" : "Check local Factory");
+        installButton.hidden = !available && !busy && !pending;
+        installButton.disabled = Boolean(busy || pending || !available);
+        installButton.textContent = localizeUiText(busy || pending ? "Updating…" : "Update Factory");
+        return;
+    }
     const runningVersion = state.status?.server?.version;
     const runningSha = shortUpdateSha(main.currentSha || state.status?.installation?.sourceSha);
     // Native Main uses the existing verified external installer; the UI only
@@ -3426,10 +3465,11 @@ async function deleteHttpProfileFromControlCenter(profile) {
     }
 }
 async function checkForUpdates() {
+    const factoryMode = state.update?.factory?.mode === "factory-source";
     const mainChannel = (["source", "managed-source"].includes(state.update?.installationKind) ||
         (state.update?.installationKind === "managed-main" && state.update?.main?.mode === "signed-native")) &&
         state.update?.main?.checkSupported === true;
-    if (state.updateBusy || (!state.update?.selfUpdateSupported && !mainChannel && !state.update?.managedInstallation))
+    if (state.updateBusy || (!factoryMode && !state.update?.selfUpdateSupported && !mainChannel && !state.update?.managedInstallation))
         return;
     clearError();
     state.updateBusy = true;
@@ -3438,7 +3478,11 @@ async function checkForUpdates() {
         const result = await mutationJson("/api/v1/update/check", "POST", {});
         state.update = result.update || state.update;
         renderUpdate();
-        if (mainChannel) {
+        if (factoryMode) {
+            showToast(state.update?.factory?.state === "behind" ? "Local Factory update available."
+                : state.update?.factory?.state === "up_to_date" ? "Factory is up to date." : "Factory update check unavailable.");
+        }
+        else if (mainChannel) {
             const main = state.update?.main || {};
             if (main.mode === "signed-native") {
                 if (main.state === "behind")
@@ -3482,6 +3526,9 @@ async function checkForUpdates() {
     }
 }
 async function applyAvailableUpdate() {
+    const factoryMode = state.update?.factory?.mode === "factory-source";
+    const factoryReady = Boolean(factoryMode && state.update?.factory?.state === "behind" &&
+        state.update?.factory?.updateAvailable && !state.update?.factory?.applying);
     const signedNativeMain = state.update?.installationKind === "managed-main" &&
         state.update?.main?.mode === "signed-native";
     const managedMain = state.update?.installationKind === "managed-source" || signedNativeMain;
@@ -3490,7 +3537,7 @@ async function applyAvailableUpdate() {
         && state.update?.selfUpdateSupported
         && state.update?.updateAvailable === true
         && !state.update?.lastError);
-    if (state.updateApplyBusy || state.updateBusy || (!canApplyMain && !canApplyStable))
+    if (state.updateApplyBusy || state.updateBusy || (!factoryReady && !canApplyMain && !canApplyStable))
         return;
     clearError();
     state.updateApplyBusy = true;
@@ -3498,7 +3545,11 @@ async function applyAvailableUpdate() {
     try {
         const result = await mutationJson("/api/v1/update/apply", "POST", {});
         const scheduled = result.result || {};
-        if (managedMain) {
+        if (factoryMode) {
+            state.update = { ...(state.update || {}), factory: { ...(state.update?.factory || {}),
+                    applying: true, restartScheduledFor: scheduled.targetSha || state.update?.factory?.targetSha || null } };
+        }
+        else if (managedMain) {
             state.update = {
                 ...(state.update || {}),
                 main: {
@@ -3519,11 +3570,12 @@ async function applyAvailableUpdate() {
             state.health.controlCenter.mutationCount += 1;
         renderUpdate();
         renderActivity();
-        showToast(signedNativeMain
-            ? "Update started. Equinox Local may restart."
-            : managedMain
-                ? `Main ${shortUpdateSha(scheduled.targetSha) || "snapshot"} is prepared. Restarting safely…`
-                : `Equinox Local ${scheduled.targetVersion || "update"} is prepared. Restarting safely…`);
+        showToast(factoryMode ? "Factory update started. The application will close and reopen."
+            : signedNativeMain
+                ? "Update started. Equinox Local may restart."
+                : managedMain
+                    ? `Main ${shortUpdateSha(scheduled.targetSha) || "snapshot"} is prepared. Restarting safely…`
+                    : `Equinox Local ${scheduled.targetVersion || "update"} is prepared. Restarting safely…`);
     }
     catch (error) {
         showError(error);
