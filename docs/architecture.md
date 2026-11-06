@@ -183,3 +183,11 @@ operation asks the existing native desktop owner to quit, invokes the existing
 then reopens the installed Source app. Public managed installers retain their
 original signed external update path. A normal runtime restart alone cannot
 replace the sealed Electron ASAR.
+
+The `update_runtime` agent capability uses the exact same Control Center update
+check/apply callbacks without opening a UI. Source Factory compares installed
+versus local clean `main` SHA; public managed macOS/Windows uses the existing
+protected signed installer. When the update is scheduled, the tool instructs
+the agent to stop calling Local tools and deliver its final status immediately;
+installation verification belongs to a new turn. An already-current install
+returns without scheduling anything.
