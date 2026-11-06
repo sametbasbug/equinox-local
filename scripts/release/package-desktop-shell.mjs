@@ -34,7 +34,20 @@ export async function packageManagedDesktopShell({ rootDir = root, outputDir = p
         throw new Error("Managed desktop source must match the exact clean checkout.");
     return await packageDesktopShell({ rootDir, outputDir, target }, { sourceSha, shellVersion });
 }
-async function packageDesktopShell({ rootDir, outputDir, target }, identity) {
+/** Explicit source preparation only; never the default development CLI or a managed artifact. */
+export async function packageSourceDesktopShell({ rootDir = root, outputDir = path.join(root, "artifacts", "desktop"), target = `${process.platform}-${process.arch}`, sourceSha, shellVersion, }) {
+    if (process.platform !== "darwin" || target !== `darwin-${process.arch}`)
+        throw new Error("Source desktop packaging requires its native Darwin host.");
+    if (!/^[a-f0-9]{40}$/u.test(sourceSha) || !Number.isSafeInteger(shellVersion) || shellVersion < 1)
+        throw new Error("Source desktop build requires exact source and shell identities.");
+    const options = { timeout: 10_000, maxBuffer: 1024 * 1024 };
+    const head = await execFile("git", ["-C", rootDir, "rev-parse", "HEAD"], options);
+    const status = await execFile("git", ["-C", rootDir, "status", "--porcelain=v1", "--untracked-files=all"], options);
+    if (String(head.stdout).trim() !== sourceSha || String(status.stdout).trim())
+        throw new Error("Source desktop source must match the exact clean checkout.");
+    return await packageDesktopShell({ rootDir, outputDir, target }, { sourceSha, shellVersion }, "source");
+}
+async function packageDesktopShell({ rootDir, outputDir, target }, identity, role = "managed") {
     if (!TARGETS.has(target))
         throw new Error("Unsupported desktop target.");
     if (!path.isAbsolute(outputDir))
@@ -75,7 +88,7 @@ async function packageDesktopShell({ rootDir, outputDir, target }, identity) {
         }
         await fs.writeFile(path.join(application, "package.json"), JSON.stringify({
             name: "equinox-local-desktop", productName: "Equinox Local", version: EQUINOX_LOCAL_VERSION,
-            type: "module", main: "desktop/main.js", equinoxRuntimeRole: identity ? "managed" : "development",
+            type: "module", main: "desktop/main.js", equinoxRuntimeRole: identity ? role : "development",
             ...(identity ? { equinoxDesktopSchema: 1, equinoxSourceSha: identity.sourceSha } : {}),
             description: "Equinox Local Control Center", author: "Samet Basbug", license: "AGPL-3.0-only",
         }, null, 2), { mode: 0o600 });
@@ -97,7 +110,7 @@ async function packageDesktopShell({ rootDir, outputDir, target }, identity) {
             asar: true, prune: false, overwrite: false, out: outputDir, ...(icon ? { icon } : {}),
             ...(nativeResource ? { extraResource: nativeResource } : {}),
             extendInfo: { NSAppTransportSecurity: { NSAllowsLocalNetworking: true },
-                ...(identity ? { ...nativePermissionIdentityInfoPlist(), EquinoxLocalNativeShellVersion: identity.shellVersion, EquinoxLocalSourceSha: identity.sourceSha } : {}),
+                ...(identity ? { ...nativePermissionIdentityInfoPlist(), EquinoxLocalNativeShellVersion: identity.shellVersion, EquinoxLocalSourceSha: identity.sourceSha, ...(role === "source" ? { EquinoxLocalRuntimeRole: "source", EquinoxLocalDesktopSchema: 1 } : {}) } : {}),
             },
         });
         if (outputs.length !== 1 || outputs[0] !== expectedOutput)
@@ -116,7 +129,7 @@ async function packageDesktopShell({ rootDir, outputDir, target }, identity) {
         const executableStat = await fs.lstat(executable);
         if (!executableStat.isFile() || executableStat.isSymbolicLink())
             throw new Error("Desktop executable is missing.");
-        return { target, electron: version, role: identity ? "managed" : "development", output: expectedOutput, executable };
+        return { target, electron: version, role: identity ? role : "development", output: expectedOutput, executable };
     }
     finally {
         await fs.rm(stage, { recursive: true, force: true });

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification as DesktopNotification, screen, session, shell, Tray } from "electron";
 import fs from "node:fs";
+import os from "node:os";
 import { execFile as execFileCallback } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,14 +73,16 @@ try {
     if (installerLoginModes.length || installerProfileArgs.length) {
         if (installerLoginModes.length !== 1 || installerProfileArgs.length !== 1 ||
             !["read", "cleanup", "enabled", "disabled"].includes(installerMode ?? "") || process.platform !== "darwin" ||
-            runtimeRole !== "managed" || !installedIdentity ||
+            (runtimeRole !== "managed" && runtimeRole !== "source") || !installedIdentity ||
             process.execPath !== path.join(app.getPath("home"), "Applications", "Equinox Local.app", "Contents", "MacOS", "applet") ||
             fs.realpathSync(process.execPath) !== process.execPath ||
             process.argv.some(value => value === "--startup" || value === "--uninstall" || value.startsWith("--migrate-startup=") || value.startsWith("--migrate-shell="))) {
             throw new Error("Invalid finite installer login invocation.");
         }
         installerProfile = installerProfileArgs[0].slice("--installer-profile=".length);
-        const temporaryRoot = fs.realpathSync(app.getPath("temp"));
+        // The Node parent creates this profile with os.tmpdir(). Cocoa may ignore
+        // TMPDIR, so app.getPath("temp") can name a different canonical directory.
+        const temporaryRoot = fs.realpathSync(os.tmpdir());
         const stat = fs.lstatSync(installerProfile);
         if (path.dirname(installerProfile) !== temporaryRoot ||
             !/^equinox-installer-login-[A-Za-z0-9]+$/u.test(path.basename(installerProfile)) ||
@@ -517,7 +520,7 @@ async function initializeOwner() {
         throw new Error("Application lifecycle ownership was lost during initialization.");
 }
 function importLegacyShellPreferences() {
-    if (runtimeRole !== "managed" || process.platform !== "darwin" || !installedIdentity || !shellPreferences || controlLost || quitting)
+    if ((runtimeRole !== "managed" && runtimeRole !== "source") || process.platform !== "darwin" || !installedIdentity || !shellPreferences || controlLost || quitting)
         return;
     let fd;
     try {

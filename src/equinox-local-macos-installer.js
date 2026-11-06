@@ -267,6 +267,9 @@ async function retainLegacyShellPending(value) {
         await parent.close();
     }
 }
+// Shared finite primitives only. Each installer/preparer still owns its own
+// role admission; exporting these does not admit a managed candidate as Source.
+export { readLegacyShellPreferences as readLegacyMacShellPreferences, retainLegacyShellPending as retainLegacyMacShellPending, login as configureInstalledMacDesktopLogin };
 async function login(mode) {
     const temporaryRoot = await fs.realpath(os.tmpdir());
     await trusted(temporaryRoot);
