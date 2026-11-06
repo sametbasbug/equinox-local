@@ -13,6 +13,8 @@ import { readEquinoxLocalMainNativePointer } from "../../src/equinox-local-main-
 import { buildEquinoxLocalNativeAppArtifacts, equinoxLocalNativeAppArtifactPaths, EQUINOX_LOCAL_NATIVE_APP_SHELL_VERSION } from "../../src/equinox-local-native-app.js";
 import { readSourceRuntimeConfig } from "../../src/equinox-local-source-runtime.js";
 import { readLegacyMacShellPreferences, retainLegacyMacShellPending } from "../../src/equinox-local-macos-installer.js";
+import { requestDesktopUpdateShutdown } from "../../src/equinox-local-desktop-control.js";
+import { setTimeout as sleep } from "node:timers/promises";
 function shellQuote(value) {
     return `'${String(value).replaceAll("'", `'\"'\"'`)}'`;
 }
@@ -319,11 +321,73 @@ export async function prepareSourceAppHost({ electronSource = false, homeDir = o
     }
     return Object.freeze({ ready: true, appIdentity: "Equinox Local", bundleId: "dev.equinox.local" });
 }
+// Explicit one-shot Source refresh. The existing native lifecycle socket is
+// responsible for quitting the one desktop owner; packaging NEVER runs over
+// a live Electron application or mutates the source checkout.
+async function refreshInstalledSourceElectron(expectedSha, installedSha) {
+    if (process.platform !== "darwin" || !/^[a-f0-9]{40}$/u.test(expectedSha) || !/^[a-f0-9]{40}$/u.test(installedSha) || process.env.EQUINOX_LOCAL_DESKTOP_OWNER !== "1") {
+        throw new Error("Factory refresh requires an authenticated macOS Source desktop owner and exact local SHA.");
+    }
+    const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+    const git = async (...args) => (await execFile("/usr/bin/git", ["-C", repo, ...args], { timeout: 10_000, maxBuffer: 1024 * 1024 })).stdout.trim();
+    const appPath = path.join(os.homedir(), "Applications", "Equinox Local.app");
+    const plist = async (key) => (await execFile("/usr/bin/plutil", ["-extract", key, "raw", path.join(appPath, "Contents", "Info.plist")], { timeout: 5000, maxBuffer: 16384 })).stdout.trim();
+    const [sha, branch, dirty, root, role] = await Promise.all([
+        git("rev-parse", "HEAD"), git("branch", "--show-current"), git("status", "--porcelain=v1", "--untracked-files=all"),
+        git("rev-parse", "--show-toplevel"), plist("EquinoxLocalRuntimeRole"),
+    ]);
+    if (sha !== expectedSha || branch !== "main" || dirty || root !== repo || role !== "source" || await plist("EquinoxLocalSourceSha") !== installedSha) {
+        throw new Error("Factory refresh refused: local main or original installed Source identity changed.");
+    }
+    // Let /api/v1/update/apply finish its HTTP response before the owner quits.
+    await sleep(1200);
+    const shutdown = await requestDesktopUpdateShutdown({ homeDir: os.homedir() });
+    const ownerPid = "ownerPid" in shutdown ? shutdown.ownerPid : undefined;
+    if (typeof ownerPid !== "number" || !Number.isSafeInteger(ownerPid) || ownerPid < 1)
+        throw new Error("Source desktop shutdown owner identity is missing.");
+    let stopped = false;
+    try {
+        for (let attempt = 0; attempt < 90; attempt++) {
+            const processState = await execFile("/bin/ps", ["-p", String(ownerPid), "-o", "comm="], { timeout: 3000 }).then(r => r.stdout.trim()).catch(() => "");
+            const portBusy = await execFile("/usr/sbin/lsof", ["-nP", "-iTCP:24891", "-sTCP:LISTEN", "-t"], { timeout: 5000 }).then(r => Boolean(r.stdout.trim())).catch((error) => {
+                if (Number(error.code) === 1)
+                    return false;
+                throw error;
+            });
+            if (!processState && !portBusy) {
+                stopped = true;
+                break;
+            }
+            if (processState && processState !== path.join(appPath, "Contents", "MacOS", "applet")) {
+                throw new Error("Source desktop owner PID identity changed during shutdown.");
+            }
+            await sleep(1000);
+        }
+        if (!stopped)
+            throw new Error("Source desktop or its original port did not stop safely.");
+        if (await plist("EquinoxLocalSourceSha") !== installedSha)
+            throw new Error("Original installed Source SHA changed before replacement.");
+        await prepareSourceAppHost({ electronSource: true });
+        if (await plist("EquinoxLocalSourceSha") !== expectedSha || await plist("EquinoxLocalRuntimeRole") !== "source") {
+            throw new Error("New Source desktop did not preserve its exact commit and role.");
+        }
+        await execFile("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], { timeout: 60_000 });
+    }
+    finally {
+        // The exact owner acknowledged shutdown. Even on a source build failure,
+        // reopen the existing app, without touching private settings or creating
+        // a second updater.
+        await execFile("/usr/bin/open", ["-a", appPath], { timeout: 15_000 });
+    }
+}
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
     const args = process.argv.slice(2);
-    if (args.length > 1 || (args.length === 1 && args[0] !== "--electron-source"))
-        throw new Error("Use prepare-source-app-host [--electron-source]; source config remains EQUINOX_LOCAL_DEV_RUNTIME_CONFIG.");
-    prepareSourceAppHost({ electronSource: args[0] === "--electron-source" }).then((result) => {
+    const refresh = args.length === 3 && args[0] === "--electron-source-refresh" && /^[a-f0-9]{40}$/u.test(args[1]) && /^[a-f0-9]{40}$/u.test(args[2]);
+    if (!refresh && (args.length > 1 || (args.length === 1 && args[0] !== "--electron-source"))) {
+        throw new Error("Use prepare-source-app-host [--electron-source] or the exact Source refresh handoff.");
+    }
+    const work = refresh ? refreshInstalledSourceElectron(args[1], args[2]) : prepareSourceAppHost({ electronSource: args[0] === "--electron-source" });
+    work.then((result) => {
         process.stdout.write(`${JSON.stringify(result)}\n`);
     }).catch((error) => {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
