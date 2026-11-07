@@ -74,7 +74,7 @@ npm run deploy:dry
 
 `release:set-version` updates **`src/data/release.json`**, the single source for visible release labels. The next build updates all locales and the preview. Checks require both stable manifests to agree with that version. Installer URLs, reviewer ZIPs, reviewer test text, hashes and the Worker release proxy are unchanged.
 
-`miniflare`'s `sharp` dependency is pinned to **0.35.4** via a narrow override, avoiding the libheif advisory in its upstream 0.35.2 pin without downgrading Wrangler. Revisit the override when Miniflare updates its own dependency.
+`miniflare`'s `sharp` dependency is pinned to **0.35.5** via a narrow override, avoiding the libheif advisory in its upstream 0.35.2 pin without downgrading Wrangler. Revisit the override when Miniflare updates its own dependency.
 
 ## Content and design
 

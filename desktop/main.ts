@@ -21,7 +21,7 @@ import type { ShellPreferences, ShellPreferenceStore } from "./shell-preferences
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(directory);
-const PINNED_ELECTRON = "46.0.0-alpha.5";
+const PINNED_ELECTRON = "46.0.0-alpha.7";
 const applicationMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const runtimeRole = app.isPackaged ? applicationMetadata.equinoxRuntimeRole : "development";
 if (!["development", "managed", "source"].includes(runtimeRole)) throw new Error("Unknown desktop application role.");

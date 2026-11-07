@@ -322,7 +322,7 @@ async function buildManagedShell(rootDir, releaseDir, transaction, sourceSha, co
         sourceSha,
         shellVersion: EQUINOX_LOCAL_DESKTOP_SHELL_VERSION,
     });
-    if (built.target !== contract.target || built.role !== "managed" || built.electron !== "46.0.0-alpha.5") {
+    if (built.target !== contract.target || built.role !== "managed" || built.electron !== "46.0.0-alpha.7") {
         throw new Error("Managed Windows Electron shell identity mismatch.");
     }
     await assertNormalTree(built.output);

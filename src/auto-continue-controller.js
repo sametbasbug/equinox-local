@@ -8,7 +8,6 @@ function continuationPrompt(taskId, checkpointRevision) {
     return [
         `Continue task ${taskId} from checkpoint ${checkpointRevision}.`,
         "Read the latest Task Capsule from Equinox Local, follow its current objective and next steps, and continue from the safe checkpoint.",
-        "Do not repeat completed work.",
     ].join(" ");
 }
 function extensionAutoContinueVersion(contextSnapshot) {

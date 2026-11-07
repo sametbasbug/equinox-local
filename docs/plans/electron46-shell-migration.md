@@ -345,3 +345,7 @@ On2026-11-06 the maintainer explicitly approved7.0.0, merging the reviewed migra
 ## Next continuation
 
 Finish ordinary exact-head PR #334 merge and read back its native/signed publication; keep Source resident and private composition/settings/data intact. Continue focused fixes from the maintainer's ordinary Windows install observation. Do not turn native build, Source installed proof or successful registration into unexecuted Windows/Intel GUI, managed-idempotence or OS login/permission claims.
+
+### 2026-11-07 dependency refresh
+
+The earlier exact `46.0.0-alpha.5` approval and observations above are historical migration evidence. Following the maintainer's explicit full-component update request, the current pinned Electron dependency and native build admission are now `46.0.0-alpha.7`; full static, packaging and signed Main verification remain required before publication.

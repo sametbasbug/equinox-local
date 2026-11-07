@@ -127,7 +127,7 @@ npm run check
 
 ### Electron shell development
 
-The shell migration in this development tree uses pinned **Electron 46.0.0-alpha.5** to display the existing Control Center. It does not introduce a Workspace, another backend or a native-chat/provider product. See the [migration plan](docs/plans/electron46-shell-migration.md) for current evidence and unfinished native gates; this section is not a release or installed-conversion announcement.
+The shell migration in this development tree uses pinned **Electron 46.0.0-alpha.7** to display the existing Control Center. It does not introduce a Workspace, another backend or a native-chat/provider product. See the [migration plan](docs/plans/electron46-shell-migration.md) for current evidence and unfinished native gates; this section is not a release or installed-conversion announcement.
 
 ```bash
 npm run build:typed-desktop
