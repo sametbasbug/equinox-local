@@ -179,6 +179,50 @@ async function admittedExactSourceFile(target: string, contents: readonly string
   } finally { await handle.close(); }
 }
 
+// Electron's Source owner restarts its wrapper without the old LaunchAgent
+// preflight. Synchronize pinned helper binaries and rewrite only the exact
+// previously generated Source wrapper before asking Electron to restart it.
+export async function synchronizeSourceDesktopRuntimes({
+  configPath = process.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG,
+  homeDir = os.homedir(),
+  nodePath = process.env.EQUINOX_LOCAL_DEV_NODE || path.join(homeDir, ".local", "share", "equinox-local-developer", "bin", "node"),
+  fsImpl = fs,
+}: {
+  configPath?: string;
+  homeDir?: string;
+  nodePath?: string;
+  fsImpl?: typeof fs;
+} = {}) {
+  const before = await readSourceRuntimeConfig({ configPath, fsImpl });
+  if (!before.configured) throw new Error("Developer runtime config is missing.");
+  const render = (config: typeof before.config) => sourceAppRuntimeWrapper(config.sourceLauncher, config.peekabooPath, {
+    nodePath, configPath: before.configPath, tunnelClient: config.tunnelClient,
+    tunnelRuntime: config.tunnelRuntime, privateCompositionModule: config.privateCompositionModule,
+    privateCompositionRoot: config.privateCompositionRoot,
+    sourceLauncherOwnsLifecycle: config.sourceLauncherOwnsLifecycle,
+  });
+  const wrapperPath = equinoxLocalAppRuntimeWrapperPath(homeDir);
+  const previousContent = render(before.config);
+  const predecessor = await admittedExactSourceFile(wrapperPath, [previousContent], fsImpl);
+  if (!predecessor) throw new Error("Existing Source Electron wrapper is missing or differs from the admitted runtime config.");
+
+  const [{ syncSourceTunnelRuntime }, { syncSourcePeekabooRuntime }] = await Promise.all([
+    import("./sync-source-tunnel-runtime.mjs"),
+    import("./sync-source-peekaboo-runtime.mjs"),
+  ]);
+  await syncSourceTunnelRuntime({ configPath: before.configPath });
+  await syncSourcePeekabooRuntime({ configPath: before.configPath });
+  const after = await readSourceRuntimeConfig({ configPath: before.configPath, fsImpl });
+  if (!after.configured) throw new Error("Developer runtime config disappeared during synchronization.");
+  const current = await admittedExactSourceFile(wrapperPath, [previousContent], fsImpl);
+  if (!current || JSON.stringify(current) !== JSON.stringify(predecessor)) {
+    throw new Error("Source Electron wrapper changed during runtime synchronization.");
+  }
+  const nextContent = render(after.config);
+  if (nextContent !== previousContent) await atomicWrite(wrapperPath, nextContent, 0o700, { fsImpl });
+  return Object.freeze({ synchronized: true });
+}
+
 async function admittedRetiredSourcePlist(homeDir: string, label: string, fsImpl: typeof fs) {
   return await admittedExactSourceFile(path.join(homeDir, "Library", "LaunchAgents", `${label}.plist`), [sourceLaunchAgentPlist({ homeDir, label })], fsImpl);
 }

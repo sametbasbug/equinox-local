@@ -58,6 +58,10 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+### Source Electron runtime synchronization
+
+- Restore pinned Peekaboo and tunnel-client synchronization for macOS Source Electron restarts. The desktop-owned restart path now verifies and updates the exact generated Source wrapper before restarting the app runtime, preventing it from relaunching obsolete helper binaries. Private Source configuration and identity checks remain enforced.
+
 ### Dependency refresh (November 2026)
 
 - Updated the four-platform pinned Node.js runtime and installers to **26.13.0**, retaining verified official archive SHA-256/lengths and Windows executable digests. CI Node setup and the website's mirrored installers use the same pins.

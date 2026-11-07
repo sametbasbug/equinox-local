@@ -48,6 +48,20 @@ export async function scheduleSourceCheckoutRestart({ fsImpl = fs, pathImpl = pa
         const home = processImpl.env.HOME;
         if (!home || !path.isAbsolute(home))
             throw new Error("Source desktop restart requires the canonical user home.");
+        // The Electron owner no longer passes through restart-runtime.sh, which
+        // used to synchronize Source Peekaboo/tunnel versions and the app wrapper.
+        // Reuse the pinned, integrity-checked Source synchronizers before restart.
+        const sourceHelperUrl = new URL("../scripts/release/prepare-source-app-host.mjs", moduleUrl).href;
+        const sourceHelper = await import(sourceHelperUrl);
+        if (typeof sourceHelper.synchronizeSourceDesktopRuntimes !== "function")
+            throw new Error("Source desktop runtime synchronizer is unavailable.");
+        const { synchronizeSourceDesktopRuntimes } = sourceHelper;
+        await synchronizeSourceDesktopRuntimes({
+            ...(processImpl.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG
+                ? { configPath: processImpl.env.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG }
+                : {}),
+            homeDir: home,
+        });
         const response = await requestDesktopRuntimeRestart({ platform: process.platform, homeDir: home });
         if (response.requested !== true)
             throw new Error("Source desktop owner did not accept restart.");
