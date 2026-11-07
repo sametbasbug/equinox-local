@@ -304,20 +304,29 @@ async function installPinnedWindowsWinapp(transaction: string, rootDir: string, 
   await downloadVerifiedPinnedWindowsDependency(`https://github.com/microsoft/winappCli/releases/download/v${EQUINOX_LOCAL_WINAPP_VERSION}/${distribution.filename}`, archive, distribution.sha256, { fetchImpl });
   await expandTrustedPinnedZip(archive, extracted);
   await assertNormalTree(extracted);
-  const expected = ["libHarfBuzzSharp.dll", "libHarfBuzzSharp.pdb", "libSkiaSharp.dll", "libSkiaSharp.pdb", "winapp.exe", "winapp.pdb"].sort();
+  const expected = [
+    "libHarfBuzzSharp.dll", "libHarfBuzzSharp.pdb", "libSkiaSharp.dll", "libSkiaSharp.pdb",
+    "winapp-devtools-schema.json", "WinApp.DevTools.Managed.dll", "WinApp.DevTools.Native.dll",
+    "WinApp.DevTools.Native.pdb", "winapp.exe", "winapp.pdb",
+  ].sort();
   const actual = (await fs.readdir(extracted)).sort();
   if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
     throw new Error("Pinned Microsoft winapp archive contents drifted.");
   }
   const destination = path.join(releaseDir, "runtime", "winapp");
   await fs.mkdir(destination, { recursive: true });
-  for (const name of ["winapp.exe", "libHarfBuzzSharp.dll", "libSkiaSharp.dll"]) {
+  for (const name of [
+    "winapp.exe", "libHarfBuzzSharp.dll", "libSkiaSharp.dll",
+    "WinApp.DevTools.Managed.dll", "WinApp.DevTools.Native.dll", "winapp-devtools-schema.json",
+  ]) {
     await fs.copyFile(path.join(extracted, name), path.join(destination, name));
   }
   await fs.copyFile(path.join(rootDir, "licenses", "microsoft-winapp-cli.txt"), path.join(destination, "LICENSE"));
   const machine = await portableExecutableMachine(path.join(destination, "winapp.exe"));
   const expectedMachine = WINDOWS_TARGETS[target].peMachine;
   if (machine !== expectedMachine) throw new Error(`Microsoft winapp architecture mismatch for ${target}: 0x${machine.toString(16)}.`);
+  const devtoolsMachine = await portableExecutableMachine(path.join(destination, "WinApp.DevTools.Native.dll"));
+  if (devtoolsMachine !== expectedMachine) throw new Error(`Microsoft winapp native DevTools architecture mismatch for ${target}: 0x${devtoolsMachine.toString(16)}.`);
   if (canExecuteTarget) {
     const version = await execFile(path.join(destination, "winapp.exe"), ["--version"], { timeout: 10_000, windowsHide: true });
     if (!`${version.stdout ?? ""}${version.stderr ?? ""}`.includes(EQUINOX_LOCAL_WINAPP_VERSION)) {

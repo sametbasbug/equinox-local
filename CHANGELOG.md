@@ -6,6 +6,7 @@
 - Refresh Electron 46 alpha, Astro, Tailwind CSS, Wrangler and native Peekaboo, winapp, tunnel-client and embedded Git distribution pins with authenticated upstream release digests. Keep Node 26.13.0 and the existing current GitHub Actions major versions.
 - Resolve build-tool dependency audit advisories by overriding vulnerable `glob` and `minimatch` subdependencies to patched releases, without downgrading Electron Packager.
 - Refresh the legacy Windows WebView2 package reference, and include the website in Dependabot's weekly npm update coverage.
+- Admit Microsoft winapp 0.8.0's verified DevTools payload inventory and bundle its required runtime DLLs and schema on Windows.
 
 ## [7.0.0] - 2026-11-06
 
