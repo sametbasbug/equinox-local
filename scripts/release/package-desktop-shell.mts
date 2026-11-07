@@ -68,7 +68,7 @@ async function packageDesktopShell({ rootDir, outputDir, target }: Required<Desk
   if (identity && process.platform !== platform) throw new Error("Managed desktop packaging requires its native build host.");
   const packageJson = JSON.parse(await fs.readFile(path.join(rootDir, "package.json"), "utf8"));
   const version = packageJson.devDependencies?.electron;
-  if (version !== "46.0.0-alpha.5") throw new Error("Desktop build requires the exact approved Electron pin.");
+  if (version !== "46.0.0-alpha.7") throw new Error("Desktop build requires the exact approved Electron pin.");
   await fs.mkdir(outputDir, { recursive: true, mode: 0o700 });
   const outputStat = await fs.lstat(outputDir);
   if (!outputStat.isDirectory() || outputStat.isSymbolicLink() || await fs.realpath(outputDir) !== outputDir) {

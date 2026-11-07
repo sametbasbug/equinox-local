@@ -18,6 +18,17 @@ updates:
         versions:
           - 1.2.0-beta.15
 
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:10"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

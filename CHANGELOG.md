@@ -1,3 +1,12 @@
+## Unreleased (after 7.0.0)
+
+### Dependency and component maintenance (2026-11-07)
+
+- Remove the redundant final sentence from Auto Continue checkpoint prompts; Task Capsule instructions remain unchanged.
+- Refresh Electron 46 alpha, Astro, Tailwind CSS, Wrangler and native Peekaboo, winapp, tunnel-client and embedded Git distribution pins with authenticated upstream release digests. Keep Node 26.13.0 and the existing current GitHub Actions major versions.
+- Resolve build-tool dependency audit advisories by overriding vulnerable `glob` and `minimatch` subdependencies to patched releases, without downgrading Electron Packager.
+- Refresh the legacy Windows WebView2 package reference, and include the website in Dependabot's weekly npm update coverage.
+
 ## [7.0.0] - 2026-11-06
 
 ### Shared Electron application shell

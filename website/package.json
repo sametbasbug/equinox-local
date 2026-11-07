@@ -13,10 +13,10 @@
     "deploy": "npm run check && wrangler deploy"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "4.3.3",
-    "astro": "7.4.4",
-    "tailwindcss": "4.3.3",
-    "wrangler": "4.156.1"
+    "@tailwindcss/vite": "4.3.5",
+    "astro": "7.4.7",
+    "tailwindcss": "4.3.5",
+    "wrangler": "4.158.0"
   },
   "overrides": {
     "miniflare": {
