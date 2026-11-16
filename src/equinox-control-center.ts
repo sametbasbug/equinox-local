@@ -2248,7 +2248,7 @@ function renderTurnBudgetLive() {
 }
 
 function renderTurnBudget() {
-  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2, autoContinueMaxHops: 10 };
+  const draft = state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2, autoContinueMaxHops: 20 };
   const enabled = $("turn-budget-enabled");
   const cutoff = $("turn-budget-cutoff");
   const fallbackReset = $("turn-budget-fallback-reset");
@@ -2265,7 +2265,7 @@ function renderTurnBudget() {
     fallbackReset.disabled = draft.enabled === false || state.turnBudgetBusy;
   }
   if (autoContinueMaxHops) {
-    autoContinueMaxHops.value = String(draft.autoContinueMaxHops || 10);
+    autoContinueMaxHops.value = String(draft.autoContinueMaxHops || 20);
     autoContinueMaxHops.disabled = state.turnBudgetBusy;
   }
   if (enabled) enabled.disabled = state.turnBudgetBusy;
@@ -3758,8 +3758,8 @@ async function saveTurnBudgetSettings() {
     showError(new Error("Fallback idle timeout must be an integer between 1 minute and the safety cutoff."));
     return false;
   }
-  if (!Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < 1 || autoContinueMaxHops > 20) {
-    showError(new Error("Auto Continue maximum hops must be an integer between 1 and 20."));
+  if (!Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < 1 || autoContinueMaxHops > 100) {
+    showError(new Error("Auto Continue maximum hops must be an integer between 1 and 100."));
     return false;
   }
   clearError();

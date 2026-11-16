@@ -74,7 +74,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.13.0
+          node-version: 26.13.1
 
       - name: Plan exact-SHA native artifacts
         id: plan
@@ -146,7 +146,7 @@ jobs:
       - name: Set up native Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 26.13.0
+          node-version: 26.13.1
           architecture: ${{ matrix.arch }}
           cache: npm
 
@@ -390,7 +390,7 @@ jobs:
       - name: Install exact Node runtime
         uses: actions/setup-node@v7
         with:
-          node-version: 26.13.0
+          node-version: 26.13.1
 
       - name: Download four native CI artifacts
         uses: actions/download-artifact@v8
