@@ -199,6 +199,7 @@ import {
 } from "./equinox-local-doctor.js";
 import {
   inspectSourceCheckoutVersion,
+  inspectSourceNodeRuntime,
   inspectSourcePeekabooRuntime,
   inspectSourceTunnelRuntime,
 } from "./equinox-local-source-runtime.js";
@@ -623,8 +624,15 @@ async function factoryUpdateStatus() {
         !/^[a-f0-9]{40}$/u.test(installedSha) || !/^[a-f0-9]{40}$/u.test(targetSha)) {
       return {mode:"factory-source",state:"blocked",currentSha:installedSha,targetSha,applying:Boolean(current),reason:"Factory requires a clean main checkout and an installed Source-role Electron application."};
     }
-    return {mode:"factory-source",state:installedSha===targetSha?"up_to_date":"behind",currentSha:installedSha,targetSha,
-      updateAvailable:installedSha!==targetSha,applying:Boolean(current),restartScheduledFor:current?factoryUpdatePending:null};
+    const [node, tunnel, peekaboo] = await Promise.all([
+      inspectSourceNodeRuntime({ homeDir: runtimeHomeDir }),
+      inspectSourceTunnelRuntime({ configPath: runtimeEnv.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG }),
+      inspectSourcePeekabooRuntime({ configPath: runtimeEnv.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG }),
+    ]);
+    const runtimeDrift = [node, tunnel, peekaboo].some(item => item.synchronized !== true);
+    const updateAvailable = installedSha !== targetSha || runtimeDrift;
+    return {mode:"factory-source",state:updateAvailable?"behind":"up_to_date",currentSha:installedSha,targetSha,
+      updateAvailable,applying:Boolean(current),restartScheduledFor:current?factoryUpdatePending:null};
   } catch {
     return {mode:"factory-source",state:"unavailable",applying:Boolean(current),reason:"Factory source identity could not be verified."};
   }
@@ -2951,7 +2959,8 @@ async function getControlCenterDoctorStatus({ probeTerminal = false } = {}) {
     homeDir: runtimeHomeDir,
     supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
   });
-  const [developmentTunnel, developmentPeekaboo, sourceCheckout, peekabooStatus] = await Promise.all([
+  const [developmentNode, developmentTunnel, developmentPeekaboo, sourceCheckout, peekabooStatus] = await Promise.all([
+    equinoxLocalInstallation.kind === "source" ? inspectSourceNodeRuntime({ homeDir: runtimeHomeDir }) : Promise.resolve(null),
     equinoxLocalInstallation.kind === "source" ? inspectSourceTunnelRuntime() : Promise.resolve(null),
     equinoxLocalInstallation.kind === "source" ? inspectSourcePeekabooRuntime() : Promise.resolve(null),
     equinoxLocalInstallation.kind === "source" ? inspectSourceCheckoutVersion() : Promise.resolve(null),
@@ -2989,6 +2998,7 @@ async function getControlCenterDoctorStatus({ probeTerminal = false } = {}) {
     // The legacy coordinator snapshot alone omits `main` entirely.
     update: await getCombinedUpdateStatus(),
     onboarding,
+    developmentNode,
     developmentTunnel,
     developmentPeekaboo,
     homeDir: runtimeHomeDir,

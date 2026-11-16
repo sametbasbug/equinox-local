@@ -58,6 +58,11 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+### Factory Source update runtime synchronization
+
+- Fix macOS Factory's Control Center Update path to synchronize the pinned Node.js, Peekaboo and tunnel-client before preparing the new Source Electron app. Previously only the separate Restart path synchronized Peekaboo/tunnel, so Update advanced the commit but left old helper processes running.
+- Let a clean same-SHA Factory installation offer Update when its pinned helper versions drift, and report Source Node.js version drift in Doctor alongside Peekaboo and tunnel-client.
+
 ### Auto Continue limits and dependency refresh (2026-11-16)
 
 - Auto Continue defaults to **20** hops, supports a configured safety ceiling of **100** hops and enforces that range consistently in the UI, settings API, Task Capsules and delivery controller. Saved user preferences remain respected.

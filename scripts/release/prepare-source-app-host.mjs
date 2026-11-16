@@ -198,10 +198,12 @@ export async function synchronizeSourceDesktopRuntimes({ configPath = process.en
     const predecessor = await admittedExactSourceFile(wrapperPath, [previousContent], fsImpl);
     if (!predecessor)
         throw new Error("Existing Source Electron wrapper is missing or differs from the admitted runtime config.");
-    const [{ syncSourceTunnelRuntime }, { syncSourcePeekabooRuntime }] = await Promise.all([
+    const [{ syncSourceTunnelRuntime }, { syncSourcePeekabooRuntime }, { syncSourceNodeRuntime }] = await Promise.all([
         import("./sync-source-tunnel-runtime.mjs"),
         import("./sync-source-peekaboo-runtime.mjs"),
+        import("./sync-source-node-runtime.mjs"),
     ]);
+    await syncSourceNodeRuntime({ homeDir });
     await syncSourceTunnelRuntime({ configPath: before.configPath });
     await syncSourcePeekabooRuntime({ configPath: before.configPath });
     const after = await readSourceRuntimeConfig({ configPath: before.configPath, fsImpl });
@@ -403,6 +405,9 @@ async function refreshInstalledSourceElectron(expectedSha, installedSha) {
             throw new Error("Source desktop or its original port did not stop safely.");
         if (await plist("EquinoxLocalSourceSha") !== installedSha)
             throw new Error("Original installed Source SHA changed before replacement.");
+        // The Update button bypasses restart_runtime: synchronize Source Node,
+        // tunnel and Peekaboo before rebuilding the exact admitted Source wrapper.
+        await synchronizeSourceDesktopRuntimes();
         await prepareSourceAppHost({ electronSource: true });
         if (await plist("EquinoxLocalSourceSha") !== expectedSha || await plist("EquinoxLocalRuntimeRole") !== "source") {
             throw new Error("New Source desktop did not preserve its exact commit and role.");

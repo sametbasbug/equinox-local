@@ -61,7 +61,7 @@ function windowsDoctorProbeEnvironment(env = process.env) {
         ].join(";"),
     });
 }
-export async function getEquinoxLocalDoctorStatus({ installation, config, runtimeHealthState, runtimeVersion, sourceCheckoutVersion = null, browser = {}, peekaboo = {}, desktop = {}, update = {}, onboarding = {}, developmentTunnel = null, developmentPeekaboo = null, host = null, homeDir = os.homedir(), fsImpl = fs, verifyWindowsAcl = null, readCurrentReleaseImpl = readManagedCurrentRelease, readMainNativePointerImpl = readEquinoxLocalMainNativePointer, readMainSourcePointerImpl = readEquinoxLocalMainSourcePointer, assertWindowsStableShellImpl = assertWindowsStableShellOwnedByRelease, assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership, readWindowsStartupImpl = readWindowsStartupRegistrationOwnership, runtimeEnv = process.env, terminalExecution = null, now = () => new Date(), } = {}) {
+export async function getEquinoxLocalDoctorStatus({ installation, config, runtimeHealthState, runtimeVersion, sourceCheckoutVersion = null, browser = {}, peekaboo = {}, desktop = {}, update = {}, onboarding = {}, developmentNode = null, developmentTunnel = null, developmentPeekaboo = null, host = null, homeDir = os.homedir(), fsImpl = fs, verifyWindowsAcl = null, readCurrentReleaseImpl = readManagedCurrentRelease, readMainNativePointerImpl = readEquinoxLocalMainNativePointer, readMainSourcePointerImpl = readEquinoxLocalMainSourcePointer, assertWindowsStableShellImpl = assertWindowsStableShellOwnedByRelease, assertWindowsNativeHostImpl = assertWindowsNativeMessagingHostOwnership, readWindowsStartupImpl = readWindowsStartupRegistrationOwnership, runtimeEnv = process.env, terminalExecution = null, now = () => new Date(), } = {}) {
     const checks = [];
     const hostDescriptor = host || (() => {
         try {
@@ -319,6 +319,15 @@ export async function getEquinoxLocalDoctorStatus({ installation, config, runtim
             checks.push(check("source-version", "Source checkout version", sourceMatchesRuntime ? "pass" : "attention", sourceMatchesRuntime
                 ? `Running process matches source checkout version ${sourceCheckoutVersion}.`
                 : `Source checkout is version ${sourceCheckoutVersion}, but the running process is ${runtimeVersion || "unknown"}. Restart Equinox Local to load the current source.`));
+        }
+        if (installation?.kind === "source" && developmentNode) {
+            const actual = developmentNode.actualVersion || "unknown";
+            const expected = developmentNode.expectedVersion || "unknown";
+            checks.push(check("development-node", "Development Node.js runtime", developmentNode.configured === false ? "optional" : developmentNode.synchronized === true ? "pass" : "attention", developmentNode.configured === false
+                ? "No private source-runtime configuration is present, so Node.js synchronization is not checked."
+                : developmentNode.synchronized === true
+                    ? `Development Node.js ${actual} matches the pinned runtime version.`
+                    : `Development Node.js ${actual} does not match pinned version ${expected}. Use Update or Restart to synchronize it.`));
         }
         if (installation?.kind === "source" && developmentTunnel) {
             if (developmentTunnel.configured === false) {
