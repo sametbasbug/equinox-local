@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
-import { EQUINOX_LOCAL_PEEKABOO_VERSION, EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, } from "./equinox-local-runtime-versions.js";
+import { EQUINOX_LOCAL_NODE_VERSION, EQUINOX_LOCAL_PEEKABOO_VERSION, EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, } from "./equinox-local-runtime-versions.js";
 const execFile = promisify(execFileCallback);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE_ROOT = path.basename(MODULE_DIR) === "src" ? path.dirname(MODULE_DIR) : MODULE_DIR;
@@ -220,6 +220,33 @@ export async function inspectSourceCheckoutVersion({ sourceRoot = MODULE_DIR, fs
     catch {
         return Object.freeze({ available: false, version: null });
     }
+}
+export async function inspectSourceNodeRuntime({ homeDir = process.env.HOME, fsImpl = fs, execFileImpl = execFile, expectedVersion = EQUINOX_LOCAL_NODE_VERSION, } = {}) {
+    const configured = await readSourceRuntimeConfig({ fsImpl }).then(value => value.configured).catch(() => false);
+    if (!configured)
+        return Object.freeze({ configured: false, expectedVersion, actualVersion: null, synchronized: null, needsAttention: false });
+    let actualVersion = null;
+    let synchronized = false;
+    try {
+        if (!homeDir || !path.isAbsolute(homeDir) || process.platform !== "darwin")
+            throw new Error("Invalid Source Node host.");
+        const nodeRoot = path.join(homeDir, "Library", "Application Support", "Equinox Local Developer", "runtime", "node");
+        const pointer = path.join(nodeRoot, "current");
+        const stat = await fsImpl.lstat(pointer);
+        if (!stat.isSymbolicLink() || stat.uid !== process.getuid())
+            throw new Error("Source Node pointer is unsafe.");
+        const relative = await fsImpl.readlink(pointer);
+        if (!/^versions\/\d+\.\d+\.\d+-darwin-(?:arm64|x64)$/u.test(relative))
+            throw new Error("Source Node pointer is not admitted.");
+        const binary = path.join(nodeRoot, "current", "bin", "node");
+        const { stdout } = await execFileImpl(binary, ["--version"], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+        actualVersion = String(stdout).trim().replace(/^v/u, "");
+        synchronized = relative === `versions/${expectedVersion}-darwin-${process.arch}` && actualVersion === expectedVersion;
+    }
+    catch {
+        // Report drift without revealing developer runtime paths.
+    }
+    return Object.freeze({ configured: true, expectedVersion, actualVersion, synchronized, needsAttention: !synchronized });
 }
 export async function inspectSourceTunnelRuntime({ configPath, fsImpl = fs, execFileImpl = execFile, expectedVersion = EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION, uid = typeof process.getuid === "function" ? process.getuid() : null, } = {}) {
     try {

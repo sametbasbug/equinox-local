@@ -48,6 +48,7 @@ type DoctorOptions = {
   update?:{selfUpdateSupported?:boolean;configured?:boolean;
     main?:{mode?:string;checkSupported?:boolean;applyAvailable?:boolean;currentSha?:string | null}};
   onboarding?:{needsAttention?:boolean;issue?:string;connectedThroughTunnel?:boolean;transportConfigured?:boolean};
+  developmentNode?:{configured?:boolean;actualVersion?:string | null;expectedVersion?:string;synchronized?:boolean | null} | null;
   developmentTunnel?:{configured?:boolean;actualVersion?:string;expectedVersion?:string;synchronized?:boolean} | null;
   developmentPeekaboo?:{configured?:boolean;actualVersion?:string;expectedVersion?:string;synchronized?:boolean} | null;
   host?:DoctorHost | null;homeDir?:string;fsImpl?:typeof fs;
@@ -146,6 +147,7 @@ export async function getEquinoxLocalDoctorStatus({
   desktop = {},
   update = {},
   onboarding = {},
+  developmentNode = null,
   developmentTunnel = null,
   developmentPeekaboo = null,
   host = null,
@@ -519,6 +521,21 @@ export async function getEquinoxLocalDoctorStatus({
         sourceMatchesRuntime
           ? `Running process matches source checkout version ${sourceCheckoutVersion}.`
           : `Source checkout is version ${sourceCheckoutVersion}, but the running process is ${runtimeVersion || "unknown"}. Restart Equinox Local to load the current source.`,
+      ));
+    }
+
+    if (installation?.kind === "source" && developmentNode) {
+      const actual = developmentNode.actualVersion || "unknown";
+      const expected = developmentNode.expectedVersion || "unknown";
+      checks.push(check(
+        "development-node",
+        "Development Node.js runtime",
+        developmentNode.configured === false ? "optional" : developmentNode.synchronized === true ? "pass" : "attention",
+        developmentNode.configured === false
+          ? "No private source-runtime configuration is present, so Node.js synchronization is not checked."
+          : developmentNode.synchronized === true
+            ? `Development Node.js ${actual} matches the pinned runtime version.`
+            : `Development Node.js ${actual} does not match pinned version ${expected}. Use Update or Restart to synchronize it.`,
       ));
     }
 
