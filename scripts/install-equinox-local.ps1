@@ -141,14 +141,14 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $node = Join-Path (Join-Path $nodeStage $nodeBase) 'node.exe'
   $installedNode = Get-VerifiedInstalledMainNode $nodeExeSha
   if ($null -ne $installedNode) {
-    Write-Info "reusing independently SHA-256 verified installed Node $MainNodeVersion ($Target)"
+    Write-Info "reusing SHA-256 verified Node $MainNodeVersion ($Target) from the existing installation for signed-update verification only; the new release supplies its own Node runtime"
     [IO.Directory]::CreateDirectory((Join-Path $nodeStage $nodeBase)) | Out-Null
     [IO.File]::Copy($installedNode, $node, $false)
     Assert-NormalFile $node 1 200000000 | Out-Null
     if ((Get-Sha256 $node) -cne $nodeExeSha) { Fail 'staged installed Node digest is invalid' }
   } else {
     $nodeUrl = 'https://nodejs.org/dist/v' + $MainNodeVersion + '/' + $nodeBase + '.zip'
-    Write-Info "downloading pinned Node $MainNodeVersion ($Target)"
+    Write-Info "downloading pinned verification Node $MainNodeVersion ($Target) for installer bootstrap; the signed release supplies its own Node runtime"
     Save-BoundedHttpsFile $nodeUrl $nodeZip $nodeBytes
     Assert-NormalFile $nodeZip $nodeBytes $nodeBytes | Out-Null
     if ((Get-Sha256 $nodeZip) -cne $nodeSha) { Fail 'pinned Node SHA-256 is invalid' }
@@ -508,7 +508,7 @@ function Invoke-EquinoxLocalInstall {
       catch { Write-Warning "Old executable cleanup was deferred at $savedRoot" }
     }
     Write-Output $freshResult[0]
-    Write-Info 'signed Main is installed and healthy'
+    Write-Info 'signed Main is installed and healthy with its own bundled Node runtime'
     return
   } finally {
     if ([IO.Directory]::Exists($tempRoot)) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }

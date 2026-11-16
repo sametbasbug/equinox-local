@@ -1,5 +1,6 @@
 ## Unreleased (after 7.0.0)
 
+- Clarify Windows installer progress messages: the previous installation's verified Node.js is reused only to validate/install the new signed Main package; the activated release brings its own independently pinned Node.js runtime.
 ### Dependency and component maintenance (2026-11-07)
 
 - Remove the redundant final sentence from Auto Continue checkpoint prompts; Task Capsule instructions remain unchanged.
