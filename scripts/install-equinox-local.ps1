@@ -141,7 +141,7 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $node = Join-Path (Join-Path $nodeStage $nodeBase) 'node.exe'
   $installedNode = Get-VerifiedInstalledMainNode $nodeExeSha
   if ($null -ne $installedNode) {
-    Write-Info "reusing independently SHA-256 verified installed Node $MainNodeVersion ($Target)"
+    Write-Info "reusing verified Node $MainNodeVersion ($Target) from the existing installation to verify the signed update"
     [IO.Directory]::CreateDirectory((Join-Path $nodeStage $nodeBase)) | Out-Null
     [IO.File]::Copy($installedNode, $node, $false)
     Assert-NormalFile $node 1 200000000 | Out-Null
