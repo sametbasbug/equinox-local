@@ -16,7 +16,7 @@ $MaxShellExecutableBytes = 450 * 1024 * 1024
 $MainVerifyUrl = 'https://local.sametbasbug.dev/downloads/updates/install-main-verify.mjs'
 $MainVerifySha256 = '7a34d70e65c5b641c63baba1b5bd00f6b64ab9237d47f01fabce67702c4f99a5'
 $MainVerifyBytes = 9728
-$MainNodeVersion = '26.13.0'
+$MainNodeVersion = '26.13.1'
 $script:InstallClock = [Diagnostics.Stopwatch]::StartNew()
 
 function Fail([string]$Message) { throw "Equinox Local installer: $Message" }
@@ -124,8 +124,8 @@ function Invoke-VerifiedMainPreparation([string]$PrivateTemp) {
   $nodeSha = ''
   $nodeExeSha = ''
   switch ($Target) {
-    'win32-arm64' { $nodeBytes = 37005985; $nodeSha = 'a9427139595156ef484e1fb08957676e09d4232368dd1743a2a9f93f3d241b14'; $nodeExeSha = '4c9baa047c4ae555050179f25a63153f1c962af32e2aad97735fb550750c5e7a' }
-    'win32-x64' { $nodeBytes = 41157375; $nodeSha = 'dcc60d59a0746999f99064a01c020445d54d84228c691cdbf25b49ac3b59150a'; $nodeExeSha = '14319838b3f355e0398c13569a90270bce4fc68f25189f58c59b03dadae0e6d5' }
+    'win32-arm64' { $nodeBytes = 37036542; $nodeSha = '181ebe431b90787113a9e4fc80d38ce86d37888a353a0386de44d2872e48cb97'; $nodeExeSha = '00edc356a01d7fe586beebe7519bb1acdff9dd62064ce4cf12ff1ed4a8d1810e' }
+    'win32-x64' { $nodeBytes = 41166246; $nodeSha = 'e2edda75bfb089654705cf65a13b58933bfd5f57148e8ebda916f58a2474f1f7'; $nodeExeSha = 'f5109dc868ec38703ad8f305e0aceece717cb60d4889873f434017af4e96cccb' }
     default { Fail 'unsupported Main verification architecture' }
   }
   $architecture = if ($Target -ceq 'win32-arm64') { 'arm64' } else { 'x64' }

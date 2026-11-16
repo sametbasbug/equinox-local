@@ -349,3 +349,5 @@ Finish ordinary exact-head PR #334 merge and read back its native/signed publica
 ### 2026-11-07 dependency refresh
 
 The earlier exact `46.0.0-alpha.5` approval and observations above are historical migration evidence. Following the maintainer's explicit full-component update request, the current pinned Electron dependency and native build admission are now `46.0.0-alpha.7`; full static, packaging and signed Main verification remain required before publication.
+
+- 2026-11-16: Full dependency refresh advances the current exact Electron and native admission pin to **46.0.0-alpha.10**. Earlier alpha.5 observations remain historical evidence, not validation of the newer prerelease.

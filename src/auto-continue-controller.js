@@ -13,7 +13,7 @@ function continuationPrompt(taskId, checkpointRevision) {
 function extensionAutoContinueVersion(contextSnapshot) {
     return Number(contextSnapshot?.extension?.capabilityVersions?.autoContinue) || 0;
 }
-export function createAutoContinueController({ store, browserBridge, agentControl, onEvent = null, now = () => Date.now(), setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout, pollMs = DEFAULT_POLL_MS, quietMs = DEFAULT_QUIET_MS, getMaxChainHops = () => 10, } = {}) {
+export function createAutoContinueController({ store, browserBridge, agentControl, onEvent = null, now = () => Date.now(), setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout, pollMs = DEFAULT_POLL_MS, quietMs = DEFAULT_QUIET_MS, getMaxChainHops = () => 20, } = {}) {
     if (!store || !browserBridge?.call || !browserBridge?.snapshot || !agentControl?.snapshot || !agentControl?.assertMutationAllowed) {
         throw new Error("Auto Continue controller dependencies are missing.");
     }
@@ -324,7 +324,7 @@ export function createAutoContinueController({ store, browserBridge, agentContro
         const continuingChain = previous?.status === "delivered" && previous.chainId;
         const hop = continuingChain ? previous.hop + 1 : 1;
         const maxChainHops = getMaxChainHops();
-        if (!Number.isInteger(maxChainHops) || maxChainHops < 1 || maxChainHops > 20)
+        if (!Number.isInteger(maxChainHops) || maxChainHops < 1 || maxChainHops > 100)
             throw new Error("Auto Continue max-hop setting is invalid.");
         if (hop > maxChainHops)
             throw new Error(`Auto Continue chain reached the ${maxChainHops}-turn safety limit. Arm a new task/checkpoint chain explicitly.`);

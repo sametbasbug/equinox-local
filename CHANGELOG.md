@@ -58,6 +58,12 @@ This project follows semantic versioning for public releases.
 
 ## [Unreleased]
 
+### Auto Continue limits and dependency refresh (2026-11-16)
+
+- Auto Continue defaults to **20** hops, supports a configured safety ceiling of **100** hops and enforces that range consistently in the UI, settings API, Task Capsules and delivery controller. Saved user preferences remain respected.
+- Refresh pinned Electron **46.0.0-alpha.10**, Node **26.13.1**, Peekaboo **4.9.9**, tunnel-client **0.0.21** and Dugite **2.56.1**. Official four-target archive digests, sizes and Windows Node executable digests remain verified in the source and external installers.
+- Refresh npm dependencies and transitive lockfiles for the runtime and website, and retain the supported GitHub Actions majors and other already-current native dependencies.
+
 ### Source Electron runtime synchronization
 
 - Restore pinned Peekaboo and tunnel-client synchronization for macOS Source Electron restarts. The desktop-owned restart path now verifies and updates the exact generated Source wrapper before restarting the app runtime, preventing it from relaunching obsolete helper binaries. Private Source configuration and identity checks remain enforced.

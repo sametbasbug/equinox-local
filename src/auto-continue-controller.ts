@@ -124,7 +124,7 @@ export function createAutoContinueController({
   clearTimeoutImpl = clearTimeout,
   pollMs = DEFAULT_POLL_MS,
   quietMs = DEFAULT_QUIET_MS,
-  getMaxChainHops = () => 10,
+  getMaxChainHops = () => 20,
 }: ControllerOptions = {} as ControllerOptions): AutoContinueController {
   if (!store || !browserBridge?.call || !browserBridge?.snapshot || !agentControl?.snapshot || !agentControl?.assertMutationAllowed) {
     throw new Error("Auto Continue controller dependencies are missing.");
@@ -428,7 +428,7 @@ export function createAutoContinueController({
     const continuingChain = previous?.status === "delivered" && previous.chainId;
     const hop = continuingChain ? previous.hop + 1 : 1;
     const maxChainHops = getMaxChainHops();
-    if (!Number.isInteger(maxChainHops) || maxChainHops < 1 || maxChainHops > 20) throw new Error("Auto Continue max-hop setting is invalid.");
+    if (!Number.isInteger(maxChainHops) || maxChainHops < 1 || maxChainHops > 100) throw new Error("Auto Continue max-hop setting is invalid.");
     if (hop > maxChainHops) throw new Error(`Auto Continue chain reached the ${maxChainHops}-turn safety limit. Arm a new task/checkpoint chain explicitly.`);
     const target = await resolver(taskId);
     const armed = await store.armContinuation({ taskId, ttlMinutes, chainId: continuingChain ? previous.chainId : null, hop, target });

@@ -360,9 +360,9 @@ function validateTurnBudgetRequest(body:JsonBoundary) {
   if (!Number.isInteger(fallbackResetMinutes) || fallbackResetMinutes < 1 || fallbackResetMinutes > value.cutoffMinutes) {
     throw badRequest("Turn Budget fallbackResetMinutes must be an integer between 1 and cutoffMinutes.");
   }
-  const autoContinueMaxHops = value.autoContinueMaxHops === undefined ? 10 : value.autoContinueMaxHops;
-  if (!Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < 1 || autoContinueMaxHops > 20) {
-    throw badRequest("Auto Continue max hops must be an integer between 1 and 20.");
+  const autoContinueMaxHops = value.autoContinueMaxHops === undefined ? 20 : value.autoContinueMaxHops;
+  if (!Number.isInteger(autoContinueMaxHops) || autoContinueMaxHops < 1 || autoContinueMaxHops > 100) {
+    throw badRequest("Auto Continue max hops must be an integer between 1 and 100.");
   }
   return { enabled: value.enabled, cutoffMinutes: value.cutoffMinutes, fallbackResetMinutes, autoContinueMaxHops };
 }
