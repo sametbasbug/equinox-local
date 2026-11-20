@@ -48,8 +48,8 @@ export async function mutateControl(route: string): Promise<void> {
 
 // The renderer can request only these existing, versioned Control Center
 // operations. No raw URL, headers, shell command or native IPC channel crosses
-// the preload bridge. The loopback hop is a temporary backend transport while
-// the existing handlers are extracted from the HTTP server.
+// the preload bridge. The renderer connects to the existing current-user authenticated IPC socket
+// through Electron main, without a browser-accessible management route.
 const UI_READ_PATHS = new Set([
   "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
