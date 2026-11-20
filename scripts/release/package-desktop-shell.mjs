@@ -116,7 +116,7 @@ async function packageDesktopShell({ rootDir, outputDir, target }, identity, rol
             nativeResource = path.dirname(helper);
         }
         else if (platform === "win32") {
-            icon = path.join(rootDir, "native", "windows", "EquinoxLocal.WindowsShell", "Assets", "EquinoxLocal.ico");
+            icon = path.join(rootDir, "app", "EquinoxLocal.ico");
         }
         const outputs = await packager({
             dir: application, name: "Equinox Local", executableName: platform === "darwin" ? "applet" : "EquinoxLocal",
