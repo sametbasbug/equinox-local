@@ -34,7 +34,7 @@ const t = (en: string, turkish: string) => tr ? turkish : en;
               <div><Icon name="browser" /><span>Agent Browser</span><strong>{t('Ready', 'Hazır')}</strong><small>{t('Dedicated Chrome profile', 'Ayrı Chrome profili')}</small></div>
               <div><Icon name="terminal" /><span>Terminal</span><strong>{t('Enabled', 'Etkin')}</strong><small>{t('Your signed-in OS user', 'Oturum açtığınız işletim sistemi kullanıcısı')}</small></div>
             </div>
-            <div class="app-bottom-row"><span><Icon name="shield" size={15} />{t('Access and connections, in one place.', 'Erişim ve bağlantılar, tek bir yerde.')}</span><span>127.0.0.1</span></div>
+            <div class="app-bottom-row"><span><Icon name="shield" size={15} />{t('Access and connections, in one place.', 'Erişim ve bağlantılar, tek bir yerde.')}</span><span>{t('Private IPC', 'Özel IPC')}</span></div>
           </section>
           <section class="preview-panel browser-panel" aria-label={t('Browser example', 'Örnek tarayıcı görünümü')}>
             <div class="app-page-heading"><div><span class="app-eyebrow">EQUINOX BROWSER</span><h3>{t('Two spaces. No crossover.', 'İki ayrı alan.')}</h3></div><Icon name="browser" /></div>
@@ -46,7 +46,7 @@ const t = (en: string, turkish: string) => tr ? turkish : en;
             <div class="app-page-heading"><div><span class="app-eyebrow">AGENT ACCESS</span><h3>{t('Make the access yours.', 'Erişimi siz belirleyin.')}</h3></div><Icon name="shield" /></div>
             <div class="app-access-row"><div><strong>{t('Structured folder access', 'Yapılandırılmış klasör erişimi')}</strong><p>{t('Full by default. Selected roots when you prefer.', 'Varsayılan Full. İsterseniz yalnızca seçili kökler.')}</p></div><span class="app-badge">Full / Selected</span></div>
             <div class="app-access-row"><div><strong>{t('Terminal & processes', 'Terminal ve süreçler')}</strong><p>{t('A separate, broad operating-system-user capability.', 'İşletim sistemi kullanıcısı yetkileriyle ayrı, geniş bir erişim.')}</p></div><Icon name="terminal" /></div>
-            <div class="app-access-row"><div><strong>{t('Desktop & Browser', 'Masaüstü ve tarayıcı')}</strong><p>{t('Browser is available on both platforms; Desktop automation is currently macOS-only.', 'Browser iki platformda da kullanılabilir; Desktop otomasyonu şu anda yalnızca macOS’tadır.')}</p></div><Icon name="desktop" /></div>
+            <div class="app-access-row"><div><strong>{t('Desktop & Browser', 'Masaüstü ve tarayıcı')}</strong><p>{t('Browser and bounded Desktop operations are supported on macOS and Windows when their native components are available.', 'Tarayıcı ve sınırlı masaüstü işlemleri, ilgili yerel bileşen kullanılabildiğinde macOS ve Windows’ta desteklenir.')}</p></div><Icon name="desktop" /></div>
             <p class="app-explainer">{t('Selected roots do not sandbox Terminal. Turn Terminal off if you need strict selected-root containment.', 'Selected kökler Terminal’i sınırlandırmaz. Kesin klasör sınırlaması için Terminal’i kapatın.')}</p>
           </section>
         </div>

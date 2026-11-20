@@ -14,7 +14,7 @@ type ValidatedConfig = Readonly<{
   projects: Readonly<Record<string, ProjectDefinition>>;
   fileRoots: Readonly<Record<string, FileRootDefinition>>;
   agentAccess: Readonly<{ files: "selected" | "full"; terminal: boolean; desktop: boolean; browser: boolean }>;
-  controlCenter: Readonly<{ enabled: boolean; port: number }>;
+  controlCenter: Readonly<{ enabled: boolean }>;
 }>;
 
 type ConfigHostOptions = {
@@ -36,7 +36,6 @@ import {
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
 
 export const EQUINOX_LOCAL_CONFIG_VERSION = 1;
-export const DEFAULT_CONTROL_CENTER_PORT = 24891;
 export const MAX_CONFIG_BYTES = 256 * 1024;
 export const MAX_CONFIG_PROJECTS = 64;
 export const MAX_CONFIG_FILE_ROOTS = 64;
@@ -241,9 +240,13 @@ export function validateEquinoxLocalConfig(rawConfig: unknown): ValidatedConfig 
     }
   }
   const enabled = controlRaw.enabled === undefined ? true : Boolean(controlRaw.enabled);
-  const port = controlRaw.port === undefined ? DEFAULT_CONTROL_CENTER_PORT : controlRaw.port;
-  if (typeof port !== "number" || !Number.isInteger(port) || port < 1024 || port > 65535) {
-    throw new Error("controlCenter.port 1024-65535 arasında bir tam sayı olmalı.");
+  // Previous HTTP-based installations may still have this key on disk.
+  // Admit only its previous validated range, but never expose or persist it
+  // in a new Electron-only config. The current runtime opens no TCP port.
+  if (controlRaw.port !== undefined &&
+      (typeof controlRaw.port !== "number" || !Number.isInteger(controlRaw.port) ||
+       controlRaw.port < 1024 || controlRaw.port > 65535)) {
+    throw new Error("Legacy controlCenter.port must be an integer between 1024 and 65535.");
   }
 
   return Object.freeze({
@@ -253,7 +256,7 @@ export function validateEquinoxLocalConfig(rawConfig: unknown): ValidatedConfig 
     projects: Object.freeze(projects),
     fileRoots: Object.freeze(fileRoots),
     agentAccess,
-    controlCenter: Object.freeze({ enabled, port }),
+    controlCenter: Object.freeze({ enabled }),
   });
 }
 

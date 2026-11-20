@@ -103,8 +103,8 @@ const englishInstall = await fs.readFile(path.join(root, 'install/index.html'), 
 const turkishHome = await fs.readFile(path.join(root, 'tr/index.html'), 'utf8');
 const turkishInstall = await fs.readFile(path.join(root, 'tr/install/index.html'), 'utf8');
 for (const [label, html, phrases] of [
-  ['English home', englishHome, ['macOS + Windows', 'Desktop automation is currently macOS-only', 'Your ChatGPT agent’s tools. On your computer.', 'Private to this computer']],
-  ['Turkish home', turkishHome, ['macOS + Windows', 'Desktop otomasyonu şu anda yalnızca macOS’tadır', 'ChatGPT ajanınızın araçları. Bilgisayarınızda.', 'Bu bilgisayara özel']],
+  ['English home', englishHome, ['macOS + Windows', 'Browser and bounded Desktop operations are supported on macOS and Windows', 'Your ChatGPT agent’s tools. On your computer.', 'Private to this computer']],
+  ['Turkish home', turkishHome, ['macOS + Windows', 'Tarayıcı ve sınırlı masaüstü işlemleri, ilgili yerel bileşen kullanılabildiğinde macOS ve Windows’ta desteklenir.', 'ChatGPT ajanınızın araçları. Bilgisayarınızda.', 'Bu bilgisayara özel']],
   ['English install', englishInstall, ['WINDOWS POWERSHELL', 'install-equinox-local.ps1', 'x64 + ARM64']],
   ['Turkish install', turkishInstall, ['WINDOWS POWERSHELL', 'install-equinox-local.ps1', 'x64 + ARM64']],
 ]) {
@@ -134,10 +134,17 @@ if (releaseVersions.some((value) => !value) || new Set(releaseVersions).size !==
 const release = JSON.parse(await fs.readFile('src/data/release.json', 'utf8'));
 const updateRoot = path.join(root, 'downloads/updates');
 const windowsInstallerPresent = await fs.access(path.join(updateRoot, 'install-equinox-local.ps1')).then(() => true, () => false);
+if (releaseVersions[0] !== release.version) throw new Error('Public release copy differs from the numbered GitHub release.');
+// Archived signed Stable manifests are retained for older installers, NOT the
+// current Main product. Validate historical coherence independently without
+// forcing the public 7.0.0 site to mislabel immutable Stable 6.2.1 files.
 const stableTargets = windowsInstallerPresent ? ['darwin-arm64', 'darwin-x64', 'win32-arm64', 'win32-x64'] : ['darwin-arm64', 'darwin-x64'];
+let historicalStableVersion;
 for (const target of stableTargets) {
   const manifest = JSON.parse(await fs.readFile(path.join(updateRoot, `stable-${target}.json`), 'utf8'));
-  if (manifest.version !== release.version || releaseVersions[0] !== release.version) throw new Error(`release copy and ${target} stable channel disagree`);
+  if (typeof manifest.version !== 'string' || !/^\d+\.\d+\.\d+$/u.test(manifest.version)) throw new Error(`Invalid archival Stable manifest: ${target}`);
+  if (historicalStableVersion !== undefined && manifest.version !== historicalStableVersion) throw new Error(`Historical Stable manifests disagree: ${target}`);
+  historicalStableVersion = manifest.version;
 }
 
 // Check the built result, including localization and fragment links, not just source templates.
