@@ -36,7 +36,7 @@ Cloudflare R2 keeps the **three most recent complete native SHA snapshots**, whi
 
 ## Platform behavior
 
-The Electron shell changes described here are in the development tree; source review and development artifacts do not announce an installed conversion or a newly published signed Main. See the [migration plan](plans/electron46-shell-migration.md) for remaining native and publication gates.
+The Electron shell changes described here are in the development tree; source review and development artifacts do not announce an installed conversion or a newly published signed Main. See the [7.0.0 completion plan](plans/electron7-completion.md) for remaining native, lifecycle and publication gates. In the current branch, the UI is packaged while existing HTTP APIs remain as transitional transport; this is not yet an installed release.
 
 **First legacy → Electron migration:** use the maintained external installer once, after a compatible signed Electron Main is available. A legacy Control Center runs its own immutable bundled installer; updating the website does not replace those bytes. Electron candidate inspection requires the declared `electron-v1` desktop lifecycle protocol and rejects old callers before their owner-stop or program-preservation sequence. Inspection remains read-only and never silently hands off an installation. Subsequent Electron updates use the protocol-aware installer bundled with that release. Website rollout and signed Main promotion must be coordinated: the new external script intentionally fails closed against an older incompatible signed candidate rather than falling back to unchecked replacement.
 
