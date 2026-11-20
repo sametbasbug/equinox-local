@@ -25,43 +25,9 @@ function isAbsoluteLocalFolderPath(value) {
     return /^\\\\[^\\/]+[\\/][^\\/]+[\\/].+/u.test(value);
 }
 async function pickLocalFolder() {
-    if (window.equinoxShell)
-        return window.equinoxShell.pickFolder();
-    const bridge = window.chrome?.webview;
-    if (typeof bridge?.postMessage !== "function"
-        || typeof bridge?.addEventListener !== "function"
-        || typeof bridge?.removeEventListener !== "function") {
-        return mutationJson("/api/v1/folder-picker", "POST", {});
-    }
-    const requestId = typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `picker_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    return new Promise((resolve, reject) => {
-        let timeout = null;
-        const cleanup = () => {
-            if (timeout !== null)
-                clearTimeout(timeout);
-            bridge.removeEventListener("message", onMessage);
-        };
-        const onMessage = (event) => {
-            const message = event?.data;
-            if (message?.type !== "equinox-folder-picker-result" || message.requestId !== requestId)
-                return;
-            cleanup();
-            if (typeof message.error === "string" && message.error) {
-                reject(new Error(message.error));
-                return;
-            }
-            const path = typeof message.path === "string" ? message.path : null;
-            resolve({ cancelled: message.cancelled === true, path });
-        };
-        bridge.addEventListener("message", onMessage);
-        timeout = setTimeout(() => {
-            cleanup();
-            reject(new Error("Native folder selection timed out."));
-        }, 120_000);
-        bridge.postMessage(JSON.stringify({ type: "equinox-folder-picker", requestId }));
-    });
+    if (!window.equinoxShell?.pickFolder)
+        throw new Error("Native folder selection is unavailable.");
+    return window.equinoxShell.pickFolder();
 }
 function normalizeTheme(value) {
     return SUPPORTED_THEMES.has(value) ? value : "system";
@@ -121,18 +87,15 @@ function initialLanguage() {
         if (native === "en" || native === "tr")
             return native;
     }
-    catch { /* Optional readonly native preference; external-browser behavior is unchanged. */ }
-    if (SUPPORTED_LANGUAGES.includes(window.__equinoxNativeLanguage))
-        return window.__equinoxNativeLanguage;
+    catch { /* Native preference is optional; locale remains the fallback. */ }
     return String(navigator.language || "").toLowerCase().startsWith("tr") ? "tr" : "en";
 }
 function notifyNativeLanguage() {
     try {
         window.equinoxShell?.setLanguage(state.language);
-        window.webkit?.messageHandlers?.equinoxNativeLanguage?.postMessage(state.language);
     }
     catch {
-        // External browsers do not expose the native bridge; language still works normally.
+        // The embedded UI keeps local preference even if the native bridge fails.
     }
 }
 const state = {
@@ -370,51 +333,22 @@ function formatUptime(totalSeconds) {
     return localizeUiText(`${Math.max(1, minutes)}m uptime`);
 }
 async function requestJson(path, options = {}) {
-    const { backgroundRefresh = false, headers: optionHeaders = {}, ...fetchOptions } = options;
-    const headers = { ...optionHeaders };
-    if (backgroundRefresh)
-        headers["x-equinox-background-refresh"] = "1";
-    if (window.equinoxShell?.requestJson) {
-        const result = await window.equinoxShell.requestJson({
-            path, method: fetchOptions.method || "GET", backgroundRefresh,
-            ...(fetchOptions.body !== undefined ? { body: fetchOptions.body } : {}),
-        });
-        if (![200, 202].includes(result.status) || result.body?.ok === false) {
-            throw new Error(result.body?.error || `${path} failed with HTTP ${result.status}.`);
-        }
-        return result.body;
-    }
-    const response = await fetch(path, {
-        cache: "no-store",
-        credentials: "same-origin",
-        ...fetchOptions,
-        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    const native = window.equinoxShell?.requestJson;
+    if (!native)
+        throw new Error("The Equinox Local desktop IPC bridge is unavailable.");
+    const result = await native({
+        path,
+        method: options.method || "GET",
+        backgroundRefresh: options.backgroundRefresh === true,
+        ...(options.body !== undefined ? { body: options.body } : {}),
     });
-    let body;
-    try {
-        body = await response.json();
+    if (![200, 202].includes(result.status) || result.body?.ok === false) {
+        throw new Error(result.body?.error || `${path} failed with status ${result.status}.`);
     }
-    catch {
-        throw new Error(`${path} returned an unreadable response.`);
-    }
-    if (!response.ok || body?.ok === false) {
-        throw new Error(body?.error || `${path} failed with HTTP ${response.status}.`);
-    }
-    return body;
+    return result.body;
 }
 async function mutationJson(path, method, body) {
-    if (window.equinoxShell?.requestJson) {
-        return await requestJson(path, { method, body: JSON.stringify(body) });
-    }
-    const session = await requestJson("/api/v1/session");
-    return await requestJson(path, {
-        method,
-        headers: {
-            "content-type": "application/json",
-            "x-equinox-csrf": session.csrfToken,
-        },
-        body: JSON.stringify(body),
-    });
+    return requestJson(path, { method, body: JSON.stringify(body) });
 }
 function showError(error) {
     setText("error-message", error instanceof Error ? error.message : String(error));
@@ -624,13 +558,9 @@ function renderDashboard() {
         ? `${peekaboo.engine === "winapp" ? "Microsoft winapp" : "Peekaboo"} ${peekaboo.version}`
         : "Optional desktop capability");
     setDot("peekaboo-status-dot", peekaboo.needsAttention ? "warn" : peekabooReady ? "good" : "neutral");
-    // The native app speaks authenticated local IPC; its public UI should not
-    // advertise the legacy HTTP status listener as the Control Center origin.
-    const desktopIpc = Boolean(window.equinoxShell?.requestJson);
-    const apiReady = desktopIpc ? Boolean(status.server?.pid && state.health) : controlCenter.active;
-    setText("api-status", apiReady ? (desktopIpc ? "Connected" : "Listening") : "Unavailable");
-    setText("api-detail", desktopIpc ? "Private desktop IPC" :
-        controlCenter.port ? `127.0.0.1:${controlCenter.port}` : "127.0.0.1 only");
+    const apiReady = Boolean(window.equinoxShell?.requestJson && status.server?.pid && state.health);
+    setText("api-status", apiReady ? "Connected" : "Unavailable");
+    setText("api-detail", "Private desktop IPC");
     setDot("api-status-dot", apiReady ? "good" : "bad");
     setText("project-count", String(configStatus.projectCount ?? Object.keys(state.config?.projects || {}).length));
     setText("folder-count", String(Object.keys(state.config?.fileRoots || {}).length));
@@ -1340,7 +1270,7 @@ function renderProjects() {
     populateSelect($("default-project-select"), projects, state.config.defaultProject);
     populateSelect($("workspace-project-select"), projects, state.config.runtime?.workspaceProject);
     populateSelect($("downloads-root-select"), fileRoots, state.config.runtime?.downloadsRoot);
-    setText("control-center-address", window.equinoxShell?.requestJson ? "Private desktop IPC" : "Local connection");
+    setText("control-center-address", "Private desktop IPC");
     setConfigEditingEnabled(!state.restartRequired);
 }
 function renderPermissions() {
