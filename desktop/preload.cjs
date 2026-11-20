@@ -10,6 +10,25 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
             return language === "tr" ? "tr" : language === "en" ? "en" : null;
         },
         pickFolder: () => ipcRenderer.invoke("equinox-shell:pick-folder"),
+        getCompanionId: () => {
+            const id = ipcRenderer.sendSync("equinox-shell:companion-snapshot");
+            return id === "nyx" || id === "hemera" || id === "asteria" ? id : "nyx";
+        },
+        setCompanionId: (id) => {
+            if (id !== "nyx" && id !== "hemera" && id !== "asteria")
+                return Promise.resolve(false);
+            return ipcRenderer.invoke("equinox-shell:companion-select", id);
+        },
+        onCompanionChanged: (callback) => {
+            if (typeof callback !== "function")
+                return () => { };
+            const listener = (_event, id) => {
+                if (id === "nyx" || id === "hemera" || id === "asteria")
+                    callback(id);
+            };
+            ipcRenderer.on("equinox-shell:companion-changed", listener);
+            return () => ipcRenderer.removeListener("equinox-shell:companion-changed", listener);
+        },
         requestJson: (request) => ipcRenderer.invoke("equinox-shell:control-request", request),
         setLanguage: (language) => {
             if (language === "en" || language === "tr") {

@@ -3,7 +3,7 @@ import type { IpcMainEvent, Rectangle } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
-import type { ShellPreferenceStore } from "./shell-preferences.js";
+import { COMPANION_IDS, type CompanionId, type ShellPreferenceStore } from "./shell-preferences.js";
 
 type Language = "en" | "tr";
 type Surface = "pet" | "actions" | "speech";
@@ -35,6 +35,7 @@ export function createCompanionController(options: CompanionOptions) {
   isolated.on("will-download", event => event.preventDefault());
   isolated.webRequest.onBeforeRequest((details, reply) => reply({ cancel: !allowedAssets.has(details.url) }));
   let language = options.language;
+  let companionId: CompanionId = options.preferences.read().companionId ?? "nyx";
   let state = "offline";
   let visible = false;
   let disposed = false;
@@ -63,7 +64,7 @@ export function createCompanionController(options: CompanionOptions) {
     for (const [kind, window] of windows) {
       if ((!surface || surface === kind) && ready.has(kind) && !window.isDestroyed()) {
         window.webContents.send("equinox-companion:snapshot", {
-          ...(kind === "pet" ? { state, paused: !visible } : {}), language,
+          ...(kind === "pet" ? { state, paused: !visible } : {}), language, companionId,
           ...(kind === "speech" ? { speech, speechId, maxWidth: speechMaxWidth, tailBottom: speechTailBottom, tailX: speechTailX } : {}),
         });
       }
@@ -123,7 +124,7 @@ export function createCompanionController(options: CompanionOptions) {
     if (disposed) throw new Error("Companion is closed.");
     const size = surface === "pet" ? { width: 132, height: 142 } : surface === "actions" ? { width: 188, height: 124 } : { width: 260, height: 72 };
     const window = new BrowserWindow({
-      ...size, show: false, title: "Equinox Companion · Nyx", frame: false, transparent: true,
+      ...size, show: false, title: `Equinox Companion · ${companionId[0]!.toUpperCase()}${companionId.slice(1)}`, frame: false, transparent: true,
       backgroundColor: "#00000000", resizable: false, minimizable: false, maximizable: false,
       fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, focusable: false,
       hasShadow: surface !== "speech", ...(process.platform === "darwin" ? { type: "panel" as const } : {}),
@@ -334,6 +335,16 @@ export function createCompanionController(options: CompanionOptions) {
     }
     lastTask = taskId; lastContinuation = continuation;
   }
+  function setCompanionId(id: CompanionId, persist = true): boolean {
+    if (disposed || !COMPANION_IDS.includes(id)) return false;
+    if (companionId === id) return true;
+    if (persist && !options.preferences.write({ companionId: id })) return false;
+    companionId = id;
+    hidePopups(); actionsRequested = false;
+    for (const win of windows.values()) if (!win.isDestroyed()) win.setTitle(`Equinox Companion · ${id[0]!.toUpperCase()}${id.slice(1)}`);
+    publish(); notify();
+    return true;
+  }
   const displaysChanged = () => {
     try {
       if (!visible) return;
@@ -346,12 +357,14 @@ export function createCompanionController(options: CompanionOptions) {
   if (options.autoShow && options.preferences.available() && options.preferences.read().companionVisible !== false) setVisible(true, false);
   return {
     update, setVisible, isVisible: () => visible,
+    companionId: () => companionId, setCompanionId,
     // Main-only one-time saved-preference application, not renderer authority.
     // No argument flushes genuine user motion before main's missing-field merge.
     applySavedPreferences(saved?: ReturnType<ShellPreferenceStore["read"]>) {
       if (disposed) return;
       if (!flushBounds()) throw new Error("Pending companion motion could not be persisted.");
       if (!saved) return;
+      if (saved.companionId && !setCompanionId(saved.companionId, false)) throw new Error("Saved companion selection could not be applied.");
       if (saved.companionBounds) {
         const pet = windows.get("pet");
         if (pet && !pet.isDestroyed()) {

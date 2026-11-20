@@ -14,7 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;getLanguage:()=>"en"|"tr"|null;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -3844,6 +3844,23 @@ function bindEvents() {
     if (state.theme === "system") applyTheme();
   });
   $("language-select").addEventListener("change", (event) => setLanguage((event.target as UiDomControl).value));
+  const companionPicker = $("companion-select");
+  companionPicker.value = window.equinoxShell?.getCompanionId() ?? "nyx";
+  companionPicker.disabled = !window.equinoxShell?.setCompanionId;
+  const unsubscribeCompanion = window.equinoxShell?.onCompanionChanged(id => { companionPicker.value = id; });
+  window.addEventListener("pagehide", () => unsubscribeCompanion?.(), { once: true });
+  companionPicker.addEventListener("change", async () => {
+    const id = companionPicker.value;
+    if (id !== "nyx" && id !== "hemera" && id !== "asteria") return;
+    companionPicker.disabled = true;
+    try {
+      if (!await window.equinoxShell?.setCompanionId(id)) throw new Error("Companion preference could not be saved.");
+      showToast(`Companion: ${id[0]!.toUpperCase()}${id.slice(1)}`);
+    } catch (error) {
+      companionPicker.value = window.equinoxShell?.getCompanionId() ?? "nyx";
+      showError(error);
+    } finally { companionPicker.disabled = false; }
+  });
   window.addEventListener("focus", refreshVisibleControlCenter);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) refreshVisibleControlCenter();

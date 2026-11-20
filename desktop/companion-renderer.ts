@@ -1,8 +1,8 @@
 // Local output-only sprite renderer. No imports, Node, backend or private configuration.
 export {};
-type NyxSnapshot = { state: string; language: "en" | "tr"; paused: boolean; speech: string; speechId: number; maxWidth: number; tailBottom: boolean; tailX: number };
-type NyxBridge = { subscribe: (callback: (value: NyxSnapshot) => void) => () => void; action: (value: string) => void; pointer: (phase: string) => void; activate: () => void; measureSpeech: (id: number, width: number, height: number) => void };
-const bridge = (window as unknown as { equinoxCompanion: NyxBridge }).equinoxCompanion;
+type CompanionSnapshot = { companionId: "nyx" | "hemera" | "asteria"; state: string; language: "en" | "tr"; paused: boolean; speech: string; speechId: number; maxWidth: number; tailBottom: boolean; tailX: number };
+type CompanionBridge = { subscribe: (callback: (value: CompanionSnapshot) => void) => () => void; action: (value: string) => void; pointer: (phase: string) => void; activate: () => void; measureSpeech: (id: number, width: number, height: number) => void };
+const bridge = (window as unknown as { equinoxCompanion: CompanionBridge }).equinoxCompanion;
 const surface = new URLSearchParams(location.search).get("surface");
 if (surface === "pet" || surface === "actions" || surface === "speech") document.body.dataset.surface = surface;
 const pet = document.getElementById("pet") as HTMLButtonElement;
@@ -121,12 +121,18 @@ let lastSpeechId = -1;
 const unsubscribe = bridge.subscribe(snapshot => {
   if (!snapshot || !["en", "tr"].includes(snapshot.language)) return;
   document.documentElement.lang = snapshot.language;
+  const companionId = ["nyx", "hemera", "asteria"].includes(snapshot.companionId) ? snapshot.companionId : "nyx";
+  const name = companionId[0]!.toUpperCase() + companionId.slice(1);
+  document.body.dataset.companion = companionId;
+  document.title = `Equinox Companion · ${name}`;
+  pet.setAttribute("aria-label", `${name} companion`);
+  pet.title = name;
   describeState();
   const tr = snapshot.language === "tr";
   document.getElementById("new-chat-label")!.textContent = tr ? "Yeni Sohbet" : "New Chat";
   document.getElementById("control-center-label")!.textContent = tr ? "Kontrol Merkezi" : "Control Center";
-  document.getElementById("hide-label")!.textContent = tr ? "Nyx'i Gizle" : "Hide Nyx";
-  document.getElementById("actions")!.setAttribute("aria-label", tr ? "Nyx Hızlı Eylemler" : "Nyx Quick Actions");
+  document.getElementById("hide-label")!.textContent = tr ? `${name}'i Gizle` : `Hide ${name}`;
+  document.getElementById("actions")!.setAttribute("aria-label", tr ? `${name} Hızlı Eylemler` : `${name} Quick Actions`);
   if (surface === "speech") {
     const label = document.getElementById("speech-text")!;
     label.textContent = typeof snapshot.speech === "string" ? snapshot.speech.slice(0, 240) : "";

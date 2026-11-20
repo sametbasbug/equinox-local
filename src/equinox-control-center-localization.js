@@ -115,6 +115,8 @@ const TR_UI = Object.freeze({
     "Desktop": "Masaüstü",
     "Local connection": "Yerel bağlantı",
     "Private desktop IPC": "Özel masaüstü IPC bağlantısı",
+    "Companion": "Companion",
+    "Desktop companion character": "Masaüstü companion karakteri",
     "Open Browser settings": "Tarayıcı ayarlarını aç",
     "Open Services": "Servisleri aç",
     "View all checks": "Tüm kontrolleri göster",
