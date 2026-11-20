@@ -205,7 +205,7 @@ export function seedEquinoxLocalConfig({ homeDir, installRoot }) {
             desktop: true,
             browser: true,
         }),
-        controlCenter: Object.freeze({ enabled: true, port: 24891 }),
+        controlCenter: Object.freeze({ enabled: true }),
     });
 }
 export function appRuntimeWrapper({ installRoot }) {

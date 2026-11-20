@@ -42,11 +42,7 @@ Keep the key private. Equinox Local never needs an OpenAI admin key for normal m
 
 ## 3. Save the values in Control Center
 
-After the managed Equinox Local installation starts, open:
-
-- <http://127.0.0.1:24891/>
-
-Under **Connect to ChatGPT**:
+After the managed Equinox Local installation starts, open the installed **Equinox Local** desktop app and choose **Connect to ChatGPT**:
 
 1. paste the Tunnel ID;
 2. paste the Runtime API key;
@@ -77,7 +73,7 @@ ChatGPT provides custom MCP plugin creation to both Free and paid users. Plugin 
 Secure MCP Tunnel is outbound-only from the Equinox Local machine to OpenAI's tunnel control plane over HTTPS. You do not need to:
 
 - open an inbound router/firewall port;
-- expose `127.0.0.1:24891`;
+- expose a Control Center management port;
 - publish the local MCP stdio process on the internet;
 - configure a public reverse proxy for Equinox Local.
 

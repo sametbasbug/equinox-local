@@ -103,8 +103,8 @@ const englishInstall = await fs.readFile(path.join(root, 'install/index.html'), 
 const turkishHome = await fs.readFile(path.join(root, 'tr/index.html'), 'utf8');
 const turkishInstall = await fs.readFile(path.join(root, 'tr/install/index.html'), 'utf8');
 for (const [label, html, phrases] of [
-  ['English home', englishHome, ['macOS + Windows', 'Desktop automation is currently macOS-only', 'Your ChatGPT agent’s tools. On your computer.', 'Private to this computer']],
-  ['Turkish home', turkishHome, ['macOS + Windows', 'Desktop otomasyonu şu anda yalnızca macOS’tadır', 'ChatGPT ajanınızın araçları. Bilgisayarınızda.', 'Bu bilgisayara özel']],
+  ['English home', englishHome, ['macOS + Windows', 'Browser and bounded Desktop operations are supported on macOS and Windows', 'Your ChatGPT agent’s tools. On your computer.', 'Private to this computer']],
+  ['Turkish home', turkishHome, ['macOS + Windows', 'Tarayıcı ve sınırlı masaüstü işlemleri, ilgili yerel bileşen kullanılabildiğinde macOS ve Windows’ta desteklenir.', 'ChatGPT ajanınızın araçları. Bilgisayarınızda.', 'Bu bilgisayara özel']],
   ['English install', englishInstall, ['WINDOWS POWERSHELL', 'install-equinox-local.ps1', 'x64 + ARM64']],
   ['Turkish install', turkishInstall, ['WINDOWS POWERSHELL', 'install-equinox-local.ps1', 'x64 + ARM64']],
 ]) {
