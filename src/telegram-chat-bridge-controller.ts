@@ -63,7 +63,7 @@ function chatBridgeVersion(contextSnapshot: ContextState | undefined): number {
   return Number(contextSnapshot?.extension?.capabilityVersions?.chatBridge) || 0;
 }
 
-function chatGptConversationIdFromUrl(value: unknown): string | null {
+export function chatGptConversationIdFromUrl(value: unknown): string | null {
   try {
     const url = new URL(String(value || ""));
     if (url.protocol !== "https:" || !["chatgpt.com", "www.chatgpt.com"].includes(url.hostname)

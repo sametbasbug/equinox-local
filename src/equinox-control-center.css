@@ -642,3 +642,25 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
 }
+
+/* Native Chat: bundled UI only. Remote ChatGPT page content is never embedded. */
+.native-chat-layout{display:grid;grid-template-columns:minmax(180px,245px) minmax(320px,1fr);gap:12px;min-height:520px;height:calc(100dvh - 205px);max-height:880px}
+.native-chat-threads,.native-chat-main{border:1px solid var(--line);border-radius:13px;background:var(--surface);min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.native-chat-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--line);padding:12px 14px;min-height:54px;font-size:13px}
+.native-chat-heading .button{padding:7px 10px;font-size:11px}
+.native-chat-thread-list{overflow:auto;flex:1;padding:7px;display:flex;flex-direction:column;gap:4px}
+.native-chat-threads>p{font-size:12px;line-height:1.5;padding:0 13px}
+.native-chat-thread{display:block;width:100%;text-align:left;border:0;border-radius:8px;background:transparent;color:var(--text);padding:11px;cursor:pointer;font:inherit;font-size:12px;overflow-wrap:anywhere}
+.native-chat-thread:hover{background:var(--surface-hover)}
+.native-chat-thread.is-selected{background:var(--accent-soft);color:var(--text);font-weight:600}
+.native-chat-feed{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:14px;padding:22px 20px;min-height:150px}
+.native-chat-empty{margin:auto;color:var(--muted);max-width:380px;font-size:13px;text-align:center;line-height:1.7}
+.native-chat-message{max-width:87%;min-width:90px;padding:12px 14px;border-radius:13px;border:1px solid var(--line);background:var(--surface-2);overflow-wrap:anywhere;white-space:pre-wrap;font-size:13px;line-height:1.65;align-self:flex-start}
+.native-chat-message.is-user{align-self:flex-end;background:var(--accent-soft);border-color:var(--accent-soft)}
+.native-chat-message small{display:block;font-size:10px;color:var(--muted);margin-bottom:5px}
+.native-chat-message.is-uncertain{border-color:var(--accent);border-style:dashed}
+.native-chat-notice{padding:9px 14px;margin:0;border-top:1px solid var(--line);font-size:11px;color:var(--text-2)}
+.native-chat-compose{padding:12px 14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.native-chat-compose textarea{width:100%;resize:vertical;min-height:58px;max-height:170px;border:1px solid var(--line-strong);border-radius:10px;background:var(--surface-2);color:var(--text);padding:12px;font:inherit;font-size:13px}
+.native-chat-compose-actions{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px}
+@media(max-width:880px){.native-chat-layout{grid-template-columns:1fr;height:auto;max-height:none}.native-chat-threads{max-height:175px}.native-chat-main{height:510px}}

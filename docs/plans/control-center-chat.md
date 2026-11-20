@@ -27,6 +27,14 @@ As documented by Chat On Steroids, its own Electron UI controls and records Chat
 4. Tie a chat to optional Equinox Task Capsule and existing notifications/continuations only on explicit selection. Do not automatically switch between Nyx (Codex), Hemera (Claude Code), Asteria (Antigravity) and ChatGPT just because the companion graphic changes.
 5. Later: conversation creation, attachments, per-chat model/effort controls and specialized external agent adapters **only after** confirmed support and manual validation. Unsupported controls must not be decorative or fake.
 
+## Implementation checkpoint (2026-11-21)
+
+A first **unreleased native UI and private transport slice** is implemented on the `equinox/native-chat-tab` branch. The fixed `Chat` section is a bundled HTML/CSS/TypeScript conversation panel, not a ChatGPT web page or `WebContentsView`. The backend reads exact Chrome Your Browser conversation identities, requires an explicit selection, reuses the existing `Telegram Chat Bridge` delivery/read-final safety contract, generates a unique browser delivery ID per new user action and never silently retries ambiguous sends. Only messages initiated from this local UI are shown, in bounded in-memory state; **existing ChatGPT history, model selector, multi-agent messages, tool cards and interim transcript are not yet imported**. There is no extra daemon, localhost listener, private key export or provider API account.
+
+Typecheck, generated runtime/desktop JavaScript parity, root static checks, and darwin-arm64/darwin-x64/win32-x64/win32-arm64 development packaging passed. The real packaged macOS UI visibly showed the Chat section, conversation sidebar, transcript area, status and composer. Its runtime was intentionally still an *older installed Factory SHA*, so the new `/api/v1/chat/*` routes were rejected with an explicit version mismatch; **no real ChatGPT text delivery was performed or verified yet**. An inline, nonpersisted bounded-controller sanity run verified exact selection, one outbound delivery for one idempotency ID, waiting and final read state. This is not end-to-end acceptance. The preview app, isolated data and temporary screenshots were removed.
+
+Do not merge/release or advertise the feature as functional until a matching backend and an authenticated real Chrome ChatGPT conversation pass actual send/read and original conversation identity checks (including uncertain-delivery handling) on macOS and Windows. No automated test files may be added.
+
 ## Risks and real acceptance
 
 - ChatGPT UI/browser extension interaction is **not an official service API**. Document account-policy risks and avoid abusive automation or workarounds to provider restrictions. Prefer supported interfaces where available; no promise that one login can power every agent backend.

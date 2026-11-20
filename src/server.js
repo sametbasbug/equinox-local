@@ -50,6 +50,7 @@ import { createEquinoxLocalControlApi, } from "./equinox-local-control-api.js";
 import { cancelTelegramPairing, configureTelegramIntegration, confirmTelegramPairing, defaultTelegramTaskStatePath, disconnectTelegramIntegration, getTelegramDownloadSettings, getTelegramIntegrationStatus, setTelegramRemoteControlEnabled, sendTelegramTyping, pollTelegramPairing, registerTelegramSendTool, sendTelegramMessage, setTelegramDownloadLocation, startTelegramPairing, syncTelegramBotCommands, testTelegramIntegration, } from "./telegram-integration.js";
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
+import { createNativeChatController } from "./equinox-local-native-chat.js";
 import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
 import { installEquinoxLocalCli, installEquinoxLocalSourceCli } from "./equinox-local-cli-installation.js";
 import { registerAuthenticatedHttpTools, } from "./authenticated-http-tools.js";
@@ -1633,6 +1634,10 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         browserBridge: equinoxBrowserBridge,
         agentControl,
     });
+    const nativeChatController = createNativeChatController({
+        browserBridge: equinoxBrowserBridge,
+        chatBridge: telegramChatBridgeController,
+    });
     const telegramTaskInboxController = createTelegramTaskInboxController({
         store: taskCapsuleStore,
         autoContinueController,
@@ -2262,6 +2267,10 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     });
     equinoxLocalControlApi = createEquinoxLocalControlApi({
         configManager: equinoxLocalConfigManager,
+        getChatThreads: () => nativeChatController.list(),
+        selectChatThread: (value) => nativeChatController.select(value),
+        getChatState: () => nativeChatController.read(),
+        sendChatText: (value) => nativeChatController.send(value),
         getStatus: async () => {
             const browser = equinoxBrowserBridge.snapshot();
             const browserSettingsByContext = { agent: null, user: null };
