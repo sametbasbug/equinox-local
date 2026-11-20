@@ -1,7 +1,10 @@
-import http from "node:http";
+import net from "node:net";
+import fs from "node:fs/promises";
+import { constants } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { CONTROL_DOCUMENT_ORIGIN } from "./control-assets.js";
 export const CONTROL_ORIGIN = CONTROL_DOCUMENT_ORIGIN;
-const API_ORIGIN = "http://127.0.0.1:24891";
 const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MUTATION_PATHS = new Set([
@@ -26,60 +29,23 @@ export function isControlDocument(value) {
         return false;
     }
 }
-/** A fixed-origin, bounded native client; this is not exposed to the renderer. */
-export async function readControlJson(route, { csrfToken } = {}) {
-    const mutation = csrfToken !== undefined;
-    if ((mutation && !MUTATION_PATHS.has(route))
-        || (!mutation && !["/api/v1/status", "/api/v1/session"].includes(route))) {
-        throw new Error("Unsupported Control Center shell operation.");
-    }
-    return new Promise((resolve, reject) => {
-        const request = http.request(`${API_ORIGIN}${route}`, {
-            method: mutation ? "POST" : "GET",
-            headers: mutation
-                ? { "content-type": "application/json", "content-length": "2", origin: API_ORIGIN, "x-equinox-csrf": csrfToken }
-                : { accept: "application/json", "x-equinox-background-refresh": "1" },
-        }, (response) => {
-            if (response.statusCode !== 200 && response.statusCode !== 202) {
-                response.destroy();
-                reject(new Error(`Control Center returned HTTP ${response.statusCode}.`));
-                return;
-            }
-            let bytes = 0;
-            const chunks = [];
-            response.on("data", (chunk) => {
-                bytes += chunk.length;
-                if (bytes > MAX_RESPONSE_BYTES)
-                    response.destroy(new Error("Control Center response is too large."));
-                else
-                    chunks.push(chunk);
-            });
-            response.on("error", reject);
-            response.on("end", () => {
-                try {
-                    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-                    if (!payload || typeof payload !== "object" || Array.isArray(payload))
-                        throw new Error("Invalid Control Center response.");
-                    resolve(payload);
-                }
-                catch (error) {
-                    reject(error);
-                }
-            });
-        });
-        const timeout = setTimeout(() => request.destroy(new Error("Control Center request timed out.")), 3_000);
-        request.once("close", () => clearTimeout(timeout));
-        request.on("error", reject);
-        request.end(mutation ? "{}" : undefined);
-    });
+/** Native menu operations use the same authenticated private socket as the UI. */
+export async function readControlJson(route) {
+    if (route !== "/api/v1/status")
+        throw new Error("Unsupported Control Center shell read.");
+    const result = await callAuthenticatedControlSocket({ method: "GET", path: route, backgroundRefresh: true });
+    if (result.status !== 200 || result.body.ok !== true)
+        throw new Error("Control Center native status unavailable.");
+    return result.body;
 }
-/** Fetch a fresh session; never retry an uncertain mutation. */
+/** Never retry an uncertain native mutation. */
 export async function mutateControl(route) {
-    const session = await readControlJson("/api/v1/session");
-    if (typeof session.csrfToken !== "string" || !/^[a-f0-9]{64}$/u.test(session.csrfToken)) {
-        throw new Error("Control Center session is unavailable.");
+    if (!MUTATION_PATHS.has(route))
+        throw new Error("Unsupported Control Center shell mutation.");
+    const result = await callAuthenticatedControlSocket({ method: "POST", path: route, body: "{}", backgroundRefresh: false });
+    if (![200, 202].includes(result.status) || result.body.ok !== true) {
+        throw new Error("Control Center native operation could not be confirmed.");
     }
-    await readControlJson(route, { csrfToken: session.csrfToken });
 }
 // The renderer can request only these existing, versioned Control Center
 // operations. No raw URL, headers, shell command or native IPC channel crosses
@@ -131,46 +97,104 @@ export async function requestUiControlJson(value) {
         (method !== "GET" && (typeof body !== "string" || Buffer.byteLength(body, "utf8") > MAX_REQUEST_BYTES))) {
         throw new Error("Unsupported desktop control operation.");
     }
-    const payload = method === "GET" ? undefined : body;
-    // The renderer never supplies or acquires a mutation authorization header.
-    // Main obtains a fresh token from the existing backend for each mutation.
-    const session = method === "GET" ? null : await readControlJson("/api/v1/session");
-    if (session && (typeof session.csrfToken !== "string" || !/^[a-f0-9]{64}$/u.test(session.csrfToken))) {
-        throw new Error("Desktop Control Center session unavailable.");
+    return await callAuthenticatedControlSocket({
+        method, path: route, ...(method === "GET" ? {} : { body: body }), backgroundRefresh,
+    });
+}
+// Reuse the already-running, private current-user CLI bridge. Main alone reads
+// its credential-bearing descriptor. No token, endpoint, arbitrary path or
+// generic socket API is exposed to the sandboxed renderer.
+async function callAuthenticatedControlSocket(request) {
+    const stateRoot = process.platform === "darwin"
+        ? path.join(os.homedir(), "Library", "Application Support", "Equinox Local")
+        : process.platform === "win32" && typeof process.env.LOCALAPPDATA === "string"
+            ? path.join(process.env.LOCALAPPDATA, "Equinox Local", "state") : null;
+    if (!stateRoot)
+        throw new Error("Desktop control IPC is unsupported on this host.");
+    const file = path.join(stateRoot, "cli-ipc.json");
+    const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    let descriptor;
+    try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.nlink !== 1 || stat.size < 1 || stat.size > 8192 ||
+            (process.platform === "darwin" && (stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0))) {
+            throw new Error("Desktop control IPC descriptor is not private.");
+        }
+        descriptor = JSON.parse(await handle.readFile("utf8"));
+    }
+    finally {
+        await handle.close();
+    }
+    if (!descriptor || descriptor.version !== 1 || typeof descriptor.token !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(descriptor.token) || typeof descriptor.endpoint !== "string" ||
+        !Number.isSafeInteger(descriptor.pid) || Number(descriptor.pid) < 1) {
+        throw new Error("Desktop control IPC descriptor is invalid.");
+    }
+    const endpoint = descriptor.endpoint;
+    if (process.platform === "darwin") {
+        const uid = process.getuid?.();
+        const directory = path.dirname(endpoint);
+        if (typeof uid !== "number" || !new RegExp(`^/tmp/equinox-local-${uid}(?:-[a-z0-9][a-z0-9-]{0,31})?$`, "u").test(directory) ||
+            path.basename(endpoint) !== "cli.sock")
+            throw new Error("Desktop control IPC endpoint is untrusted.");
+        const stat = await fs.lstat(directory);
+        if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
+            throw new Error("Desktop control IPC socket directory is untrusted.");
+        }
+    }
+    else if (!/^\\\\\.\\pipe\\equinox-local-cli-[a-f0-9]{32}$/u.test(endpoint)) {
+        throw new Error("Desktop control IPC endpoint is untrusted.");
+    }
+    const message = JSON.stringify({ token: descriptor.token, action: "control.request", ...request });
+    if (Buffer.byteLength(message, "utf8") > MAX_REQUEST_BYTES + 1024) {
+        throw new Error("Desktop control request is too large.");
     }
     return await new Promise((resolve, reject) => {
-        const request = http.request(`${API_ORIGIN}${route}`, {
-            method,
-            headers: method === "GET"
-                ? { accept: "application/json", ...(backgroundRefresh ? { "x-equinox-background-refresh": "1" } : {}) }
-                : { accept: "application/json", "content-type": "application/json", "content-length": Buffer.byteLength(payload, "utf8"),
-                    origin: API_ORIGIN, "x-equinox-csrf": session.csrfToken },
-        }, response => {
-            let bytes = 0;
-            const chunks = [];
-            response.on("data", (chunk) => {
-                bytes += chunk.length;
-                if (bytes > MAX_RESPONSE_BYTES)
-                    response.destroy(new Error("Desktop control response is too large."));
-                else
-                    chunks.push(chunk);
-            });
-            response.once("error", reject);
-            response.once("end", () => {
-                try {
-                    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-                    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-                        throw new Error("Invalid desktop control response.");
-                    resolve({ status: response.statusCode ?? 500, body: parsed });
+        const socket = net.createConnection(endpoint);
+        let settled = false;
+        let received = "";
+        const fail = (error) => {
+            if (settled)
+                return;
+            settled = true;
+            socket.destroy();
+            reject(error);
+        };
+        socket.setTimeout(150_000, () => fail(new Error("Desktop control IPC timed out; mutation outcome may be ambiguous.")));
+        socket.once("connect", () => socket.write(`${message}\n`));
+        socket.on("data", (chunk) => {
+            if (settled)
+                return;
+            received += chunk.toString("utf8");
+            if (Buffer.byteLength(received, "utf8") > 8 * 1024 * 1024) {
+                fail(new Error("Desktop control IPC reply is too large."));
+                return;
+            }
+            const newline = received.indexOf("\n");
+            if (newline < 0)
+                return;
+            try {
+                const envelope = JSON.parse(received.slice(0, newline));
+                if (!envelope || typeof envelope !== "object" || Array.isArray(envelope))
+                    throw new Error("Invalid desktop control IPC reply.");
+                const response = envelope;
+                if (response.ok !== true)
+                    throw new Error(typeof response.error?.message === "string"
+                        ? response.error.message : "Desktop control IPC request failed.");
+                const result = response.result;
+                if (!result || typeof result !== "object" || !Number.isInteger(result.status) ||
+                    !result.body || typeof result.body !== "object" || Array.isArray(result.body)) {
+                    throw new Error("Invalid desktop control result.");
                 }
-                catch {
-                    reject(new Error("Unreadable desktop control response."));
-                }
-            });
+                settled = true;
+                socket.end();
+                resolve({ status: result.status, body: result.body });
+            }
+            catch (error) {
+                fail(error instanceof Error ? error : new Error("Invalid desktop control reply."));
+            }
         });
-        const timeout = setTimeout(() => request.destroy(new Error("Desktop control operation timed out.")), 10_000);
-        request.once("close", () => clearTimeout(timeout));
-        request.once("error", reject);
-        request.end(payload);
+        socket.once("error", (error) => fail(error));
+        socket.once("end", () => fail(new Error("Desktop control IPC closed without a result; check before retrying.")));
     });
 }

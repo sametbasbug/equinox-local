@@ -11,11 +11,12 @@ type Dependencies = {
   namespace?: string | null;
   registry: {summary: () => unknown;catalog: (domain: string) => unknown;describe: (domain: string, operation: string) => unknown;invoke: (domain: string, operation: string, args: unknown) => Promise<unknown>};
   desktop: {catalog: () => Promise<unknown>;describe: (name: string) => Promise<unknown>;call?: (operation: string, args: JsonRecord) => Promise<unknown>;invoke?: (operation: string, args: JsonRecord) => Promise<unknown>};
+  control: {executeDesktop: (request: {method: string; path: string; body?: string; backgroundRefresh?: boolean}) => Promise<{status:number;body:JsonRecord}>};
   tasks: {checkpoint: (args: JsonRecord) => Promise<any>;list: (args: JsonRecord) => Promise<unknown>;read: (id: string) => Promise<any>;readInternal: (id: string) => Promise<any>;remove: (id: string) => Promise<any>;bindChat: (args: JsonRecord) => Promise<unknown>};
   chat: {inspectTurnIdentity: (args: JsonRecord) => Promise<any>;startTaskChat: (args: JsonRecord) => Promise<any>;deliverText: (args: JsonRecord) => Promise<any>;readFinal: (args: JsonRecord) => Promise<any>};
   assertMutationAllowed: (operation: string) => void;
 };
-const MAX_REQUEST_BYTES = 128 * 1024;
+const MAX_REQUEST_BYTES = 256 * 1024 + 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const TASK_ID = /^task-[a-z0-9-]{6,80}$/u;
 const OPERATION = /^[a-z][a-z0-9_.-]{0,159}$/u;
@@ -49,7 +50,7 @@ function unpack(result: any): unknown {
   return result;
 }
 
-export function createEquinoxLocalCliBridge({stateRoot, platform = process.platform, namespace = null, registry, desktop, tasks, chat, assertMutationAllowed}: Dependencies) {
+export function createEquinoxLocalCliBridge({stateRoot, platform = process.platform, namespace = null, registry, desktop, tasks, chat, control, assertMutationAllowed}: Dependencies) {
   const discoveryPath = path.join(stateRoot, "cli-ipc.json");
   let server: net.Server | null = null;
   let socketPath: string | null = null;
@@ -72,6 +73,17 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
   async function dispatch(input: JsonRecord): Promise<unknown> {
     const action = requiredString(input.action, "action", 64);
     if (action === "status") return {connected: true, protocol: 1, capabilities: await summary()};
+    if (action === "control.request") {
+      // A private CLI socket token is required by the framing server before
+      // dispatch. Only the existing bounded Control Center operation set is
+      // accepted inside the shared Control API, not arbitrary HTTP requests.
+      if (Object.keys(input).some(key => !["token", "action", "method", "path", "body", "backgroundRefresh"].includes(key))) {
+        throw new Error("Unsupported desktop control request field.");
+      }
+      return control.executeDesktop({ method: input.method, path: input.path,
+        ...(input.body === undefined ? {} : { body: input.body }),
+        ...(input.backgroundRefresh === undefined ? {} : { backgroundRefresh: input.backgroundRefresh }) });
+    }
     if (action === "tools.list") {
       if (input.domain === undefined) return summary();
       const domain = requiredString(input.domain, "domain", 32);

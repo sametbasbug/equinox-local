@@ -3588,6 +3588,7 @@ const cliBridge = createEquinoxLocalCliBridge({
     },
   },
   tasks: taskCapsuleStore,
+  control: equinoxLocalControlApi,
   chat: telegramChatBridgeController,
   assertMutationAllowed: (name: string) => agentControl.assertMutationAllowed(name),
 });

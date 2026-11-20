@@ -2688,6 +2688,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
             },
         },
         tasks: taskCapsuleStore,
+        control: equinoxLocalControlApi,
         chat: telegramChatBridgeController,
         assertMutationAllowed: (name) => agentControl.assertMutationAllowed(name),
     });
