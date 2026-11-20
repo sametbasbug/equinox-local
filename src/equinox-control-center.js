@@ -374,6 +374,16 @@ async function requestJson(path, options = {}) {
     const headers = { ...optionHeaders };
     if (backgroundRefresh)
         headers["x-equinox-background-refresh"] = "1";
+    if (window.equinoxShell?.requestJson) {
+        const result = await window.equinoxShell.requestJson({
+            path, method: fetchOptions.method || "GET", backgroundRefresh,
+            ...(fetchOptions.body !== undefined ? { body: fetchOptions.body } : {}),
+        });
+        if (![200, 202].includes(result.status) || result.body?.ok === false) {
+            throw new Error(result.body?.error || `${path} failed with HTTP ${result.status}.`);
+        }
+        return result.body;
+    }
     const response = await fetch(path, {
         cache: "no-store",
         credentials: "same-origin",
@@ -393,6 +403,9 @@ async function requestJson(path, options = {}) {
     return body;
 }
 async function mutationJson(path, method, body) {
+    if (window.equinoxShell?.requestJson) {
+        return await requestJson(path, { method, body: JSON.stringify(body) });
+    }
     const session = await requestJson("/api/v1/session");
     return await requestJson(path, {
         method,
@@ -3882,17 +3895,9 @@ async function saveConfiguration() {
         accessButton.textContent = localizeUiText("Saving…");
     }
     try {
-        const session = await requestJson("/api/v1/session");
-        const result = await requestJson("/api/v1/config", {
-            method: "PUT",
-            headers: {
-                "content-type": "application/json",
-                "x-equinox-csrf": session.csrfToken,
-            },
-            body: JSON.stringify({
-                expectedRevision: state.revision,
-                config: state.config,
-            }),
+        const result = await mutationJson("/api/v1/config", "PUT", {
+            expectedRevision: state.revision,
+            config: state.config,
         });
         state.revision = result.persistedRevision;
         state.restartRequired = Boolean(result.restartRequired);

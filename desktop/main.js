@@ -5,13 +5,15 @@ import { execFile as execFileCallback } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { CONTROL_ORIGIN, isControlDocument, mutateControl, readControlJson } from "./control-client.js";
+import { CONTROL_ORIGIN, isControlDocument, mutateControl, readControlJson, requestUiControlJson } from "./control-client.js";
+import { controlPageURL, installControlAssets, registerControlScheme } from "./control-assets.js";
 import { createRuntimeOwner } from "./runtime-owner.js";
 import { resolveInstalledRuntime } from "./runtime-installation.js";
 import { openLifecycleControl } from "./lifecycle-control.js";
 import { prepareWindowsUninstallHandoff, UninstallCleanupError } from "./uninstall-handoff.js";
 import { createCompanionController } from "./companion.js";
 import { openShellPreferences } from "./shell-preferences.js";
+registerControlScheme();
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(directory);
 const PINNED_ELECTRON = "46.0.0-alpha.10";
@@ -204,7 +206,7 @@ function observeNativeNotification(value) {
                 showControlCenter();
                 return;
             }
-            const destination = new URL(`${CONTROL_ORIGIN}/`);
+            const destination = new URL(controlPageURL());
             destination.searchParams.set("section", "tasks");
             destination.searchParams.set("task", taskId);
             navigating = true;
@@ -754,7 +756,7 @@ async function refresh() {
             if (rendererFailed)
                 rendererRecoveryAttempts += 1;
             try {
-                await window.loadURL(`${CONTROL_ORIGIN}/`);
+                await window.loadURL(controlPageURL());
                 rendererFailed = false;
             }
             catch {
@@ -783,11 +785,12 @@ function createWindow() {
     privateSession.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
     privateSession.setPermissionCheckHandler(() => false);
     privateSession.on("will-download", (event) => event.preventDefault());
+    installControlAssets(privateSession, root, !app.isPackaged);
     // The UI only needs its existing backend. External links are opened by the OS, never loaded here.
     privateSession.webRequest.onBeforeRequest((details, reply) => {
         try {
             const url = new URL(details.url);
-            reply({ cancel: url.origin !== CONTROL_ORIGIN });
+            reply({ cancel: url.protocol !== "equinox:" || url.host !== "control" });
         }
         catch {
             reply({ cancel: true });
@@ -859,7 +862,13 @@ function createWindow() {
         tray.setTitle("EL");
     tray.on("double-click", showControlCenter);
     updateMenus();
+    void contents.loadURL(controlPageURL()).catch(() => { rendererFailed = true; });
 }
+ipcMain.handle("equinox-shell:control-request", async (event, value) => {
+    if (!trustedSender(event) || quitting)
+        throw new Error("Untrusted desktop control request.");
+    return await requestUiControlJson(value);
+});
 ipcMain.handle("equinox-shell:pick-folder", async (event) => {
     if (!trustedSender(event))
         throw new Error("Untrusted folder picker request.");
@@ -894,7 +903,7 @@ ipcMain.on("equinox-shell:language-snapshot", (event) => {
     event.returnValue = trustedSender(event) ? (language === "tr" ? "tr" : "en") : null;
 });
 if (process.versions.electron !== PINNED_ELECTRON || !process.versions.node.startsWith("26.")) {
-    throw new Error("Equinox Local requires the pinned Electron 46 alpha.5 with Node 26.");
+    throw new Error("Equinox Local requires the pinned Electron 46 alpha.10 with Node 26.");
 }
 if (installerProfile) {
     // Finite installer-only maintenance. No single-instance handoff, UI, socket,

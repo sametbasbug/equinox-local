@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import fs from "node:fs/promises";
 import http from "node:http";
 import { EQUINOX_LOCAL_CONFIG_ERROR_CODES } from "./equinox-local-config.js";
 import { TASK_CAPSULE_ERROR_CODES } from "./task-capsule-store.js";
@@ -9,16 +8,6 @@ const LOOPBACK_HOST = "127.0.0.1";
 const MAX_REQUEST_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 const REPAIR_RECIPE_ID_SET = new Set(REPAIR_RECIPE_IDS);
-const CONTROL_CENTER_CSP = [
-    "default-src 'none'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "connect-src 'self'",
-    "img-src 'self' data:",
-    "frame-ancestors 'none'",
-    "base-uri 'none'",
-    "form-action 'self'",
-].join("; ");
 const CONTROL_CENTER_BACKGROUND_REFRESH_PATHS = new Set([
     "/api/v1/health",
     "/api/v1/status",
@@ -40,37 +29,6 @@ function isBackgroundRefreshRequest(req, url) {
         && req.headers["x-equinox-background-refresh"] === "1"
         && CONTROL_CENTER_BACKGROUND_REFRESH_PATHS.has(url.pathname);
 }
-const CONTROL_CENTER_ASSETS = new Map([
-    ["/", Object.freeze({
-            urls: Object.freeze([
-                new URL("./equinox-control-center.html", import.meta.url),
-                new URL("../equinox-control-center.html", import.meta.url),
-            ]),
-            contentType: "text/html; charset=utf-8",
-        })],
-    ["/assets/control-center.css", Object.freeze({
-            urls: Object.freeze([
-                new URL("./equinox-control-center.css", import.meta.url),
-                new URL("../equinox-control-center.css", import.meta.url),
-            ]),
-            contentType: "text/css; charset=utf-8",
-        })],
-    ["/assets/control-center.js", Object.freeze({
-            url: new URL("./equinox-control-center.js", import.meta.url),
-            contentType: "text/javascript; charset=utf-8",
-        })],
-    ["/assets/equinox-control-center-localization.js", Object.freeze({
-            url: new URL("./equinox-control-center-localization.js", import.meta.url),
-            contentType: "text/javascript; charset=utf-8",
-        })],
-    ["/assets/equinox-local.png", Object.freeze({
-            urls: Object.freeze([
-                new URL("./app/EquinoxLocal.png", import.meta.url),
-                new URL("../app/EquinoxLocal.png", import.meta.url),
-            ]),
-            contentType: "image/png",
-        })],
-]);
 function jsonBody(res, statusCode, payload, extraHeaders = {}) {
     const body = `${JSON.stringify(payload)}\n`;
     res.writeHead(statusCode, {
@@ -81,41 +39,6 @@ function jsonBody(res, statusCode, payload, extraHeaders = {}) {
         "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
         "referrer-policy": "no-referrer",
         ...extraHeaders,
-    });
-    res.end(body);
-}
-async function controlCenterAssetBody(res, asset) {
-    let body;
-    if (asset.url) {
-        body = await fs.readFile(asset.url);
-    }
-    else {
-        let lastError = null;
-        for (const candidate of asset.urls || []) {
-            try {
-                body = await fs.readFile(candidate);
-                break;
-            }
-            catch (error) {
-                lastError = error;
-                if (error?.code !== "ENOENT")
-                    throw error;
-            }
-        }
-        if (!body)
-            throw lastError || new Error("Control Center asset is unavailable.");
-    }
-    res.writeHead(200, {
-        "content-type": asset.contentType,
-        "content-length": body.length,
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-        "content-security-policy": CONTROL_CENTER_CSP,
-        "referrer-policy": "no-referrer",
-        "cross-origin-opener-policy": "same-origin",
-        "cross-origin-resource-policy": "same-origin",
-        "permissions-policy": "camera=(), microphone=(), geolocation=()",
-        "x-frame-options": "DENY",
     });
     res.end(body);
 }
@@ -377,29 +300,6 @@ function parseTaskRoute(pathname) {
         return null;
     return Object.freeze({ taskId: match[1], action: match[2] || null });
 }
-const CONTROL_CENTER_NAVIGATION_SECTIONS = new Set([
-    "dashboard", "projects", "tasks", "browser", "permissions", "integrations", "activity",
-]);
-function isAllowedControlCenterNavigationQuery(url, method) {
-    // Only the HTML entry page may accept a bounded navigation intent.
-    // API/asset URLs and all mutations still reject query strings.
-    if (method !== "GET" || url.pathname !== "/")
-        return false;
-    const keys = [...url.searchParams.keys()];
-    if (keys.some((key) => key !== "section" && key !== "task"))
-        return false;
-    if (url.searchParams.getAll("section").length > 1 || url.searchParams.getAll("task").length > 1)
-        return false;
-    const section = url.searchParams.get("section");
-    const taskId = url.searchParams.get("task");
-    if (!section && !taskId)
-        return false;
-    if (section !== null && !CONTROL_CENTER_NAVIGATION_SECTIONS.has(section))
-        return false;
-    if (taskId !== null && (!/^task-[a-z0-9-]{6,80}$/u.test(taskId) || (section !== null && section !== "tasks")))
-        return false;
-    return true;
-}
 function validateTaskUpdateRequest(body) {
     if (body === null || typeof body !== "object" || Array.isArray(body))
         throw badRequest("Task update body must be a JSON object.");
@@ -498,7 +398,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
             jsonBody(res, 400, { ok: false, error: "Geçersiz istek URL'si." });
             return;
         }
-        if (url.search && !isAllowedControlCenterNavigationQuery(url, req.method)) {
+        if (url.search) {
             state.requestCount += 1;
             jsonBody(res, 400, { ok: false, error: "Control Center API query parametresi kabul etmiyor." });
             return;
@@ -506,11 +406,6 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
         if (!isBackgroundRefreshRequest(req, url))
             state.requestCount += 1;
         try {
-            const asset = CONTROL_CENTER_ASSETS.get(url.pathname);
-            if (req.method === "GET" && asset) {
-                await controlCenterAssetBody(res, asset);
-                return;
-            }
             if (req.method === "GET" && url.pathname === "/api/v1/health") {
                 jsonBody(res, 200, { ok: true, controlCenter: snapshot() });
                 return;
