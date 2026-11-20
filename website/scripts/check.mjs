@@ -134,10 +134,17 @@ if (releaseVersions.some((value) => !value) || new Set(releaseVersions).size !==
 const release = JSON.parse(await fs.readFile('src/data/release.json', 'utf8'));
 const updateRoot = path.join(root, 'downloads/updates');
 const windowsInstallerPresent = await fs.access(path.join(updateRoot, 'install-equinox-local.ps1')).then(() => true, () => false);
+if (releaseVersions[0] !== release.version) throw new Error('Public release copy differs from the numbered GitHub release.');
+// Archived signed Stable manifests are retained for older installers, NOT the
+// current Main product. Validate historical coherence independently without
+// forcing the public 7.0.0 site to mislabel immutable Stable 6.2.1 files.
 const stableTargets = windowsInstallerPresent ? ['darwin-arm64', 'darwin-x64', 'win32-arm64', 'win32-x64'] : ['darwin-arm64', 'darwin-x64'];
+let historicalStableVersion;
 for (const target of stableTargets) {
   const manifest = JSON.parse(await fs.readFile(path.join(updateRoot, `stable-${target}.json`), 'utf8'));
-  if (manifest.version !== release.version || releaseVersions[0] !== release.version) throw new Error(`release copy and ${target} stable channel disagree`);
+  if (typeof manifest.version !== 'string' || !/^\d+\.\d+\.\d+$/u.test(manifest.version)) throw new Error(`Invalid archival Stable manifest: ${target}`);
+  if (historicalStableVersion !== undefined && manifest.version !== historicalStableVersion) throw new Error(`Historical Stable manifests disagree: ${target}`);
+  historicalStableVersion = manifest.version;
 }
 
 // Check the built result, including localization and fragment links, not just source templates.
