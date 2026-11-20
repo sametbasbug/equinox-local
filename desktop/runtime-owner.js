@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import net from "node:net";
+import { assertNoOtherLocalRuntime } from "./control-client.js";
 async function requireFreeControlPort() {
     await new Promise((resolve, reject) => {
         const socket = net.createConnection({ host: "127.0.0.1", port: 24891 });
@@ -102,6 +103,7 @@ export function createRuntimeOwner(resolveLaunch, onState) {
             return;
         onState("starting");
         await requireFreeControlPort();
+        await assertNoOtherLocalRuntime();
         const launch = await resolveLaunch();
         const nativeJob = await launch.createJob?.();
         // Retain the lease before attempting spawn, so cancellation or synchronous spawn failure cannot lose it.

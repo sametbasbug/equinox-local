@@ -101,10 +101,46 @@ export async function requestUiControlJson(value) {
         method, path: route, ...(method === "GET" ? {} : { body: body }), backgroundRefresh,
     });
 }
-// Reuse the already-running, private current-user CLI bridge. Main alone reads
-// its credential-bearing descriptor. No token, endpoint, arbitrary path or
-// generic socket API is exposed to the sandboxed renderer.
-async function callAuthenticatedControlSocket(request) {
+/** The runtime owner refuses a second backend even after the HTTP listener is retired. */
+export async function assertNoOtherLocalRuntime() {
+    let descriptor;
+    try {
+        descriptor = await readPrivateControlDescriptor();
+    }
+    catch (error) {
+        // A missing descriptor/socket means a previous instance is not listening.
+        // A malformed or foreign-owned descriptor must fail closed.
+        if (error.code === "ENOENT")
+            return;
+        throw error;
+    }
+    await new Promise((resolve, reject) => {
+        const socket = net.createConnection(descriptor.endpoint);
+        let finished = false;
+        const finish = (error) => {
+            if (finished)
+                return;
+            finished = true;
+            clearTimeout(timer);
+            socket.removeAllListeners();
+            socket.destroy();
+            if (error)
+                reject(error);
+            else
+                resolve();
+        };
+        const timer = setTimeout(() => finish(new Error("Cannot establish private runtime ownership.")), 1_500);
+        socket.once("connect", () => finish(new Error("Another local runtime owns the private IPC socket; refusing a second backend.")));
+        socket.once("error", (error) => {
+            finish(error.code === "ENOENT" || error.code === "ECONNREFUSED"
+                ? undefined : new Error("Private runtime socket ownership is unavailable."));
+        });
+    });
+}
+// Electron main is the only reader of the credential-bearing, mode-bounded
+// discovery descriptor. Reuse these checks for both IPC requests and the
+// single-owner startup guard; no endpoint or token reaches the renderer.
+async function readPrivateControlDescriptor() {
     const stateRoot = process.platform === "darwin"
         ? path.join(os.homedir(), "Library", "Application Support", "Equinox Local")
         : process.platform === "win32" && typeof process.env.LOCALAPPDATA === "string"
@@ -145,6 +181,14 @@ async function callAuthenticatedControlSocket(request) {
     else if (!/^\\\\\.\\pipe\\equinox-local-cli-[a-f0-9]{32}$/u.test(endpoint)) {
         throw new Error("Desktop control IPC endpoint is untrusted.");
     }
+    return { endpoint, token: descriptor.token };
+}
+// Reuse the already-running, private current-user CLI bridge. Main alone reads
+// its credential-bearing descriptor. No token, endpoint, arbitrary path or
+// generic socket API is exposed to the sandboxed renderer.
+async function callAuthenticatedControlSocket(request) {
+    const descriptor = await readPrivateControlDescriptor();
+    const { endpoint } = descriptor;
     const message = JSON.stringify({ token: descriptor.token, action: "control.request", ...request });
     if (Buffer.byteLength(message, "utf8") > MAX_REQUEST_BYTES + 1024) {
         throw new Error("Desktop control request is too large.");
