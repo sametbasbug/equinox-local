@@ -16,7 +16,8 @@ type Dependencies = {
   chat: {inspectTurnIdentity: (args: JsonRecord) => Promise<any>;startTaskChat: (args: JsonRecord) => Promise<any>;deliverText: (args: JsonRecord) => Promise<any>;readFinal: (args: JsonRecord) => Promise<any>};
   assertMutationAllowed: (operation: string) => void;
 };
-const MAX_REQUEST_BYTES = 256 * 1024 + 1024;
+const MAX_REQUEST_BYTES = 256 * 1024 + 1024; // bounded desktop config envelope
+const MAX_LEGACY_CLI_REQUEST_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const TASK_ID = /^task-[a-z0-9-]{6,80}$/u;
 const OPERATION = /^[a-z][a-z0-9_.-]{0,159}$/u;
@@ -213,6 +214,9 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
           try {
             const request = JSON.parse(input.slice(0, newline));
             if (!request || typeof request !== "object" || Array.isArray(request) || request.token !== token) throw new Error("CLI request authentication failed.");
+            if (request.action !== "control.request" && Buffer.byteLength(input.slice(0, newline), "utf8") > MAX_LEGACY_CLI_REQUEST_BYTES) {
+              throw new Error("CLI request exceeds its original size limit.");
+            }
             response = {ok: true, result: await dispatch(request)};
           } catch (error) {
             const candidateTabId = (error as any)?.candidateTabId;
