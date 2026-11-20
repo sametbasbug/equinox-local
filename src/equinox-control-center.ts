@@ -510,11 +510,11 @@ async function refreshNativeChat(withThreads=false) {
   chatRefreshing=true;
   try{
     if(withThreads||!chatThreadList.length){
-      const result=await requestJson("/api/v1/chat/threads");
+      const result=await requestJson("/api/v1/chat/threads",{backgroundRefresh:true});
       chatThreadList=Array.isArray(result.chat?.threads)?result.chat.threads:[];
       renderNativeChatThreads();
     }
-    const chat=await requestJson("/api/v1/chat/state");
+    const chat=await requestJson("/api/v1/chat/state",{backgroundRefresh:true});
     renderNativeChatState(chat.chat);
     renderNativeChatThreads();
   }catch(error){
