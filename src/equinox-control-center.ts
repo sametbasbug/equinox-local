@@ -1334,7 +1334,7 @@ function renderProjects() {
   populateSelect($("default-project-select"), projects, state.config.defaultProject);
   populateSelect($("workspace-project-select"), projects, state.config.runtime?.workspaceProject);
   populateSelect($("downloads-root-select"), fileRoots, state.config.runtime?.downloadsRoot);
-  setText("control-center-address", `127.0.0.1:${state.config.controlCenter?.port ?? "—"}`);
+  setText("control-center-address", window.equinoxShell?.requestJson ? "Private desktop IPC" : "Local connection");
   setConfigEditingEnabled(!state.restartRequired);
 }
 
@@ -2685,7 +2685,18 @@ async function runFullDoctorChecks() {
   }
 }
 
-async function refreshAll({ initial = false } = {}) {
+// The packaged Electron window can be ready before its owned runtime has
+// published the private CLI socket. Retry only the initial read-only hydration,
+// never a mutation, and leave manual Refresh available after the bounded wait.
+const INITIAL_IPC_RETRY_DELAY_MS = 1_500;
+const INITIAL_IPC_MAX_RETRIES = 40;
+function isTransientStartupIpcError(error: unknown): boolean {
+  return /\b(?:ENOENT|ECONNREFUSED|ECONNRESET)\b/u.test(
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
+async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
   if (state.restartRequired || state.refreshAllBusy) return;
   state.refreshAllBusy = true;
   clearError();
@@ -2749,7 +2760,14 @@ async function refreshAll({ initial = false } = {}) {
     state.lastRefreshedAt = new Date();
     renderLastRefreshed();
   } catch (error) {
-    showError(error);
+    if (initial && window.equinoxShell?.requestJson
+        && startupRetry < INITIAL_IPC_MAX_RETRIES && isTransientStartupIpcError(error)) {
+      // A scheduled read-only refresh, not a backend start/restart decision.
+      setTimeout(() => { void refreshAll({ initial: true, startupRetry: startupRetry + 1 }); },
+        INITIAL_IPC_RETRY_DELAY_MS);
+    } else {
+      showError(error);
+    }
   } finally {
     state.refreshAllBusy = false;
     $("refresh-button").disabled = state.restartRequired || state.restartBusy;

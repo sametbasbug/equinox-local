@@ -3142,7 +3142,6 @@ const applyUpdateForControlCenter = async () => withMutationLocks(["local-update
 
 equinoxLocalControlApi = createEquinoxLocalControlApi({
   configManager: equinoxLocalConfigManager,
-  port: EQUINOX_LOCAL_CONFIG.controlCenter.port,
   getStatus: async () => {
     const browser = equinoxBrowserBridge.snapshot();
     const browserSettingsByContext:Record<"agent"|"user",RuntimeBoundary> = { agent: null, user: null };
@@ -3722,12 +3721,19 @@ async function start({ transport = new StdioServerTransport() } = {}) {
     };
     setTimeout(() => { void tryCleanup(); }, 12_000).unref?.();
   }
-  if (EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
+  // Control Center runs behind the existing authenticated user-owned CLI IPC
+  // listener. Mark its management surface active only when that listener is
+  // ready, never because a separate localhost server accepted a connection.
+  let managementBridgeReady = false;
+  try {
+    await cliBridge.start();
+    managementBridgeReady = true;
+  } catch {
+    console.error("[Equinox Local] Private local IPC bridge is unavailable; core runtime remains active, but Control Center needs attention.");
+  }
+  if (managementBridgeReady && EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
     await equinoxLocalControlApi.start();
   }
-  await cliBridge.start().catch(() => {
-    console.error("[Equinox Local] Optional agent CLI bridge is unavailable; core runtime remains active.");
-  });
   // Factory/source checkout has no immutable signed release tree. Reconcile
   // its user CLI launcher against this exact source file and running Node.
   if (platform === "darwin" && equinoxLocalInstallation.kind === "source") {
