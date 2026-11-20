@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const execFile = promisify(execFileCallback);
 const TARGETS = new Set(["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]);
 const SHELL_FILES = Object.freeze([
-  "desktop/main.js", "desktop/control-client.js", "desktop/preload.cjs",
+  "desktop/main.js", "desktop/control-client.js", "desktop/control-assets.js", "desktop/preload.cjs",
   "desktop/runtime-owner.js", "desktop/runtime-installation.js", "desktop/lifecycle-control.js",
   "desktop/uninstall-handoff.js", "desktop/shell-preferences.js", "desktop/companion.js",
   "desktop/companion-preload.cjs", "desktop/companion-renderer.js", "desktop/companion.html", "desktop/companion.css",
@@ -92,6 +92,20 @@ async function packageDesktopShell({ rootDir, outputDir, target }: Required<Desk
       const destination = path.join(application, relative);
       await fs.mkdir(path.dirname(destination), { recursive: true });
       await fs.copyFile(source, destination);
+    }
+    const controlAssets = [
+      ["src/equinox-control-center.html", "equinox-control-center.html"],
+      ["src/equinox-control-center.css", "equinox-control-center.css"],
+      ["src/equinox-control-center.js", "equinox-control-center.js"],
+      ["src/equinox-control-center-localization.js", "equinox-control-center-localization.js"],
+      ["app/EquinoxLocal.png", "equinox-local.png"],
+    ] as const;
+    await fs.mkdir(path.join(application, "control-center"), { recursive: true });
+    for (const [sourceRelative, destinationName] of controlAssets) {
+      const source = path.join(rootDir, sourceRelative);
+      const stat = await fs.lstat(source);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Control Center asset is not a normal file: ${sourceRelative}`);
+      await fs.copyFile(source, path.join(application, "control-center", destinationName));
     }
     await fs.writeFile(path.join(application, "package.json"), JSON.stringify({
       name: "equinox-local-desktop", productName: "Equinox Local", version: EQUINOX_LOCAL_VERSION,

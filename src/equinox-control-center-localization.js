@@ -114,6 +114,7 @@ const TR_UI = Object.freeze({
     "MCP runtime connected": "MCP runtime bağlı",
     "Desktop": "Masaüstü",
     "Local connection": "Yerel bağlantı",
+    "Private desktop IPC": "Özel masaüstü IPC bağlantısı",
     "Open Browser settings": "Tarayıcı ayarlarını aç",
     "Open Services": "Servisleri aç",
     "View all checks": "Tüm kontrolleri göster",

@@ -2,7 +2,6 @@
 set -euo pipefail
 umask 077
 
-CONTROL_CENTER_URL="http://127.0.0.1:24891/"
 
 fail() {
   printf 'Equinox Local installer: %s\n' "$*" >&2

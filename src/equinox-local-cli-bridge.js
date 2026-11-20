@@ -3,7 +3,8 @@ import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { prepareEquinoxBrowserSocketDirectory } from "./equinox-browser-socket.js";
-const MAX_REQUEST_BYTES = 128 * 1024;
+const MAX_REQUEST_BYTES = 256 * 1024 * 2 + 4096; // double-escaped desktop JSON envelope; decoded body remains 256 KiB
+const MAX_LEGACY_CLI_REQUEST_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const TASK_ID = /^task-[a-z0-9-]{6,80}$/u;
 const OPERATION = /^[a-z][a-z0-9_.-]{0,159}$/u;
@@ -52,7 +53,7 @@ function unpack(result) {
     }
     return result;
 }
-export function createEquinoxLocalCliBridge({ stateRoot, platform = process.platform, namespace = null, registry, desktop, tasks, chat, assertMutationAllowed }) {
+export function createEquinoxLocalCliBridge({ stateRoot, platform = process.platform, namespace = null, registry, desktop, tasks, chat, control, assertMutationAllowed }) {
     const discoveryPath = path.join(stateRoot, "cli-ipc.json");
     let server = null;
     let socketPath = null;
@@ -75,6 +76,17 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
         const action = requiredString(input.action, "action", 64);
         if (action === "status")
             return { connected: true, protocol: 1, capabilities: await summary() };
+        if (action === "control.request") {
+            // A private CLI socket token is required by the framing server before
+            // dispatch. Only the existing bounded Control Center operation set is
+            // accepted inside the shared Control API, not arbitrary HTTP requests.
+            if (Object.keys(input).some(key => !["token", "action", "method", "path", "body", "backgroundRefresh"].includes(key))) {
+                throw new Error("Unsupported desktop control request field.");
+            }
+            return control.executeDesktop({ method: input.method, path: input.path,
+                ...(input.body === undefined ? {} : { body: input.body }),
+                ...(input.backgroundRefresh === undefined ? {} : { backgroundRefresh: input.backgroundRefresh }) });
+        }
         if (action === "tools.list") {
             if (input.domain === undefined)
                 return summary();
@@ -238,6 +250,9 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
                         const request = JSON.parse(input.slice(0, newline));
                         if (!request || typeof request !== "object" || Array.isArray(request) || request.token !== token)
                             throw new Error("CLI request authentication failed.");
+                        if (request.action !== "control.request" && Buffer.byteLength(input.slice(0, newline), "utf8") > MAX_LEGACY_CLI_REQUEST_BYTES) {
+                            throw new Error("CLI request exceeds its original size limit.");
+                        }
                         response = { ok: true, result: await dispatch(request) };
                     }
                     catch (error) {

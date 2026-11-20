@@ -1,0 +1,98 @@
+# Equinox Local 7.0.0: completing the Electron cutover
+
+Status: **in progress** (2026-11-20). The 7.0.0 signed Main snapshot is **not** a finished official release. This plan supersedes incomplete completion claims in the historical Electron shell migration/handoff plans. The existing product stays the Control Center; no Workspace or native Chat is part of this cutover.
+
+## Outcome
+
+- Both installed macOS and Windows use the same packaged Electron Control Center UI, without a browser-accessible localhost dashboard. Preserve current appearance, localization, settings, persisted data, and explicit Factory composition.
+- Electron main is the **only** authority deciding runtime start, stop, restart, recovery, login and Quit. Other workers, secure tunnel connections, OS-native helpers and Windows Job Objects may remain when they provide capabilities rather than a competing supervisor.
+- The existing one-Main signed OS installer/update scheme stays intact, including source/managed ownership, exact SHA and signed artifact checks. Factory is a Source role, never overwritten by the public installer.
+- The existing Equinox Browser/Native Messaging architecture remains unchanged. One selected companion at a time (Nyx/Hemera/Asteria, later Selene) and a native Chat tab are **later features**, not prerequisites for the 7.0.0 release.
+
+## Current source inventory (2026-11-20, HEAD ca3a9ae)
+
+| Concern | Current owner / source | Required cutover |
+| --- | --- | --- |
+| Electron window | `desktop/main.ts` `loadURL(CONTROL_ORIGIN)` | Load immutable packaged HTML, CSS, JS, localization and logo via one fixed private application scheme; retain navigation/recovery/window security |
+| Control Center API | `src/equinox-local-control-api.ts` loopback server and routes | Keep current validation/authorization and share handlers with desktop transport; retire HTTP asset serving immediately after packaged UI is functional, then retire API loopback if no external consumer remains |
+| Frontend API calls | `src/equinox-control-center.ts` centralized `requestJson`/`mutationJson` | Bounded desktop preload/IPC, enumerated request operations; preserve validation, response errors, locking, retries/no-replay behavior; no Node or generic IPC in renderer |
+| Native shell operations | `desktop/control-client.ts`, `desktop/preload.cts` | Keep narrow native presentation, folder picker and menu operations; internal transport may temporarily use the existing loopback API but must not re-expose it as a web dashboard |
+| Core owner | `desktop/runtime-owner.ts` | Keep its serialized child/Job lifecycle and bounded recovery as sole application policy |
+| Factory source startup | `scripts/release/prepare-source-app-host.mts` wrapper and `start-main-source-runtime.sh`/`watch-source-runtime.mts` | Trace actual tunnel process contract, remove duplicate watchdog/launchd-style recovery, preserve private composition and safe shutdown |
+| macOS managed / Windows installed | `desktop/runtime-installation.ts`, `desktop/lifecycle-control.ts`, native installer scripts | Trace release-owner gate, helper/Job contracts and exact login/Quit behavior; preserve signed installer and user state |
+| CLI / updates / discovery | `src/equinox-local-update-activation.ts`, `src/equinox-local-first-install.ts`, `scripts/eqlocal.mjs`, installer/health files | Inventory actual `24891` callers before retiring or replacing a transport; `eqlocal` already has private authenticated IPC |
+
+## Implementation checkpoints
+
+1. **P1: Package and load the unchanged Control Center.** Ship required assets inside ASAR, make origin/URL navigation and renderer recovery private to the app, connect the centralized frontend requests through strict main/preload IPC. Remove HTTP routes serving HTML/assets once the packaged UI is proven. API backend may temporarily continue listening for management/health while consumers are migrated. Never conceal an unchanged web dashboard behind another URL.
+2. **P2: Remove transitional HTTP dependency.** Inventory frontend, CLI, health, updater and installer consumers. Move the existing management operations to shared callable handlers where appropriate, preserving current auth, bounds, revision guards and mutation semantics; remove the loopback API server if no remaining clients need it. No generic request proxy, arbitrary route IPC or second server as the final design.
+3. **P3: Single runtime lifecycle.** Trace Factory Source wrapper -> launcher -> tunnel -> watchdog -> backend and the two managed operating systems. Make Electron main the only restart/retry decider; preserve actual tunnel and platform-native helper behavior, close to tray versus Quit, startup preference and installer handoff. Avoid multiple independent recovery authorities.
+4. **P4: Real platform verification and removal of leftovers.** Check packaged UI on macOS Source and managed plus ordinary Windows x64/ARM64 where available. Observe real startup, Quit, login, update, crash recovery and current-user ownership. Confirm one backend, no web dashboard, no stale launchd/Windows supervisor and consistent source SHA. Run existing type/build/static gates only (no test files or test suites). Update public architecture/README/update docs, then merge, publish the **official 7.0.0 release**, update the live Factory through its proper Source path, and verify running identity/health.
+
+## Release gates and safety
+
+- Never claim the whole cutover is done merely because Electron launches or health is green. Record each platform's verified and unavailable evidence explicitly.
+- Keep source code changes on one `equinox/` branch and the existing worktree; do not proliferate branches, snapshots, rollback engines or alternate installers. Avoid running expensive CI for each incremental change.
+- Generated JavaScript and TypeScript must stay in sync; no new automated tests or smoke suites. Changes to signing, native identities and private configuration require actual release/installation proof.
+- Updates to version stay **7.0.0** through this work. Hemera/Asteria companion selection and Chat tab are separate later work.
+
+### 2026-11-20 implementation evidence
+
+- Packaged `darwin-arm64` development shell from the current working tree, launched the actual signed-as-development `Equinox Local.app`, and observed the unchanged Control Center Overview with live backend state from the packaged UI. This is a **development attach**, not an installed Source/managed cutover or Windows proof.
+- Implemented read-only `equinox://control/` asset loading inside the packaged Electron renderer, strict preload IPC request contract and enumerated management routes. The desktop main process currently forwards authorized requests to the existing API loopback; this **is transitional**, not a claim that the localhost backend transport has been removed.
+- **Transition safety:** HTTP HTML/CSS/JS/image serving is temporarily retained because the currently installed Factory shell still loads that document. Removing it before admitting the new Source Electron shell would break Control Center if the live source backend restarted. Remove the web document/assets only after the new installed application is confirmed; the CLI, installer and runtime status API consumers must be migrated in P2.
+- Pending gates: installed native app behavior on macOS Source/managed and Windows; old-origin per-window UI preferences (theme/section) migration; actual OS login/restart/Quit; release/Factory SHA identity. The old AppKit/WPF source files remain as migration compatibility references pending platform signoff, not as a reason to keep HTTP dashboard in the finished product.
+
+### Observed Factory process relationships (2026-11-20)
+
+Read-only macOS process/port inspection found the currently installed Source Electron main (`applet`) as a child of PID 1, with a Bash runtime wrapper beneath it. That wrapper owns one Peekaboo helper and one Node watcher, while the tunnel client daemon has been reparented to PID 1 and owns a separate Node backend which listens on `127.0.0.1:24891`. These are observed parent relationships, **not** evidence that every process has an independent restart policy. Source code confirms `start-main-source-runtime.sh` runs `tunnel-client runtimes connect`, then a watcher, and the wrapper stops the tunnel on exit. The next lifecycle pass must establish the tunnel client's native supervision contract before deleting or substituting a watcher. Do not create a guessed foreground tunnel option or replace necessary desktop/Job helpers merely to shrink a process list.
+
+### P2 consumer inventory at this checkpoint
+
+- `desktop/main.ts` and the new enumerated IPC-to-API adapter read/write status and Control Center operations through localhost. The HTML itself is now locally packaged.
+- `desktop/runtime-owner.ts` uses the port as a single-backend admission guard.
+- `src/equinox-local-update-activation.ts` and `src/equinox-local-main-update-worker.ts` call the status endpoint during signed update activation.
+- `src/equinox-local-first-install.ts`, `src/equinox-local-bootstrap.ts`, and the installers retain a Control Center URL/reporting contract. The old AppKit and WPF frontends also still refer to the HTTP document; keep compatibility until replacement is admitted.
+- The current `eqlocal` CLI already uses an authenticated private IPC socket via `src/equinox-local-cli-bridge.ts`, so a second unauthenticated transport is not necessary. Assess extending or reusing this authenticated runtime transport for desktop management operations, with shared handler logic and no arbitrary route-proxy capability. Ensure update/installer health has an owner-verifiable replacement before removing the loopback listener.
+
+**Tunnel CLI contract checked:** The installed `tunnel-client 0.0.21` `runtimes connect --help` explicitly describes *managed local runtime supervision* and exposes no supported foreground/attached execution mode. Therefore `connect` intentionally creates its own runtime supervisor; simply dropping the watcher would break Electron-owned recovery/stop observability. P3 must use the supported tunnel contract, keep the tunnel connection working, and clearly distinguish Electron's top-level application policy from tunnel client's process/connection supervision rather than inventing unsupported flags.
+
+### 2026-11-20 checkpoint 3: UI/main direct private IPC
+
+- Refactored `src/equinox-local-control-api.ts` so the existing validated route handlers execute through a **shared operation dispatch**. HTTP compatibility remains an adapter with unchanged Host, Origin, CSRF, size, and mutation validation. No duplicated service logic and no new listener.
+- Extended the **existing** current-user token-authenticated `src/equinox-local-cli-bridge.ts` socket with only `control.request`. The backend enforces the same enumerated Control Center operation/path scope independently of Electron. It never exposes a generic network proxy or sensitive discovery data to the renderer.
+- `desktop/control-client.ts` now uses the private socket for *both* native menu/status operations and the renderer's guarded IPC bridge. Main reads a protected bounded local discovery descriptor and only accepts an admitted current-user Unix socket or the product-owned Windows pipe shape. Mutations are delivered once; a lost reply is reported as ambiguous and is not retried. Electron no longer makes an HTTP request for Control Center data.
+- Validated TypeScript, exact generated JS, existing static/security checks, macOS ARM64 Electron packaging, sealed packaged Control Center resources and deep strict ad-hoc code signature. This is **build evidence only**: the live Factory's running backend still has the pre-change private CLI bridge and cannot serve the new request until an admitted Source runtime restart/upgrade. The packaged IPC UI has **not** yet passed end-to-end installed runtime verification.
+- The HTTP listener at `24891` remains necessary for the currently installed old shell, health/installer/update receipt and platform cutover. Retire those clients and the listener in a subsequent checkpoint before official 7.0.0 release.
+
+### P3 feasibility note (tunnel client binary inspected, no tunnel mutation)
+
+The installed `tunnel-client 0.0.21` also supports **foreground `run --profile`** and the explicit `--mcp.stdio-failure-policy exit` option. This is a better candidate for Electron/OS-managed ownership than `runtimes connect`, which deliberately creates another supervisor. Before changing Source startup, verify the generated profile location, tunnel key references, local-only fallback and offline recovery across managed macOS/Windows. `src/equinox-local-windows-runtime-supervisor.ts` currently includes its own reconnect state machine and tunnel-initiated child restart by default. Avoid merely adding `exit` to the tunnel configuration while retaining an independent retry loop; consolidate the outer policy with Electron main. The foreground flags have **not** been deployed or validated on an installed runtime.
+
+### Source-role packaging confirmation (checkpoint 3)
+
+The clean local completion branch produced a real `darwin-arm64` **Source-role** `desktop-app.tar.gz` via `buildSourceMacDesktopPayload`, not merely a development-identity Electron app. Sealed archive metadata confirmed kind `electron`, native desktop shell **25**, target `darwin-arm64` and an exact source SHA match. It did not install or restart the Factory and therefore does **not** establish end-to-end runtime health. The temporary signed candidate and all generated scratch files were deleted. The packager emitted a non-fatal missing-icon warning despite returning a valid signed archive; track this if the installed app icon is affected.
+
+### 2026-11-20 checkpoint 4: Source foreground tunnel launcher (coded, not yet installed)
+
+The active Source config uses `sourceLauncherOwnsLifecycle=1`; its generated Electron wrapper already starts the configured launcher as a child and waits for it, with a separate parent-death cleanup and a required Peekaboo daemon. `scripts/release/start-main-source-runtime.sh` now **directly execs `tunnel-client run --profile <alias> --mcp.stdio-failure-policy exit`** instead of `runtimes connect` + a detached daemon + `watch-source-runtime.mjs` polling. Source startup regenerates only its selected private tunnel profile, preserving exact Source checkout Node/server path, tunnel ID and key-file reference. The profile directory is checked for canonical current-user privacy. The existing transition stops the prior exact alias before starting the foreground tunnel; no global port kill or unrelated process cleanup. The wrapper still owns controlled tunnel/Peekaboo shutdown under Electron main.
+
+`tunnel-client init --force --sample sample_mcp_stdio_local` was exercised **only against a temporary fake profile**, which wrote a user-private mode 0600 profile and left no artifacts. The active tunnel has not been interrupted. Native `run` and `--mcp.stdio-failure-policy exit` are documented installed CLI options, but real foreground operation, tunnel connection, handling of offline startup, no-orphan exit and Source Factory refresh still require installed verification. The historical `watch-source-runtime` module and legacy `restart-runtime.sh` remain in the tree because older source/launchd compatibility still needs explicit retirement; they are not invoked by the active Electron Source launcher with `sourceLauncherOwnsLifecycle=1`.
+
+### Private IPC single-instance admission
+
+`desktop/runtime-owner.ts` now checks **both** the transitional TCP `24891` listener and the private current-user CLI socket before starting a backend. A private descriptor probe uses exactly the same protected-file, owner, endpoint and private-directory validation as Control Center IPC requests. An active socket refuses a second backend; a missing/stale private socket permits normal startup, while malformed/foreign-owned state fails closed. TCP probing remains until installer/status users are migrated; the IPC guard stays when TCP is eventually retired. This is statically checked but still needs an installed Quit/crash/relaunch observation.
+
+
+### 2026-11-20 checkpoint 5: Installed Source foreground verification and private health gate
+
+- Restarted the existing Source Factory with `restart_runtime`, then in the **next turn** verified real process ownership: stable installed Electron main -> Bash Source wrapper -> foreground `tunnel-client run` -> Node backend. The old detached `runtimes connect` supervisor and polling Node watcher are no longer in the active process tree; the required private Peekaboo helper remains. Backend reported HEALTHY, Browser extension 1.2.2 connected, private CLI socket responsive, no diagnosed health reasons. `tunnel-client runtimes status` now reports the retired **managed alias** as stopped because it does not observe foreground `run`; health should use the running authenticated IPC backend and actual tunnel/connection status instead of that legacy alias registry.
+- Generated a development-identity macOS ARM64 Electron app with the packaged `equinox://control/` HTML. Visually observed the unchanged, fully populated Control Center Overview and live runtime `v7.0.0` data from the new private IPC renderer bridge. This validates the development shell, **not yet** replacement of the installed Source Factory ASAR.
+- Introduced fixed-operation, read-only authenticated private IPC status client in `src/equinox-local-ipc-status.ts`. It checks the current-user discovery file, bounded token/endpoint, private socket parent (macOS), fixed product named pipe (Windows), response size, and **responding PID matching the descriptor**. Manually verified the live Source PID/status and exact `waitForEquinoxLocalVersion("7.0.0")` success without HTTP. Signed Main installer/update health verification now defaults to this channel, preserving exact source SHA, version, target and durable signed native-pointer identity. Older pre-7 rollback gates retain explicit legacy HTTP status only during compatibility migration. The production release source collector includes the new IPC module.
+- Native Control Center now shows `Connected / Private desktop IPC` instead of advertising TCP `127.0.0.1:24891` as its own origin. Windows foreground tunnel invocation opts into `--mcp.stdio-failure-policy exit` so a crashed MCP child is returned to its known local-only supervisor rather than silently restarted by a second tunnel policy. Native Windows installed behavior remains **unverified** while the device connector is unavailable.
+
+**Remaining blockers:** Legacy HTTP dashboard/static assets are still live for the *installed old Source ASAR* and upgrade/rollback handoff. Do not delete them before new Source app installation. The Windows supervisor's local-only/reconnect policy still needs unification under Electron main. Native macOS/Windows release verification, official 7.0.0 release and Factory app ASAR update have not happened.
+
+### Native installation-facing cleanup
+
+The new signed installer continues to open the installed app, not a browser URL. Removed unused `CONTROL_CENTER_URL` shell constant from both canonical and site download copies and removed stale `controlCenterUrl` response fields from bootstrapping/first-install results. Updated English/Turkish website setup text and tunnel setup docs to direct users to the packaged desktop Control Center, not `http://127.0.0.1:24891/`. The website now describes pinned Windows winapp desktop support accurately. Website Astro build and integrity checks passed; generated `website/dist` was cleaned.

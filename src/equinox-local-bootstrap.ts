@@ -430,7 +430,6 @@ export async function bootstrapManagedEquinoxUser({
       nativeHostManifestPath: nativeHost.manifestPath,
       nativeHostLauncherPath: nativeHost.launcherPath,
       nativeHostRegistrationIdempotent: Boolean(nativeHost.idempotent),
-      controlCenterUrl: "http://127.0.0.1:24891/",
     });
   }
 
@@ -475,7 +474,6 @@ export async function bootstrapManagedEquinoxUser({
     appRuntimeWrapperPath,
     hostWrapperPath,
     nativeHostManifestPath,
-    controlCenterUrl: "http://127.0.0.1:24891/",
   });
 }
 

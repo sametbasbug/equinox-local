@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import net from "node:net";
+import { assertNoOtherLocalRuntime } from "./control-client.js";
 
 export type RuntimeJobLease = {
   assign: (pid: number) => Promise<unknown>;
@@ -107,6 +108,7 @@ export function createRuntimeOwner(
     if (!desired || worker) return;
     onState("starting");
     await requireFreeControlPort();
+    await assertNoOtherLocalRuntime();
     const launch = await resolveLaunch();
     const nativeJob = await launch.createJob?.();
     // Retain the lease before attempting spawn, so cancellation or synchronous spawn failure cannot lose it.

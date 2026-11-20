@@ -597,51 +597,32 @@ export function createEquinoxLocalControlApi({
     mutationCount: state.mutationCount,
   });
 
-  const handler = async (req:IncomingMessage,res:ServerResponse):Promise<void> => {
-    res.setHeader("connection", "close");
-
-    const actualPort = state.actualPort;
-    if (!actualPort || !allowedAuthorities(actualPort).has(requestAuthority(req))) {
-      jsonBody(res, 421, { ok: false, error: "Control Center Host doğrulaması başarısız." });
-      return;
-    }
-
-    let url;
+  // One route implementation for HTTP compatibility and authenticated desktop IPC.
+  // Desktop IPC has already passed its fixed-operation allowlist and private
+  // socket authentication; HTTP still enforces its original Host/Origin/CSRF.
+  type ControlDispatchReply = { status: number; body: JsonBoundary };
+  type ControlDispatchSend = (status: number, payload: JsonBoundary, headers?: Record<string, string>) => void;
+  const dispatchControlOperation = async (
+    method: string | undefined,
+    pathname: string,
+    readBody: () => Promise<JsonBoundary>,
+    authorizeMutation: () => void,
+    send: ControlDispatchSend,
+  ): Promise<void> => {
     try {
-      url = new URL(req.url || "/", `http://${requestAuthority(req)}`);
-    } catch {
-      jsonBody(res, 400, { ok: false, error: "Geçersiz istek URL'si." });
-      return;
-    }
-
-    if (url.search && !isAllowedControlCenterNavigationQuery(url, req.method)) {
-      state.requestCount += 1;
-      jsonBody(res, 400, { ok: false, error: "Control Center API query parametresi kabul etmiyor." });
-      return;
-    }
-
-    if (!isBackgroundRefreshRequest(req, url)) state.requestCount += 1;
-
-    try {
-      const asset = CONTROL_CENTER_ASSETS.get(url.pathname);
-      if (req.method === "GET" && asset) {
-        await controlCenterAssetBody(res, asset);
+      if (method === "GET" && pathname === "/api/v1/health") {
+        send(200, { ok: true, controlCenter: snapshot() });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/health") {
-        jsonBody(res, 200, { ok: true, controlCenter: snapshot() });
+      if (method === "GET" && pathname === "/api/v1/session") {
+        send(200, { ok: true, csrfToken: state.csrfToken });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/session") {
-        jsonBody(res, 200, { ok: true, csrfToken: state.csrfToken });
-        return;
-      }
-
-      if (req.method === "GET" && url.pathname === "/api/v1/config") {
+      if (method === "GET" && pathname === "/api/v1/config") {
         const configSnapshot = configManager.snapshot();
-        jsonBody(res, 200, {
+        send(200, {
           ok: true,
           revision: configSnapshot.revision,
           loadedAt: configSnapshot.loadedAt,
@@ -650,92 +631,92 @@ export function createEquinoxLocalControlApi({
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/status") {
-        jsonBody(res, 200, { ok: true, status: await getStatus() });
+      if (method === "GET" && pathname === "/api/v1/status") {
+        send(200, { ok: true, status: await getStatus() });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/turn-budget") {
+      if (method === "GET" && pathname === "/api/v1/turn-budget") {
         if (typeof getTurnBudget !== "function") { const error:ControlError = new Error("Turn Budget is unavailable."); error.statusCode = 503; throw error; }
-        jsonBody(res, 200, { ok: true, turnBudget: await getTurnBudget() });
+        send(200, { ok: true, turnBudget: await getTurnBudget() });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/turn-budget") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && pathname === "/api/v1/turn-budget") {
+        authorizeMutation();
         if (typeof updateTurnBudget !== "function") { const error:ControlError = new Error("Turn Budget settings are unavailable."); error.statusCode = 503; throw error; }
-        const turnBudget = await updateTurnBudget(validateTurnBudgetRequest(await readJsonRequest(req)));
+        const turnBudget = await updateTurnBudget(validateTurnBudgetRequest(await readBody()));
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, turnBudget });
+        send(200, { ok: true, turnBudget });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/doctor") {
-        jsonBody(res, 200, { ok: true, doctor: await getDoctorStatus() });
+      if (method === "GET" && pathname === "/api/v1/doctor") {
+        send(200, { ok: true, doctor: await getDoctorStatus() });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/doctor/repairs") {
+      if (method === "GET" && pathname === "/api/v1/doctor/repairs") {
         if (typeof getDoctorRepairs !== "function") { const error:ControlError = new Error("Doctor repair planning is unavailable on this installation."); error.statusCode = 503; throw error; }
-        jsonBody(res, 200, { ok: true, repairs: await getDoctorRepairs() });
+        send(200, { ok: true, repairs: await getDoctorRepairs() });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/doctor/repair") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "POST" && pathname === "/api/v1/doctor/repair") {
+        authorizeMutation();
         if (typeof applyDoctorRepair !== "function") { const error:ControlError = new Error("Doctor repair is unavailable on this installation."); error.statusCode = 503; throw error; }
-        const request = validateDoctorRepairRequest(await readJsonRequest(req));
+        const request = validateDoctorRepairRequest(await readBody());
         const result = await applyDoctorRepair(request);
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, result });
+        send(200, { ok: true, result });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/activity") {
-        jsonBody(res, 200, { ok: true, events: await getActivity() });
+      if (method === "GET" && pathname === "/api/v1/activity") {
+        send(200, { ok: true, events: await getActivity() });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/update") {
-        jsonBody(res, 200, { ok: true, update: await getUpdateStatus() });
+      if (method === "GET" && pathname === "/api/v1/update") {
+        send(200, { ok: true, update: await getUpdateStatus() });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/onboarding") {
-        jsonBody(res, 200, { ok: true, onboarding: await getOnboardingStatus() });
+      if (method === "GET" && pathname === "/api/v1/onboarding") {
+        send(200, { ok: true, onboarding: await getOnboardingStatus() });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/tasks") {
+      if (method === "GET" && pathname === "/api/v1/tasks") {
         if (typeof getTasks !== "function") { const error:ControlError = new Error("Task controls are unavailable on this installation."); error.statusCode = 503; throw error; }
-        jsonBody(res, 200, { ok: true, tasks: await getTasks() });
+        send(200, { ok: true, tasks: await getTasks() });
         return;
       }
 
-      const taskRoute = parseTaskRoute(url.pathname);
-      if (req.method === "GET" && taskRoute?.action === null) {
+      const taskRoute = parseTaskRoute(pathname);
+      if (method === "GET" && taskRoute?.action === null) {
         if (typeof getTask !== "function") { const error:ControlError = new Error("Task controls are unavailable on this installation."); error.statusCode = 503; throw error; }
-        jsonBody(res, 200, { ok: true, task: await getTask(taskRoute.taskId) });
+        send(200, { ok: true, task: await getTask(taskRoute.taskId) });
         return;
       }
 
-      if (req.method === "PUT" && taskRoute?.action === null) {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && taskRoute?.action === null) {
+        authorizeMutation();
         if (typeof updateTask !== "function") { const error:ControlError = new Error("Task editing is unavailable on this installation."); error.statusCode = 503; throw error; }
-        const task = await updateTask(taskRoute.taskId, validateTaskUpdateRequest(await readJsonRequest(req)));
+        const task = await updateTask(taskRoute.taskId, validateTaskUpdateRequest(await readBody()));
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, task });
+        send(200, { ok: true, task });
         return;
       }
 
-      if (req.method === "POST" && taskRoute?.action) {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Task action");
+      if (method === "POST" && taskRoute?.action) {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Task action");
         if (taskRoute.action === "delete") {
           if (typeof deleteTask !== "function") { const error:ControlError = new Error("Task deletion is unavailable on this installation."); error.statusCode = 503; throw error; }
           const deleted = await deleteTask(taskRoute.taskId);
           state.mutationCount += 1;
-          jsonBody(res, 200, { ok: true, deleted });
+          send(200, { ok: true, deleted });
           return;
         }
         let task;
@@ -756,13 +737,13 @@ export function createEquinoxLocalControlApi({
           task = await abandonTaskFreshResume(taskRoute.taskId);
         }
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, task });
+        send(200, { ok: true, task });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/agent/pause") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Agent pause");
+      if (method === "POST" && pathname === "/api/v1/agent/pause") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Agent pause");
         if (typeof pauseAgent !== "function") {
           const error:ControlError = new Error("Agent emergency stop is unavailable on this installation.");
           error.statusCode = 503;
@@ -770,13 +751,13 @@ export function createEquinoxLocalControlApi({
         }
         const agentControl = await pauseAgent();
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, agentControl });
+        send(200, { ok: true, agentControl });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/agent/resume") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Agent resume");
+      if (method === "POST" && pathname === "/api/v1/agent/resume") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Agent resume");
         if (typeof resumeAgent !== "function") {
           const error:ControlError = new Error("Agent resume is unavailable on this installation.");
           error.statusCode = 503;
@@ -784,26 +765,26 @@ export function createEquinoxLocalControlApi({
         }
         const agentControl = await resumeAgent();
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, agentControl });
+        send(200, { ok: true, agentControl });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/onboarding/tunnel") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "POST" && pathname === "/api/v1/onboarding/tunnel") {
+        authorizeMutation();
         if (typeof configureTunnel !== "function") {
           const error:ControlError = new Error("Tunnel onboarding is unavailable on this installation.");
           error.statusCode = 503;
           throw error;
         }
-        const result = await configureTunnel(await readJsonRequest(req));
+        const result = await configureTunnel(await readBody());
         state.mutationCount += 1;
-        jsonBody(res, 202, { ok: true, result });
+        send(202, { ok: true, result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/runtime/restart") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Runtime restart");
+      if (method === "POST" && pathname === "/api/v1/runtime/restart") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Runtime restart");
         if (typeof restartRuntime !== "function") {
           const error:ControlError = new Error("Equinox Local restart is unavailable on this installation.");
           error.statusCode = 503;
@@ -811,39 +792,39 @@ export function createEquinoxLocalControlApi({
         }
         const result = await restartRuntime();
         state.mutationCount += 1;
-        jsonBody(res, 202, { ok: true, result });
+        send(202, { ok: true, result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/uninstall") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "POST" && pathname === "/api/v1/uninstall") {
+        authorizeMutation();
         if (typeof scheduleUninstall !== "function") {
           const error:ControlError = new Error("Equinox Local uninstall is unavailable on this installation.");
           error.statusCode = 503;
           throw error;
         }
-        const request = validateUninstallRequest(await readJsonRequest(req));
+        const request = validateUninstallRequest(await readBody());
         const result = await scheduleUninstall(request);
         state.mutationCount += 1;
-        jsonBody(res, 202, { ok: true, result });
+        send(202, { ok: true, result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/update/check") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Update check");
+      if (method === "POST" && pathname === "/api/v1/update/check") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Update check");
         if (typeof checkForUpdates !== "function") {
           const error:ControlError = new Error("Equinox Local update check is unavailable on this installation.");
           error.statusCode = 503;
           throw error;
         }
-        jsonBody(res, 200, { ok: true, update: await checkForUpdates() });
+        send(200, { ok: true, update: await checkForUpdates() });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/update/apply") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Update apply");
+      if (method === "POST" && pathname === "/api/v1/update/apply") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Update apply");
         if (typeof applyUpdate !== "function") {
           const error:ControlError = new Error("Equinox Local update installation is unavailable on this installation.");
           error.statusCode = 503;
@@ -851,18 +832,18 @@ export function createEquinoxLocalControlApi({
         }
         const result = await applyUpdate();
         state.mutationCount += 1;
-        jsonBody(res, 202, { ok: true, result });
+        send(202, { ok: true, result });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/config") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        const body = validateReplaceEnvelope(await readJsonRequest(req));
+      if (method === "PUT" && pathname === "/api/v1/config") {
+        authorizeMutation();
+        const body = validateReplaceEnvelope(await readBody());
         const result = await configManager.replacePersisted(body.config, {
           expectedRevision: body.expectedRevision,
         });
         state.mutationCount += 1;
-        jsonBody(res, 200, {
+        send(200, {
           ok: true,
           previousRevision: result.previousRevision,
           persistedRevision: result.persistedRevision,
@@ -871,22 +852,22 @@ export function createEquinoxLocalControlApi({
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/folder-picker") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Folder picker");
+      if (method === "POST" && pathname === "/api/v1/folder-picker") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Folder picker");
         if (typeof chooseFolder !== "function") {
           const error:ControlError = new Error("Visual folder selection is unavailable on this installation.");
           error.statusCode = 501;
           throw error;
         }
         const selectedPath = await chooseFolder();
-        jsonBody(res, 200, { ok: true, cancelled: selectedPath === null, path: selectedPath });
+        send(200, { ok: true, cancelled: selectedPath === null, path: selectedPath });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/browser/agent/open") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Agent Browser open");
+      if (method === "POST" && pathname === "/api/v1/browser/agent/open") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Agent Browser open");
         if (typeof openAgentBrowser !== "function") {
           const error:ControlError = new Error("Agent Browser launch control is unavailable.");
           error.statusCode = 503;
@@ -894,164 +875,164 @@ export function createEquinoxLocalControlApi({
         }
         const agentBrowser = await openAgentBrowser();
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, agentBrowser });
+        send(200, { ok: true, agentBrowser });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/browser/settings") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && pathname === "/api/v1/browser/settings") {
+        authorizeMutation();
         if (typeof updateBrowserSettings !== "function") {
           const error:ControlError = new Error("Equinox Browser settings control is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const settings = validateBrowserSettings(await readJsonRequest(req));
+        const settings = validateBrowserSettings(await readBody());
         const result = await updateBrowserSettings(settings);
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, settings: result });
+        send(200, { ok: true, settings: result });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/integrations/github") {
+      if (method === "GET" && pathname === "/api/v1/integrations/github") {
         if (typeof checkGitHub !== "function") {
           const error:ControlError = new Error("GitHub integration status is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        jsonBody(res, 200, { ok: true, github: await checkGitHub() });
+        send(200, { ok: true, github: await checkGitHub() });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/integrations/peekaboo") {
+      if (method === "GET" && pathname === "/api/v1/integrations/peekaboo") {
         if (typeof getPeekabooStatus !== "function") {
           const error:ControlError = new Error("Peekaboo integration status is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        jsonBody(res, 200, { ok: true, peekaboo: await getPeekabooStatus() });
+        send(200, { ok: true, peekaboo: await getPeekabooStatus() });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/integrations/github/check") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "GitHub check");
+      if (method === "POST" && pathname === "/api/v1/integrations/github/check") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "GitHub check");
         if (typeof checkGitHub !== "function") {
           const error:ControlError = new Error("GitHub integration check is unavailable.");
           error.statusCode = 503;
           throw error;
         }
         const result = await checkGitHub();
-        jsonBody(res, 200, {
+        send(200, {
           ok: true,
           github: result,
         });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/integrations/http-profiles") {
+      if (method === "GET" && pathname === "/api/v1/integrations/http-profiles") {
         if (typeof getHttpProfiles !== "function") {
           const error:ControlError = new Error("Authenticated HTTP profiles are unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        jsonBody(res, 200, { ok: true, httpProfiles: await getHttpProfiles() });
+        send(200, { ok: true, httpProfiles: await getHttpProfiles() });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/http-profiles/management") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && pathname === "/api/v1/integrations/http-profiles/management") {
+        authorizeMutation();
         if (typeof setHttpProfileManagement !== "function") {
           const error:ControlError = new Error("Authenticated HTTP profile management is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const request = validateHttpProfileManagementRequest(await readJsonRequest(req));
+        const request = validateHttpProfileManagementRequest(await readBody());
         const httpProfiles = await setHttpProfileManagement(request);
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, httpProfiles });
+        send(200, { ok: true, httpProfiles });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/http-profiles/profile") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && pathname === "/api/v1/integrations/http-profiles/profile") {
+        authorizeMutation();
         if (typeof upsertHttpProfile !== "function") {
           const error:ControlError = new Error("Authenticated HTTP profile setup is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const request = validateHttpProfileControlUpsert(await readJsonRequest(req));
+        const request = validateHttpProfileControlUpsert(await readBody());
         const profile = await upsertHttpProfile(request);
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, profile });
+        send(200, { ok: true, profile });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/integrations/http-profiles/test") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "POST" && pathname === "/api/v1/integrations/http-profiles/test") {
+        authorizeMutation();
         if (typeof testHttpProfile !== "function") {
           const error:ControlError = new Error("Authenticated HTTP profile test is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const request = validateHttpProfileTestRequest(await readJsonRequest(req));
+        const request = validateHttpProfileTestRequest(await readBody());
         const result = await testHttpProfile(request);
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, result });
+        send(200, { ok: true, result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/integrations/http-profiles/delete") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "POST" && pathname === "/api/v1/integrations/http-profiles/delete") {
+        authorizeMutation();
         if (typeof deleteHttpProfile !== "function") {
           const error:ControlError = new Error("Authenticated HTTP profile deletion is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const request = validateHttpProfileDeleteRequest(await readJsonRequest(req));
+        const request = validateHttpProfileDeleteRequest(await readBody());
         const result = await deleteHttpProfile(request);
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, result });
+        send(200, { ok: true, result });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/files/import-settings") {
+      if (method === "GET" && pathname === "/api/v1/files/import-settings") {
         if (typeof getWebImportSettings !== "function") { const error:ControlError = new Error("Web file transfer settings are unavailable."); error.statusCode = 503; throw error; }
-        jsonBody(res, 200, { ok: true, webFileTransfer: await getWebImportSettings() });
+        send(200, { ok: true, webFileTransfer: await getWebImportSettings() });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/files/import-settings") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && pathname === "/api/v1/files/import-settings") {
+        authorizeMutation();
         if (typeof updateWebImportDownloads !== "function") { const error:ControlError = new Error("Web file transfer settings control is unavailable."); error.statusCode = 503; throw error; }
-        const body = await readJsonRequest(req);
+        const body = await readBody();
         const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
         if (keys.length !== 1 || keys[0] !== "path" || !(body.path === null || typeof body.path === "string")) {
           const error:ControlError = new Error("Web file transfer settings accept only path as an absolute folder path or null for default."); error.statusCode = 400; throw error;
         }
         const webFileTransfer = await updateWebImportDownloads({ path: body.path });
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, webFileTransfer });
+        send(200, { ok: true, webFileTransfer });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/integrations/telegram") {
+      if (method === "GET" && pathname === "/api/v1/integrations/telegram") {
         if (typeof getTelegramStatus !== "function") {
           const error:ControlError = new Error("Telegram integration is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        jsonBody(res, 200, { ok: true, telegram: await getTelegramStatus() });
+        send(200, { ok: true, telegram: await getTelegramStatus() });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/telegram/remote-control") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && pathname === "/api/v1/integrations/telegram/remote-control") {
+        authorizeMutation();
         if (typeof updateTelegramRemoteControl !== "function") {
           const error:ControlError = new Error("Telegram remote-control settings are unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const body = await readJsonRequest(req);
+        const body = await readBody();
         const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
         if (keys.length !== 1 || keys[0] !== "enabled" || typeof body.enabled !== "boolean") {
           const error:ControlError = new Error("Telegram remote-control settings accept only enabled as a boolean.");
@@ -1060,18 +1041,18 @@ export function createEquinoxLocalControlApi({
         }
         const remoteControl = await updateTelegramRemoteControl({ enabled: body.enabled });
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, remoteControl });
+        send(200, { ok: true, remoteControl });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/telegram/downloads") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && pathname === "/api/v1/integrations/telegram/downloads") {
+        authorizeMutation();
         if (typeof updateTelegramDownloads !== "function") {
           const error:ControlError = new Error("Telegram download location control is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const body = await readJsonRequest(req);
+        const body = await readBody();
         const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
         if (keys.length !== 1 || keys[0] !== "path" || !(body.path === null || typeof body.path === "string")) {
           const error:ControlError = new Error("Telegram download settings accept only path as an absolute folder path or null for default.");
@@ -1080,31 +1061,31 @@ export function createEquinoxLocalControlApi({
         }
         const downloads = await updateTelegramDownloads({ path: body.path });
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, downloads });
+        send(200, { ok: true, downloads });
         return;
       }
 
-      if (req.method === "PUT" && url.pathname === "/api/v1/integrations/telegram") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "PUT" && pathname === "/api/v1/integrations/telegram") {
+        authorizeMutation();
         if (typeof configureTelegram !== "function") {
           const error:ControlError = new Error("Telegram integration setup is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const telegram = await configureTelegram(await readJsonRequest(req));
+        const telegram = await configureTelegram(await readBody());
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, telegram });
+        send(200, { ok: true, telegram });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/pair/start") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
+      if (method === "POST" && pathname === "/api/v1/integrations/telegram/pair/start") {
+        authorizeMutation();
         if (typeof startTelegramPairing !== "function") {
           const error:ControlError = new Error("Telegram pairing is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        const body = await readJsonRequest(req);
+        const body = await readBody();
         const keys = body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
         if (keys.length !== 1 || keys[0] !== "botToken" || typeof body.botToken !== "string") {
           const error:ControlError = new Error("Telegram pairing start accepts only botToken.");
@@ -1113,23 +1094,23 @@ export function createEquinoxLocalControlApi({
         }
         const pairing = await startTelegramPairing({ botToken: body.botToken });
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, pairing });
+        send(200, { ok: true, pairing });
         return;
       }
 
-      if (req.method === "GET" && url.pathname === "/api/v1/integrations/telegram/pair") {
+      if (method === "GET" && pathname === "/api/v1/integrations/telegram/pair") {
         if (typeof pollTelegramPairing !== "function") {
           const error:ControlError = new Error("Telegram pairing status is unavailable.");
           error.statusCode = 503;
           throw error;
         }
-        jsonBody(res, 200, { ok: true, pairing: await pollTelegramPairing() });
+        send(200, { ok: true, pairing: await pollTelegramPairing() });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/pair/confirm") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Telegram pairing confirmation");
+      if (method === "POST" && pathname === "/api/v1/integrations/telegram/pair/confirm") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Telegram pairing confirmation");
         if (typeof confirmTelegramPairing !== "function") {
           const error:ControlError = new Error("Telegram pairing confirmation is unavailable.");
           error.statusCode = 503;
@@ -1137,13 +1118,13 @@ export function createEquinoxLocalControlApi({
         }
         const telegram = await confirmTelegramPairing();
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, telegram });
+        send(200, { ok: true, telegram });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/pair/cancel") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Telegram pairing cancellation");
+      if (method === "POST" && pathname === "/api/v1/integrations/telegram/pair/cancel") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Telegram pairing cancellation");
         if (typeof cancelTelegramPairing !== "function") {
           const error:ControlError = new Error("Telegram pairing cancellation is unavailable.");
           error.statusCode = 503;
@@ -1151,13 +1132,13 @@ export function createEquinoxLocalControlApi({
         }
         const result = await cancelTelegramPairing();
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, result });
+        send(200, { ok: true, result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/test") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Telegram test");
+      if (method === "POST" && pathname === "/api/v1/integrations/telegram/test") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Telegram test");
         if (typeof testTelegram !== "function") {
           const error:ControlError = new Error("Telegram integration test is unavailable.");
           error.statusCode = 503;
@@ -1165,13 +1146,13 @@ export function createEquinoxLocalControlApi({
         }
         const result = await testTelegram();
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, result });
+        send(200, { ok: true, result });
         return;
       }
 
-      if (req.method === "POST" && url.pathname === "/api/v1/integrations/telegram/disconnect") {
-        assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken });
-        validateEmptyObject(await readJsonRequest(req), "Telegram disconnect");
+      if (method === "POST" && pathname === "/api/v1/integrations/telegram/disconnect") {
+        authorizeMutation();
+        validateEmptyObject(await readBody(), "Telegram disconnect");
         if (typeof disconnectTelegram !== "function") {
           const error:ControlError = new Error("Telegram integration disconnect is unavailable.");
           error.statusCode = 503;
@@ -1179,16 +1160,16 @@ export function createEquinoxLocalControlApi({
         }
         const result = await disconnectTelegram();
         state.mutationCount += 1;
-        jsonBody(res, 200, { ok: true, result });
+        send(200, { ok: true, result });
         return;
       }
 
-      if (req.method === "OPTIONS") {
-        jsonBody(res, 405, { ok: false, error: "CORS preflight desteklenmiyor." }, { allow: "GET, PUT, POST" });
+      if (method === "OPTIONS") {
+        send(405, { ok: false, error: "CORS preflight desteklenmiyor." }, { allow: "GET, PUT, POST" });
         return;
       }
 
-      jsonBody(res, 404, { ok: false, error: "Control Center API endpoint bulunamadı." });
+      send(404, { ok: false, error: "Control Center API endpoint bulunamadı." });
     } catch (error) {
       const statusCode = Number.isInteger((error as ControlError)?.statusCode)
         ? (error as ControlError).statusCode!
@@ -1200,9 +1181,108 @@ export function createEquinoxLocalControlApi({
       if (statusCode === 500 && recordInternalError) {
         void Promise.resolve(recordInternalError(error)).catch(() => {});
       }
-      jsonBody(res, statusCode, { ok: false, error: publicErrorMessage(error, statusCode) });
+      send(statusCode, { ok: false, error: publicErrorMessage(error, statusCode) });
     }
   };
+
+  const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    res.setHeader("connection", "close");
+    const actualPort = state.actualPort;
+    if (!actualPort || !allowedAuthorities(actualPort).has(requestAuthority(req))) {
+      jsonBody(res, 421, { ok: false, error: "Control Center Host doğrulaması başarısız." });
+      return;
+    }
+    let url: URL;
+    try { url = new URL(req.url || "/", `http://${requestAuthority(req)}`); }
+    catch { jsonBody(res, 400, { ok: false, error: "Geçersiz istek URL'si." }); return; }
+    if (url.search && !isAllowedControlCenterNavigationQuery(url, req.method)) {
+      state.requestCount += 1;
+      jsonBody(res, 400, { ok: false, error: "Control Center API query parametresi kabul etmiyor." });
+      return;
+    }
+    if (!isBackgroundRefreshRequest(req, url)) state.requestCount += 1;
+    const asset = CONTROL_CENTER_ASSETS.get(url.pathname);
+    if (req.method === "GET" && asset) {
+      try { await controlCenterAssetBody(res, asset); }
+      catch (error) {
+        if (recordInternalError) void Promise.resolve(recordInternalError(error)).catch(() => {});
+        jsonBody(res, 500, { ok: false, error: publicErrorMessage(error, 500) });
+      }
+      return;
+    }
+    await dispatchControlOperation(req.method, url.pathname, () => readJsonRequest(req),
+      () => assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken }),
+      (status, body, headers) => jsonBody(res, status, body, headers));
+  };
+
+  // A second permission boundary inside the private IPC server, independent
+  // of the renderer and Electron main allowlist. Keep lists synchronized.
+const UI_READ_PATHS = new Set([
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks",
+  "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
+  "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
+  "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
+  "/api/v1/integrations/telegram/pair", "/api/v1/integrations/http-profiles",
+  "/api/v1/files/import-settings",
+]);
+const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
+  POST: new Set([
+    "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
+    "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
+    "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",
+    "/api/v1/onboarding/tunnel", "/api/v1/integrations/telegram/pair/start",
+    "/api/v1/integrations/telegram/pair/confirm", "/api/v1/integrations/telegram/pair/cancel",
+    "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
+    "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
+  ]),
+  PUT: new Set([
+    "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",
+    "/api/v1/files/import-settings", "/api/v1/integrations/telegram/downloads",
+    "/api/v1/integrations/telegram/remote-control", "/api/v1/integrations/telegram",
+    "/api/v1/integrations/http-profiles/management", "/api/v1/integrations/http-profiles/profile",
+  ]),
+};
+
+function allowedDesktopUiOperation(method: string, route: string): boolean {
+  if (method === "GET" && (UI_READ_PATHS.has(route) || /^\/api\/v1\/tasks\/task-[a-z0-9-]{6,80}$/u.test(route))) return true;
+  if (UI_WRITE_PATHS[method]?.has(route)) return true;
+  const match = /^\/api\/v1\/tasks\/task-[a-z0-9-]{6,80}(?:\/(complete|cancel|delete|continuation\/cancel|fresh-resume\/cancel|fresh-resume\/abandon))?$/u.exec(route);
+  return Boolean(match && ((method === "PUT" && !match[1]) || (method === "POST" && match[1])));
+}
+
+
+  // This entrypoint is bound only to the existing current-user token-authenticated
+  // CLI IPC server. It is never exposed as an HTTP route or an agent capability.
+  const executeDesktop = async (value: {
+    method: string; path: string; body?: string; backgroundRefresh?: boolean;
+  }): Promise<ControlDispatchReply> => {
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+        Object.keys(value).some(key => !["method", "path", "body", "backgroundRefresh"].includes(key))) {
+      throw badRequest("Invalid desktop operation envelope.");
+    }
+    const { method, path: route, body, backgroundRefresh = false } = value;
+    if (typeof method !== "string" || typeof route !== "string" || route.length > 180 ||
+        !allowedDesktopUiOperation(method, route) ||
+        typeof backgroundRefresh !== "boolean" || (backgroundRefresh && method !== "GET") ||
+        (method === "GET" ? body !== undefined : typeof body !== "string" || Buffer.byteLength(body, "utf8") > MAX_REQUEST_BYTES)) {
+      throw badRequest("Invalid desktop operation arguments.");
+    }
+    if (!(backgroundRefresh && CONTROL_CENTER_BACKGROUND_REFRESH_PATHS.has(route))) state.requestCount += 1;
+    let response: ControlDispatchReply | undefined;
+    const readBody = async (): Promise<JsonBoundary> => {
+      if (typeof body !== "string" || body.length === 0) throw badRequest("JSON request body cannot be empty.");
+      try { return JSON.parse(body); }
+      catch { throw badRequest("Invalid desktop JSON request body."); }
+    };
+    // A mutation here has the authenticated private IPC token, not a web
+    // origin/CSRF token. Its route handler still performs all validation and
+    // capability-specific authorization/revision/mutation guards.
+    await dispatchControlOperation(method, route, readBody, () => {},
+      (status, payload) => { response = { status, body: payload }; });
+    if (!response) throw new Error("Desktop operation produced no result.");
+    return response;
+  };
+
 
   const start = async () => {
     if (state.server?.listening) return snapshot();
@@ -1258,7 +1338,7 @@ export function createEquinoxLocalControlApi({
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };
 
-  return Object.freeze({ start, close, snapshot });
+  return Object.freeze({ start, close, snapshot, executeDesktop });
 }
 
 export const __test = Object.freeze({

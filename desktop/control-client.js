@@ -1,5 +1,11 @@
-import http from "node:http";
-export const CONTROL_ORIGIN = "http://127.0.0.1:24891";
+import net from "node:net";
+import fs from "node:fs/promises";
+import { constants } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { CONTROL_DOCUMENT_ORIGIN } from "./control-assets.js";
+export const CONTROL_ORIGIN = CONTROL_DOCUMENT_ORIGIN;
+const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MUTATION_PATHS = new Set([
     "/api/v1/agent/pause", "/api/v1/agent/resume",
@@ -9,66 +15,233 @@ const MUTATION_PATHS = new Set([
 export function isControlDocument(value) {
     try {
         const url = new URL(value);
-        return url.origin === CONTROL_ORIGIN && !url.username && !url.password
-            && url.pathname === "/"
-            && [...url.searchParams.keys()].every((key) => key === "section" || key === "task");
+        const sections = new Set(["dashboard", "projects", "tasks", "browser", "permissions", "integrations", "activity"]);
+        const section = url.searchParams.get("section");
+        const task = url.searchParams.get("task");
+        return url.protocol === "equinox:" && url.host === "control" && !url.username && !url.password && !url.port && !url.hash
+            && url.pathname === "/" && url.searchParams.getAll("section").length <= 1
+            && url.searchParams.getAll("task").length <= 1
+            && [...url.searchParams.keys()].every((key) => key === "section" || key === "task")
+            && (section === null || sections.has(section))
+            && (task === null || (/^task-[a-z0-9-]{6,80}$/u.test(task) && (section === null || section === "tasks")));
     }
     catch {
         return false;
     }
 }
-/** A fixed-origin, bounded native client; this is not exposed to the renderer. */
-export async function readControlJson(route, { csrfToken } = {}) {
-    const mutation = csrfToken !== undefined;
-    if ((mutation && !MUTATION_PATHS.has(route))
-        || (!mutation && !["/api/v1/status", "/api/v1/session"].includes(route))) {
-        throw new Error("Unsupported Control Center shell operation.");
+/** Native menu operations use the same authenticated private socket as the UI. */
+export async function readControlJson(route) {
+    if (route !== "/api/v1/status")
+        throw new Error("Unsupported Control Center shell read.");
+    const result = await callAuthenticatedControlSocket({ method: "GET", path: route, backgroundRefresh: true });
+    if (result.status !== 200 || result.body.ok !== true)
+        throw new Error("Control Center native status unavailable.");
+    return result.body;
+}
+/** Never retry an uncertain native mutation. */
+export async function mutateControl(route) {
+    if (!MUTATION_PATHS.has(route))
+        throw new Error("Unsupported Control Center shell mutation.");
+    const result = await callAuthenticatedControlSocket({ method: "POST", path: route, body: "{}", backgroundRefresh: false });
+    if (![200, 202].includes(result.status) || result.body.ok !== true) {
+        throw new Error("Control Center native operation could not be confirmed.");
     }
-    return new Promise((resolve, reject) => {
-        const request = http.request(`${CONTROL_ORIGIN}${route}`, {
-            method: mutation ? "POST" : "GET",
-            headers: mutation
-                ? { "content-type": "application/json", "content-length": "2", origin: CONTROL_ORIGIN, "x-equinox-csrf": csrfToken }
-                : { accept: "application/json", "x-equinox-background-refresh": "1" },
-        }, (response) => {
-            if (response.statusCode !== 200 && response.statusCode !== 202) {
-                response.destroy();
-                reject(new Error(`Control Center returned HTTP ${response.statusCode}.`));
-                return;
-            }
-            let bytes = 0;
-            const chunks = [];
-            response.on("data", (chunk) => {
-                bytes += chunk.length;
-                if (bytes > MAX_RESPONSE_BYTES)
-                    response.destroy(new Error("Control Center response is too large."));
-                else
-                    chunks.push(chunk);
-            });
-            response.on("error", reject);
-            response.on("end", () => {
-                try {
-                    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-                    if (!payload || typeof payload !== "object" || Array.isArray(payload))
-                        throw new Error("Invalid Control Center response.");
-                    resolve(payload);
-                }
-                catch (error) {
-                    reject(error);
-                }
-            });
-        });
-        const timeout = setTimeout(() => request.destroy(new Error("Control Center request timed out.")), 3_000);
-        request.once("close", () => clearTimeout(timeout));
-        request.on("error", reject);
-        request.end(mutation ? "{}" : undefined);
+}
+// The renderer can request only these existing, versioned Control Center
+// operations. No raw URL, headers, shell command or native IPC channel crosses
+// the preload bridge. The renderer connects to the existing current-user authenticated IPC socket
+// through Electron main, without a browser-accessible management route.
+const UI_READ_PATHS = new Set([
+    "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks",
+    "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
+    "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
+    "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
+    "/api/v1/integrations/telegram/pair", "/api/v1/integrations/http-profiles",
+    "/api/v1/files/import-settings",
+]);
+const UI_WRITE_PATHS = {
+    POST: new Set([
+        "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
+        "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
+        "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",
+        "/api/v1/onboarding/tunnel", "/api/v1/integrations/telegram/pair/start",
+        "/api/v1/integrations/telegram/pair/confirm", "/api/v1/integrations/telegram/pair/cancel",
+        "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
+        "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
+    ]),
+    PUT: new Set([
+        "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",
+        "/api/v1/files/import-settings", "/api/v1/integrations/telegram/downloads",
+        "/api/v1/integrations/telegram/remote-control", "/api/v1/integrations/telegram",
+        "/api/v1/integrations/http-profiles/management", "/api/v1/integrations/http-profiles/profile",
+    ]),
+};
+function allowedUiOperation(method, route) {
+    if (method === "GET" && (UI_READ_PATHS.has(route) || /^\/api\/v1\/tasks\/task-[a-z0-9-]{6,80}$/u.test(route)))
+        return true;
+    if (UI_WRITE_PATHS[method]?.has(route))
+        return true;
+    const match = /^\/api\/v1\/tasks\/task-[a-z0-9-]{6,80}(?:\/(complete|cancel|delete|continuation\/cancel|fresh-resume\/cancel|fresh-resume\/abandon))?$/u.exec(route);
+    return Boolean(match && ((method === "PUT" && !match[1]) || (method === "POST" && match[1])));
+}
+export async function requestUiControlJson(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+        Object.keys(value).some(key => !["path", "method", "body", "backgroundRefresh"].includes(key))) {
+        throw new Error("Invalid desktop control request.");
+    }
+    const { path: route, method = "GET", body, backgroundRefresh = false } = value;
+    if (typeof route !== "string" || route.length > 180 || typeof method !== "string" ||
+        !allowedUiOperation(method, route) || typeof backgroundRefresh !== "boolean" ||
+        (backgroundRefresh && method !== "GET") ||
+        (method === "GET" && body !== undefined) ||
+        (method !== "GET" && (typeof body !== "string" || Buffer.byteLength(body, "utf8") > MAX_REQUEST_BYTES))) {
+        throw new Error("Unsupported desktop control operation.");
+    }
+    return await callAuthenticatedControlSocket({
+        method, path: route, ...(method === "GET" ? {} : { body: body }), backgroundRefresh,
     });
 }
-/** Fetch a fresh session; never retry an uncertain mutation. */
-export async function mutateControl(route) {
-    const session = await readControlJson("/api/v1/session");
-    if (typeof session.csrfToken !== "string" || !/^[a-f0-9]{64}$/u.test(session.csrfToken)) {
-        throw new Error("Control Center session is unavailable.");
+/** The runtime owner refuses a second backend even after the HTTP listener is retired. */
+export async function assertNoOtherLocalRuntime() {
+    let descriptor;
+    try {
+        descriptor = await readPrivateControlDescriptor();
     }
-    await readControlJson(route, { csrfToken: session.csrfToken });
+    catch (error) {
+        // A missing descriptor/socket means a previous instance is not listening.
+        // A malformed or foreign-owned descriptor must fail closed.
+        if (error.code === "ENOENT")
+            return;
+        throw error;
+    }
+    await new Promise((resolve, reject) => {
+        const socket = net.createConnection(descriptor.endpoint);
+        let finished = false;
+        const finish = (error) => {
+            if (finished)
+                return;
+            finished = true;
+            clearTimeout(timer);
+            socket.removeAllListeners();
+            socket.destroy();
+            if (error)
+                reject(error);
+            else
+                resolve();
+        };
+        const timer = setTimeout(() => finish(new Error("Cannot establish private runtime ownership.")), 1_500);
+        socket.once("connect", () => finish(new Error("Another local runtime owns the private IPC socket; refusing a second backend.")));
+        socket.once("error", (error) => {
+            finish(error.code === "ENOENT" || error.code === "ECONNREFUSED"
+                ? undefined : new Error("Private runtime socket ownership is unavailable."));
+        });
+    });
+}
+// Electron main is the only reader of the credential-bearing, mode-bounded
+// discovery descriptor. Reuse these checks for both IPC requests and the
+// single-owner startup guard; no endpoint or token reaches the renderer.
+async function readPrivateControlDescriptor() {
+    const stateRoot = process.platform === "darwin"
+        ? path.join(os.homedir(), "Library", "Application Support", "Equinox Local")
+        : process.platform === "win32" && typeof process.env.LOCALAPPDATA === "string"
+            ? path.join(process.env.LOCALAPPDATA, "Equinox Local", "state") : null;
+    if (!stateRoot)
+        throw new Error("Desktop control IPC is unsupported on this host.");
+    const file = path.join(stateRoot, "cli-ipc.json");
+    const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    let descriptor;
+    try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.nlink !== 1 || stat.size < 1 || stat.size > 8192 ||
+            (process.platform === "darwin" && (stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0))) {
+            throw new Error("Desktop control IPC descriptor is not private.");
+        }
+        descriptor = JSON.parse(await handle.readFile("utf8"));
+    }
+    finally {
+        await handle.close();
+    }
+    if (!descriptor || descriptor.version !== 1 || typeof descriptor.token !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(descriptor.token) || typeof descriptor.endpoint !== "string" ||
+        !Number.isSafeInteger(descriptor.pid) || Number(descriptor.pid) < 1) {
+        throw new Error("Desktop control IPC descriptor is invalid.");
+    }
+    const endpoint = descriptor.endpoint;
+    if (process.platform === "darwin") {
+        const uid = process.getuid?.();
+        const directory = path.dirname(endpoint);
+        if (typeof uid !== "number" || !new RegExp(`^/tmp/equinox-local-${uid}(?:-[a-z0-9][a-z0-9-]{0,31})?$`, "u").test(directory) ||
+            path.basename(endpoint) !== "cli.sock")
+            throw new Error("Desktop control IPC endpoint is untrusted.");
+        const stat = await fs.lstat(directory);
+        if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
+            throw new Error("Desktop control IPC socket directory is untrusted.");
+        }
+    }
+    else if (!/^\\\\\.\\pipe\\equinox-local-cli-[a-f0-9]{32}$/u.test(endpoint)) {
+        throw new Error("Desktop control IPC endpoint is untrusted.");
+    }
+    return { endpoint, token: descriptor.token };
+}
+// Reuse the already-running, private current-user CLI bridge. Main alone reads
+// its credential-bearing descriptor. No token, endpoint, arbitrary path or
+// generic socket API is exposed to the sandboxed renderer.
+async function callAuthenticatedControlSocket(request) {
+    const descriptor = await readPrivateControlDescriptor();
+    const { endpoint } = descriptor;
+    const message = JSON.stringify({ token: descriptor.token, action: "control.request", ...request });
+    // Serialized JSON bodies are escaped again by the socket envelope. Bound
+    // the encoded representation separately from the decoded 256 KiB body.
+    if (Buffer.byteLength(message, "utf8") > MAX_REQUEST_BYTES * 2 + 4096) {
+        throw new Error("Desktop control request is too large.");
+    }
+    return await new Promise((resolve, reject) => {
+        const socket = net.createConnection(endpoint);
+        socket.setEncoding("utf8");
+        let settled = false;
+        let received = "";
+        const fail = (error) => {
+            if (settled)
+                return;
+            settled = true;
+            socket.destroy();
+            reject(error);
+        };
+        socket.setTimeout(150_000, () => fail(new Error("Desktop control IPC timed out; mutation outcome may be ambiguous.")));
+        socket.once("connect", () => socket.write(`${message}\n`));
+        socket.on("data", (chunk) => {
+            if (settled)
+                return;
+            received += chunk;
+            if (Buffer.byteLength(received, "utf8") > 8 * 1024 * 1024) {
+                fail(new Error("Desktop control IPC reply is too large."));
+                return;
+            }
+            const newline = received.indexOf("\n");
+            if (newline < 0)
+                return;
+            try {
+                const envelope = JSON.parse(received.slice(0, newline));
+                if (!envelope || typeof envelope !== "object" || Array.isArray(envelope))
+                    throw new Error("Invalid desktop control IPC reply.");
+                const response = envelope;
+                if (response.ok !== true)
+                    throw new Error(typeof response.error?.message === "string"
+                        ? response.error.message : "Desktop control IPC request failed.");
+                const result = response.result;
+                if (!result || typeof result !== "object" || !Number.isInteger(result.status) ||
+                    !result.body || typeof result.body !== "object" || Array.isArray(result.body)) {
+                    throw new Error("Invalid desktop control result.");
+                }
+                settled = true;
+                socket.end();
+                resolve({ status: result.status, body: result.body });
+            }
+            catch (error) {
+                fail(error instanceof Error ? error : new Error("Invalid desktop control reply."));
+            }
+        });
+        socket.once("error", (error) => fail(error));
+        socket.once("end", () => fail(new Error("Desktop control IPC closed without a result; check before retrying.")));
+    });
 }

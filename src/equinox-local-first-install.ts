@@ -843,7 +843,6 @@ export async function installManagedEquinoxRelease({
       // with an unverified/stale staged candidate.
       return Object.freeze({
         status: recover.status, version: recover.version, configCreated: false,
-        controlCenterUrl: "http://127.0.0.1:24891/",
       });
     }
   }
@@ -852,7 +851,7 @@ export async function installManagedEquinoxRelease({
   // pointer can temporarily name the missing directory between two renames.
   if (!allowExistingStableToMainMigration) {
     const recovered = await repairSameVersionMain(repairOptions);
-    if (recovered) return Object.freeze({ ...recovered, controlCenterUrl: "http://127.0.0.1:24891/" });
+    if (recovered) return Object.freeze({ ...recovered });
   } else {
     const backup = await fsImpl.lstat(pathApi.join(paths.installRoot, ".stable-repair-backup")).catch((error) => {
       if ((error as ErrorCode)?.code === "ENOENT") return null;
@@ -989,7 +988,7 @@ export async function installManagedEquinoxRelease({
     await waitForManagedSourceImpl(currentVersion, source.sha, { attempts: 6, delayMs: 500 });
     return Object.freeze({
       status: "already-installed", version: currentVersion, managedSourceSha: source.sha,
-      configCreated: false, controlCenterUrl: "http://127.0.0.1:24891/",
+      configCreated: false,
     });
   }
 
@@ -1078,13 +1077,12 @@ export async function installManagedEquinoxRelease({
         status: "newer-installed",
         version: current.version,
         requestedVersion: candidate.version,
-        controlCenterUrl: "http://127.0.0.1:24891/",
       });
     }
     if (comparison === 0 && currentMainStamp && !allowExistingStableToMainMigration && !previousManagedMain) {
       const result = await repairSameVersionMain({ ...repairOptions, candidate, mainStamp: currentMainStamp!.data,
         installation: installationFor(paths, current.releaseDir, { platform, arch, target: expectedTarget }) });
-      return Object.freeze({ ...result, controlCenterUrl: "http://127.0.0.1:24891/" });
+      return Object.freeze({ ...result });
     }
     if (comparison === 0 && !previousManagedMain) {
       // Re-running the website installer is not consent to move an existing
@@ -1112,7 +1110,6 @@ export async function installManagedEquinoxRelease({
         version: current.version,
         managedSourceSha: enrollment?.bootstrapSha ?? null,
         configCreated: Boolean(bootstrap.configCreated),
-        controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
       });
     }
     // Both Windows and macOS use the existing signed native activation,
@@ -1216,7 +1213,6 @@ export async function installManagedEquinoxRelease({
       version: candidate.version,
       previousVersion: activation.previousVersion,
       configCreated: Boolean(bootstrap.configCreated),
-      controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
     });
   }
 
@@ -1255,7 +1251,6 @@ export async function installManagedEquinoxRelease({
     version: candidate.version,
     managedSourceSha: enrollment?.bootstrapSha ?? null,
     configCreated: Boolean(bootstrap.configCreated),
-    controlCenterUrl: bootstrap.controlCenterUrl || "http://127.0.0.1:24891/",
   });
 }
 

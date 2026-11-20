@@ -27,13 +27,12 @@ else
   SOURCE_ROOT="$("$NODE_BIN" "$SCRIPT_DIR/resolve-main-source-runtime.mjs" "$POINTER" "$DEV_CONFIG")"
 fi
 MCP_SERVER="$SOURCE_ROOT/src/server.js"
-WATCHDOG="$SOURCE_ROOT/scripts/release/watch-source-runtime.mjs"
 TUNNEL_CLIENT="$(/usr/bin/awk -F= '$1 == "tunnelClient" { print substr($0, index($0, "=") + 1); exit }' "$DEV_CONFIG")"
 ALIAS="$(/usr/bin/awk -F= '$1 == "tunnelRuntime" { print substr($0, index($0, "=") + 1); exit }' "$DEV_CONFIG")"
 PRIVATE_MODULE="$(/usr/bin/awk -F= '$1 == "privateCompositionModule" { print substr($0, index($0, "=") + 1); exit }' "$DEV_CONFIG")"
 PRIVATE_ROOT="$(/usr/bin/awk -F= '$1 == "privateCompositionRoot" { print substr($0, index($0, "=") + 1); exit }' "$DEV_CONFIG")"
 
-for required in "$MCP_SERVER" "$WATCHDOG" "$TUNNEL_CLIENT" "$KEY_FILE"; do
+for required in "$MCP_SERVER" "$TUNNEL_CLIENT" "$KEY_FILE"; do
   [[ -f "$required" && ! -L "$required" ]] || { print -u2 -- "Main source runtime dependency is unavailable."; exit 1; }
 done
 [[ -n "$ALIAS" ]] || { print -u2 -- "Tunnel runtime alias is unavailable."; exit 1; }
@@ -48,20 +47,34 @@ else
   unset EQUINOX_LOCAL_PRIVATE_COMPOSITION_MODULE
   unset EQUINOX_LOCAL_PRIVATE_COMPOSITION_ROOT
 fi
-TUNNEL_ID="$("$TUNNEL_CLIENT" runtimes list 2>/dev/null | /usr/bin/awk -v alias="$ALIAS" '$1 == alias { print $2; exit }')"
-[[ -n "$TUNNEL_ID" ]] || { print -u2 -- "Tunnel runtime identity is unavailable."; exit 1; }
-
-"$TUNNEL_CLIENT" runtimes stop "$ALIAS" >/dev/null 2>&1 || true
-"$TUNNEL_CLIENT" runtimes connect \
-  --alias "$ALIAS" \
-  --profile "$ALIAS" \
-  --tunnel-id "$TUNNEL_ID" \
-  --runtime-api-key "file:$KEY_FILE" \
-  --mcp-command "${(qq)NODE_BIN} ${(qq)MCP_SERVER}"
-
-sleep 2
-"$TUNNEL_CLIENT" runtimes status "$ALIAS" 2>/dev/null | /usr/bin/awk '$2 == "ready" { ready=1 } END { exit !ready }' || {
-  print -u2 -- "Tunnel runtime did not become ready."
+# Source Electron owns the lifetime of this foreground tunnel process.
+# The old `runtimes connect` detached its own daemon, whose watchdog then
+# caused a second recovery policy underneath Electron. Use the installed
+# tunnel-client's native stdio child/exit contract instead.
+[[ "$ALIAS" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { print -u2 -- "Invalid tunnel runtime alias."; exit 1; }
+PROFILE_DIR="$HOME_DIR/.config/tunnel-client"
+[[ -d "$PROFILE_DIR" && ! -L "$PROFILE_DIR" ]] || { print -u2 -- "Tunnel profile directory is unavailable."; exit 1; }
+PROFILE_OWNER="$(/usr/bin/stat -f %u "$PROFILE_DIR")"
+PROFILE_MODE="$(/usr/bin/stat -f %Lp "$PROFILE_DIR")"
+[[ "$PROFILE_OWNER" == "$(/usr/bin/id -u)" && "$PROFILE_MODE" == "700" ]] || {
+  print -u2 -- "Tunnel profile directory must be private and user-owned."
   exit 1
 }
-exec "$NODE_BIN" "$WATCHDOG" "$DEV_CONFIG"
+TUNNEL_ID="$("$TUNNEL_CLIENT" runtimes list 2>/dev/null | /usr/bin/awk -v alias="$ALIAS" '$1 == alias { print $2; exit }')"
+[[ "$TUNNEL_ID" =~ ^tunnel_[a-f0-9]{32}$ ]] || { print -u2 -- "Tunnel runtime identity is unavailable."; exit 1; }
+
+# Retire the prior detached alias before starting the new foreground owner.
+# Do not stop any other runtime alias, port listener or unrelated process.
+"$TUNNEL_CLIENT" runtimes stop "$ALIAS" >/dev/null 2>&1 || true
+# Rebuild only the exact product-owned profile at startup. Factory uses the
+# current checkout rather than a pinned previous SHA; its stdio child command
+# must never remain stuck on an earlier source path after an update.
+"$TUNNEL_CLIENT" init --force --sample sample_mcp_stdio_local \
+  --profile "$ALIAS" --profile-dir "$PROFILE_DIR" \
+  --tunnel-id "$TUNNEL_ID" --control-plane-api-key-ref "file:$KEY_FILE" \
+  --mcp-command "${(qq)NODE_BIN} ${(qq)MCP_SERVER}" \
+  --health-listen-addr 127.0.0.1:0 >/dev/null
+# The tunnel process stays in the wrapper's own process tree. Failure exits
+# to Electron's bounded runtime owner, not another daemon or a polling watcher.
+exec "$TUNNEL_CLIENT" run --profile "$ALIAS" --profile-dir "$PROFILE_DIR" \
+  --mcp.stdio-failure-policy exit

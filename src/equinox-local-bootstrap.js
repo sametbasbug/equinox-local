@@ -370,7 +370,6 @@ export async function bootstrapManagedEquinoxUser({ homeDir = os.homedir(), plat
             nativeHostManifestPath: nativeHost.manifestPath,
             nativeHostLauncherPath: nativeHost.launcherPath,
             nativeHostRegistrationIdempotent: Boolean(nativeHost.idempotent),
-            controlCenterUrl: "http://127.0.0.1:24891/",
         });
     }
     // An explicit custom host retains its historical lifecycle policy. The
@@ -411,7 +410,6 @@ export async function bootstrapManagedEquinoxUser({ homeDir = os.homedir(), plat
         appRuntimeWrapperPath,
         hostWrapperPath,
         nativeHostManifestPath,
-        controlCenterUrl: "http://127.0.0.1:24891/",
     });
 }
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
