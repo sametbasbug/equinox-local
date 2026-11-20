@@ -16,7 +16,7 @@ type Dependencies = {
   chat: {inspectTurnIdentity: (args: JsonRecord) => Promise<any>;startTaskChat: (args: JsonRecord) => Promise<any>;deliverText: (args: JsonRecord) => Promise<any>;readFinal: (args: JsonRecord) => Promise<any>};
   assertMutationAllowed: (operation: string) => void;
 };
-const MAX_REQUEST_BYTES = 256 * 1024 + 1024; // bounded desktop config envelope
+const MAX_REQUEST_BYTES = 256 * 1024 * 2 + 4096; // double-escaped desktop JSON envelope; decoded body remains 256 KiB
 const MAX_LEGACY_CLI_REQUEST_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const TASK_ID = /^task-[a-z0-9-]{6,80}$/u;

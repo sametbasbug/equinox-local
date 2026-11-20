@@ -190,7 +190,9 @@ async function callAuthenticatedControlSocket(request) {
     const descriptor = await readPrivateControlDescriptor();
     const { endpoint } = descriptor;
     const message = JSON.stringify({ token: descriptor.token, action: "control.request", ...request });
-    if (Buffer.byteLength(message, "utf8") > MAX_REQUEST_BYTES + 1024) {
+    // Serialized JSON bodies are escaped again by the socket envelope. Bound
+    // the encoded representation separately from the decoded 256 KiB body.
+    if (Buffer.byteLength(message, "utf8") > MAX_REQUEST_BYTES * 2 + 4096) {
         throw new Error("Desktop control request is too large.");
     }
     return await new Promise((resolve, reject) => {
