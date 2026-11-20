@@ -141,3 +141,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for supported Node tooling, platform prer
 ## License
 
 Equinox Local and Equinox Browser are licensed under **[AGPL-3.0-only](LICENSE)**. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+### Desktop companion
+
+The optional desktop companion can be set to **Nyx**, **Hemera**, or **Asteria** from the Control Center sidebar or the Electron app/tray menu, one at a time. Nyx uses its existing animated sprite; the other characters currently use distinct graphical emblems. This setting is local to the desktop and does **not** switch or control any agent runtime.

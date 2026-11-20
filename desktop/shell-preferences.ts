@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-export type ShellPreferences = { language?: "en" | "tr"; companionVisible?: boolean; companionBounds?: { x: number; y: number } };
+export const COMPANION_IDS = ["nyx", "hemera", "asteria"] as const;
+export type CompanionId = typeof COMPANION_IDS[number];
+export type ShellPreferences = { language?: "en" | "tr"; companionVisible?: boolean; companionBounds?: { x: number; y: number }; companionId?: CompanionId };
 export function validCompanionOrigin(value: unknown): value is { x: number; y: number } {
   if (!value || typeof value !== "object") return false;
   const point = value as Record<string, unknown>;
@@ -60,9 +62,10 @@ export function openShellPreferences(directory: string) {
         const parsed: unknown = JSON.parse(buffer.subarray(0, count).toString("utf8"));
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid shell preferences.");
         const item = parsed as Record<string, unknown>;
-        if (Object.keys(item).some(key => !["language", "companionVisible", "companionBounds"].includes(key))
+        if (Object.keys(item).some(key => !["language", "companionVisible", "companionBounds", "companionId"].includes(key))
           || (item.language !== undefined && item.language !== "en" && item.language !== "tr")
           || (item.companionVisible !== undefined && typeof item.companionVisible !== "boolean")
+          || (item.companionId !== undefined && !COMPANION_IDS.includes(item.companionId as CompanionId))
           || (item.companionBounds !== undefined && !validCompanionOrigin(item.companionBounds))) throw new Error("Invalid shell preferences.");
         values = parsed as ShellPreferences;
       } finally { fs.closeSync(fd); }

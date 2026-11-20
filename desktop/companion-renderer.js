@@ -175,12 +175,18 @@ const unsubscribe = bridge.subscribe(snapshot => {
     if (!snapshot || !["en", "tr"].includes(snapshot.language))
         return;
     document.documentElement.lang = snapshot.language;
+    const companionId = ["nyx", "hemera", "asteria"].includes(snapshot.companionId) ? snapshot.companionId : "nyx";
+    const name = companionId[0].toUpperCase() + companionId.slice(1);
+    document.body.dataset.companion = companionId;
+    document.title = `Equinox Companion · ${name}`;
+    pet.setAttribute("aria-label", `${name} companion`);
+    pet.title = name;
     describeState();
     const tr = snapshot.language === "tr";
     document.getElementById("new-chat-label").textContent = tr ? "Yeni Sohbet" : "New Chat";
     document.getElementById("control-center-label").textContent = tr ? "Kontrol Merkezi" : "Control Center";
-    document.getElementById("hide-label").textContent = tr ? "Nyx'i Gizle" : "Hide Nyx";
-    document.getElementById("actions").setAttribute("aria-label", tr ? "Nyx Hızlı Eylemler" : "Nyx Quick Actions");
+    document.getElementById("hide-label").textContent = tr ? `${name}'i Gizle` : `Hide ${name}`;
+    document.getElementById("actions").setAttribute("aria-label", tr ? `${name} Hızlı Eylemler` : `${name} Quick Actions`);
     if (surface === "speech") {
         const label = document.getElementById("speech-text");
         label.textContent = typeof snapshot.speech === "string" ? snapshot.speech.slice(0, 240) : "";

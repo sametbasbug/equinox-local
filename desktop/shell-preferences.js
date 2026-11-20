@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+export const COMPANION_IDS = ["nyx", "hemera", "asteria"];
 export function validCompanionOrigin(value) {
     if (!value || typeof value !== "object")
         return false;
@@ -75,9 +76,10 @@ export function openShellPreferences(directory) {
                 if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
                     throw new Error("Invalid shell preferences.");
                 const item = parsed;
-                if (Object.keys(item).some(key => !["language", "companionVisible", "companionBounds"].includes(key))
+                if (Object.keys(item).some(key => !["language", "companionVisible", "companionBounds", "companionId"].includes(key))
                     || (item.language !== undefined && item.language !== "en" && item.language !== "tr")
                     || (item.companionVisible !== undefined && typeof item.companionVisible !== "boolean")
+                    || (item.companionId !== undefined && !COMPANION_IDS.includes(item.companionId))
                     || (item.companionBounds !== undefined && !validCompanionOrigin(item.companionBounds)))
                     throw new Error("Invalid shell preferences.");
                 values = parsed;

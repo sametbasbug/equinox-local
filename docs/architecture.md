@@ -195,3 +195,7 @@ returns without scheduling anything.
 ## Historical desktop shell retirement
 
 The 7.0 Electron package replaces the historical WPF desktop UI; its WPF project source and bundled UI assets are no longer part of the product build. The Windows `.ico` artwork now lives in the shared `app/` assets. The separate native Guardian/Job Object helpers remain because current signed Main admission and lifecycle protection actively depend on them. Guardian references to the old WPF pipe are historical transition compatibility, not authorization to run another UI shell.
+
+## Optional one-at-a-time desktop companion selection
+
+The Electron Control Center exposes a native sidebar preference and a tray/menu radio selection for the desktop companion character: **Nyx**, **Hemera**, or **Asteria**. The selection is stored only in the existing current-user role-local `shell-preferences.json`; visibility, window position and current running backend are preserved. Exactly one local companion controller handles the optional pet/actions/speech surfaces. The native renderer receives only the chosen fixed identifier, never files, tokens, or arbitrary IPC. Nyx keeps the existing animated art; Hemera and Asteria use bundled CSS emblems until dedicated animated sprite art is available. This is a visual presentation preference, **not** an instruction to change the running Codex/Claude Code/Antigravity agent or tunnel. Selene character selection and a future Chat tab are separate features.
