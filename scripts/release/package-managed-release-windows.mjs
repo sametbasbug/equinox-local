@@ -487,19 +487,25 @@ async function compileWindowsGuardian(rootDir, releaseDir, transaction, contract
     const project = path.join(rootDir, "native", "windows", "EquinoxLocal.Guardian", "EquinoxLocal.Guardian.csproj");
     const bin = path.join(transaction, "guardian-bin", contract.shellRid);
     const obj = path.join(transaction, "guardian-obj", contract.shellRid);
+    // Windows ARM64 hosted .NET publish can exceed the x64 budget under runner
+    // contention. Bound it independently, preserving the shorter x64 limit.
+    const timeoutMs = contract.target === "win32-arm64" ? 240_000 : 180_000;
     await fs.mkdir(guardianDir, { recursive: true });
     try {
         await execFile("dotnet", ["publish", project, "--configuration", "Release", "--runtime", contract.shellRid,
             "--self-contained", "true", `-p:Platform=${contract.shellPlatform}`, `-p:BaseOutputPath=${bin}${path.sep}`,
             `-p:BaseIntermediateOutputPath=${obj}${path.sep}`, "--output", guardianDir], {
-            cwd: rootDir, windowsHide: true, timeout: 180_000, maxBuffer: 2 * 1024 * 1024,
+            cwd: rootDir, windowsHide: true, timeout: timeoutMs, maxBuffer: 2 * 1024 * 1024,
         });
     }
     catch (error) {
+        const cause = processErrorInfo(error);
+        if (cause.killed === true || cause.signal) {
+            throw new Error(`Windows Guardian native publish timed out or was terminated (${contract.target}; limit ${timeoutMs} ms).`);
+        }
         // execFile rejects with stdout/stderr but its message alone only prints
         // the command. Surface bounded compiler diagnostics so native x64/ARM64
         // package failures are actionable without re-running the entire CI gate.
-        const cause = processErrorInfo(error);
         const output = `${cause.stdout ?? ""}\n${cause.stderr ?? ""}`;
         const diagnostics = output.split(/\r?\n/u)
             .filter((line) => /\berror (?:CS[0-9]+|MSB[0-9]+|NETSDK[0-9]+)\b|\bBuild FAILED\b/u.test(line))
