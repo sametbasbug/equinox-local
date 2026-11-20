@@ -191,3 +191,7 @@ protected signed installer. When the update is scheduled, the tool instructs
 the agent to stop calling Local tools and deliver its final status immediately;
 installation verification belongs to a new turn. An already-current install
 returns without scheduling anything.
+
+## Historical desktop shell retirement
+
+The 7.0 Electron package replaces the historical WPF desktop UI; its WPF project source and bundled UI assets are no longer part of the product build. The Windows `.ico` artwork now lives in the shared `app/` assets. The separate native Guardian/Job Object helpers remain because current signed Main admission and lifecycle protection actively depend on them. Guardian references to the old WPF pipe are historical transition compatibility, not authorization to run another UI shell.
