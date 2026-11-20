@@ -1,124 +1,18 @@
-import { randomBytes } from "node:crypto";
-import fs from "node:fs/promises";
-import http from "node:http";
 import { EQUINOX_LOCAL_CONFIG_ERROR_CODES } from "./equinox-local-config.js";
 import { TASK_CAPSULE_ERROR_CODES } from "./task-capsule-store.js";
 import { REPAIR_RECIPE_IDS } from "./repair-engine.js";
 import { AUTHENTICATED_HTTP_LIMITS, validateAuthenticatedHttpProfileInput, } from "./authenticated-http-integration.js";
-const LOOPBACK_HOST = "127.0.0.1";
 const MAX_REQUEST_BYTES = 256 * 1024;
-const REQUEST_TIMEOUT_MS = 10_000;
 const REPAIR_RECIPE_ID_SET = new Set(REPAIR_RECIPE_IDS);
-const CONTROL_CENTER_CSP = [
-    "default-src 'none'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "connect-src 'self'",
-    "img-src 'self' data:",
-    "frame-ancestors 'none'",
-    "base-uri 'none'",
-    "form-action 'self'",
-].join("; ");
+// IPC auto-refresh is read-only. It must not increment interactive request
+// counters, but it does not grant a broader action to the renderer.
 const CONTROL_CENTER_BACKGROUND_REFRESH_PATHS = new Set([
-    "/api/v1/health",
-    "/api/v1/status",
-    "/api/v1/activity",
-    "/api/v1/tasks",
-    "/api/v1/onboarding",
-    "/api/v1/doctor",
-    "/api/v1/doctor/repairs",
-    "/api/v1/integrations/peekaboo",
-    "/api/v1/integrations/telegram",
-    "/api/v1/files/import-settings",
-    "/api/v1/integrations/telegram/pair",
-    "/api/v1/integrations/http-profiles",
-    "/api/v1/config",
-    "/api/v1/update",
+    "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks",
+    "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
+    "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
+    "/api/v1/files/import-settings", "/api/v1/integrations/telegram/pair",
+    "/api/v1/integrations/http-profiles", "/api/v1/config", "/api/v1/update",
 ]);
-function isBackgroundRefreshRequest(req, url) {
-    return req.method === "GET"
-        && req.headers["x-equinox-background-refresh"] === "1"
-        && CONTROL_CENTER_BACKGROUND_REFRESH_PATHS.has(url.pathname);
-}
-const CONTROL_CENTER_ASSETS = new Map([
-    ["/", Object.freeze({
-            urls: Object.freeze([
-                new URL("./equinox-control-center.html", import.meta.url),
-                new URL("../equinox-control-center.html", import.meta.url),
-            ]),
-            contentType: "text/html; charset=utf-8",
-        })],
-    ["/assets/control-center.css", Object.freeze({
-            urls: Object.freeze([
-                new URL("./equinox-control-center.css", import.meta.url),
-                new URL("../equinox-control-center.css", import.meta.url),
-            ]),
-            contentType: "text/css; charset=utf-8",
-        })],
-    ["/assets/control-center.js", Object.freeze({
-            url: new URL("./equinox-control-center.js", import.meta.url),
-            contentType: "text/javascript; charset=utf-8",
-        })],
-    ["/assets/equinox-control-center-localization.js", Object.freeze({
-            url: new URL("./equinox-control-center-localization.js", import.meta.url),
-            contentType: "text/javascript; charset=utf-8",
-        })],
-    ["/assets/equinox-local.png", Object.freeze({
-            urls: Object.freeze([
-                new URL("./app/EquinoxLocal.png", import.meta.url),
-                new URL("../app/EquinoxLocal.png", import.meta.url),
-            ]),
-            contentType: "image/png",
-        })],
-]);
-function jsonBody(res, statusCode, payload, extraHeaders = {}) {
-    const body = `${JSON.stringify(payload)}\n`;
-    res.writeHead(statusCode, {
-        "content-type": "application/json; charset=utf-8",
-        "content-length": Buffer.byteLength(body),
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-        "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
-        "referrer-policy": "no-referrer",
-        ...extraHeaders,
-    });
-    res.end(body);
-}
-async function controlCenterAssetBody(res, asset) {
-    let body;
-    if (asset.url) {
-        body = await fs.readFile(asset.url);
-    }
-    else {
-        let lastError = null;
-        for (const candidate of asset.urls || []) {
-            try {
-                body = await fs.readFile(candidate);
-                break;
-            }
-            catch (error) {
-                lastError = error;
-                if (error?.code !== "ENOENT")
-                    throw error;
-            }
-        }
-        if (!body)
-            throw lastError || new Error("Control Center asset is unavailable.");
-    }
-    res.writeHead(200, {
-        "content-type": asset.contentType,
-        "content-length": body.length,
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-        "content-security-policy": CONTROL_CENTER_CSP,
-        "referrer-policy": "no-referrer",
-        "cross-origin-opener-policy": "same-origin",
-        "cross-origin-resource-policy": "same-origin",
-        "permissions-policy": "camera=(), microphone=(), geolocation=()",
-        "x-frame-options": "DENY",
-    });
-    res.end(body);
-}
 function redactErrorMessage(value) {
     return String(value ?? "")
         .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/giu, "Bearer [REDACTED]")
@@ -144,68 +38,6 @@ function badRequest(message) {
     const error = new Error(message);
     error.statusCode = 400;
     return error;
-}
-function requestAuthority(req) {
-    const host = String(req.headers.host || "").trim().toLowerCase();
-    return host;
-}
-function allowedAuthorities(port) {
-    return new Set([
-        `127.0.0.1:${port}`,
-        `localhost:${port}`,
-    ]);
-}
-function allowedOrigins(port) {
-    return new Set([
-        `http://127.0.0.1:${port}`,
-        `http://localhost:${port}`,
-    ]);
-}
-async function readJsonRequest(req) {
-    const contentType = String(req.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
-    if (contentType !== "application/json") {
-        const error = new Error("Content-Type application/json olmalı.");
-        error.statusCode = 415;
-        throw error;
-    }
-    const chunks = [];
-    let bytes = 0;
-    for await (const chunk of req) {
-        bytes += chunk.length;
-        if (bytes > MAX_REQUEST_BYTES) {
-            const error = new Error(`İstek gövdesi ${MAX_REQUEST_BYTES} bayt sınırını aşıyor.`);
-            error.statusCode = 413;
-            throw error;
-        }
-        chunks.push(chunk);
-    }
-    if (bytes === 0) {
-        const error = new Error("JSON istek gövdesi boş olamaz.");
-        error.statusCode = 400;
-        throw error;
-    }
-    try {
-        return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    }
-    catch {
-        const error = new Error("İstek gövdesi geçerli JSON değil.");
-        error.statusCode = 400;
-        throw error;
-    }
-}
-function assertMutationRequest(req, { port, csrfToken }) {
-    const origin = String(req.headers.origin || "");
-    if (!allowedOrigins(port).has(origin)) {
-        const error = new Error("Control Center mutation Origin doğrulaması başarısız.");
-        error.statusCode = 403;
-        throw error;
-    }
-    const provided = String(req.headers["x-equinox-csrf"] || "");
-    if (!provided || provided !== csrfToken) {
-        const error = new Error("Control Center CSRF doğrulaması başarısız.");
-        error.statusCode = 403;
-        throw error;
-    }
 }
 function validateReplaceEnvelope(body) {
     if (body === null || typeof body !== "object" || Array.isArray(body)) {
@@ -377,29 +209,6 @@ function parseTaskRoute(pathname) {
         return null;
     return Object.freeze({ taskId: match[1], action: match[2] || null });
 }
-const CONTROL_CENTER_NAVIGATION_SECTIONS = new Set([
-    "dashboard", "projects", "tasks", "browser", "permissions", "integrations", "activity",
-]);
-function isAllowedControlCenterNavigationQuery(url, method) {
-    // Only the HTML entry page may accept a bounded navigation intent.
-    // API/asset URLs and all mutations still reject query strings.
-    if (method !== "GET" || url.pathname !== "/")
-        return false;
-    const keys = [...url.searchParams.keys()];
-    if (keys.some((key) => key !== "section" && key !== "task"))
-        return false;
-    if (url.searchParams.getAll("section").length > 1 || url.searchParams.getAll("task").length > 1)
-        return false;
-    const section = url.searchParams.get("section");
-    const taskId = url.searchParams.get("task");
-    if (!section && !taskId)
-        return false;
-    if (section !== null && !CONTROL_CENTER_NAVIGATION_SECTIONS.has(section))
-        return false;
-    if (taskId !== null && (!/^task-[a-z0-9-]{6,80}$/u.test(taskId) || (section !== null && section !== "tasks")))
-        return false;
-    return true;
-}
 function validateTaskUpdateRequest(body) {
     if (body === null || typeof body !== "object" || Array.isArray(body))
         throw badRequest("Task update body must be a JSON object.");
@@ -435,7 +244,7 @@ function validateTaskUpdateRequest(body) {
     }
     return body;
 }
-export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, host = LOOPBACK_HOST, port, requestTimeoutMs = REQUEST_TIMEOUT_MS, } = {}) {
+export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
     if (!configManager?.snapshot || !configManager?.replacePersisted) {
         throw new Error("Control Center API için configManager gerekli.");
     }
@@ -457,28 +266,15 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
     if (typeof getOnboardingStatus !== "function") {
         throw new Error("Control Center API getOnboardingStatus fonksiyonu gerekli.");
     }
-    if (host !== LOOPBACK_HOST) {
-        throw new Error("Control Center API yalnız 127.0.0.1 loopback adresine bağlanabilir.");
-    }
-    if (!Number.isInteger(port) || port < 0 || port > 65535) {
-        throw new Error("Control Center API portu geçersiz.");
-    }
-    if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) {
-        throw new Error("Control Center API request timeout değeri geçersiz.");
-    }
     const state = {
-        server: null,
-        startedAt: null,
-        actualPort: null,
-        requestCount: 0,
-        mutationCount: 0,
-        csrfToken: randomBytes(32).toString("hex"),
+        active: false, startedAt: null, requestCount: 0, mutationCount: 0,
     };
     const snapshot = () => Object.freeze({
-        active: Boolean(state.server?.listening),
-        host,
-        configuredPort: port,
-        port: state.actualPort,
+        active: state.active,
+        transport: "ipc",
+        host: null,
+        configuredPort: null,
+        port: null,
         startedAt: state.startedAt,
         requestCount: state.requestCount,
         mutationCount: state.mutationCount,
@@ -487,10 +283,6 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
         try {
             if (method === "GET" && pathname === "/api/v1/health") {
                 send(200, { ok: true, controlCenter: snapshot() });
-                return;
-            }
-            if (method === "GET" && pathname === "/api/v1/session") {
-                send(200, { ok: true, csrfToken: state.csrfToken });
                 return;
             }
             if (method === "GET" && pathname === "/api/v1/config") {
@@ -1058,10 +850,6 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 send(200, { ok: true, result });
                 return;
             }
-            if (method === "OPTIONS") {
-                send(405, { ok: false, error: "CORS preflight desteklenmiyor." }, { allow: "GET, PUT, POST" });
-                return;
-            }
             send(404, { ok: false, error: "Control Center API endpoint bulunamadı." });
         }
         catch (error) {
@@ -1077,42 +865,6 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
             }
             send(statusCode, { ok: false, error: publicErrorMessage(error, statusCode) });
         }
-    };
-    const handler = async (req, res) => {
-        res.setHeader("connection", "close");
-        const actualPort = state.actualPort;
-        if (!actualPort || !allowedAuthorities(actualPort).has(requestAuthority(req))) {
-            jsonBody(res, 421, { ok: false, error: "Control Center Host doğrulaması başarısız." });
-            return;
-        }
-        let url;
-        try {
-            url = new URL(req.url || "/", `http://${requestAuthority(req)}`);
-        }
-        catch {
-            jsonBody(res, 400, { ok: false, error: "Geçersiz istek URL'si." });
-            return;
-        }
-        if (url.search && !isAllowedControlCenterNavigationQuery(url, req.method)) {
-            state.requestCount += 1;
-            jsonBody(res, 400, { ok: false, error: "Control Center API query parametresi kabul etmiyor." });
-            return;
-        }
-        if (!isBackgroundRefreshRequest(req, url))
-            state.requestCount += 1;
-        const asset = CONTROL_CENTER_ASSETS.get(url.pathname);
-        if (req.method === "GET" && asset) {
-            try {
-                await controlCenterAssetBody(res, asset);
-            }
-            catch (error) {
-                if (recordInternalError)
-                    void Promise.resolve(recordInternalError(error)).catch(() => { });
-                jsonBody(res, 500, { ok: false, error: publicErrorMessage(error, 500) });
-            }
-            return;
-        }
-        await dispatchControlOperation(req.method, url.pathname, () => readJsonRequest(req), () => assertMutationRequest(req, { port: actualPort, csrfToken: state.csrfToken }), (status, body, headers) => jsonBody(res, status, body, headers));
     };
     // A second permission boundary inside the private IPC server, independent
     // of the renderer and Electron main allowlist. Keep lists synchronized.
@@ -1184,69 +936,15 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
             throw new Error("Desktop operation produced no result.");
         return response;
     };
+    // Management is an in-process dispatcher behind an already-bound private
+    // IPC socket. No TCP listener or HTTP dashboard is started by this module.
     const start = async () => {
-        if (state.server?.listening)
-            return snapshot();
-        const server = http.createServer((req, res) => {
-            void handler(req, res).catch((error) => {
-                if (res.writableEnded || res.destroyed)
-                    return;
-                try {
-                    if (recordInternalError)
-                        void Promise.resolve(recordInternalError(error)).catch(() => { });
-                    jsonBody(res, 500, { ok: false, error: publicErrorMessage(error, 500) });
-                }
-                catch {
-                    res.destroy();
-                }
-            });
-        });
-        server.keepAliveTimeout = 1_000;
-        server.headersTimeout = 5_000;
-        // Bound inbound request delivery only. Handler work may legitimately outlive
-        // this window; emitting an application-level 408 while a mutation continues
-        // would make the operation state ambiguous to the caller.
-        server.requestTimeout = requestTimeoutMs;
-        server.maxHeadersCount = 64;
-        await new Promise((resolve, reject) => {
-            const onError = (error) => {
-                server.off("listening", onListening);
-                reject(error);
-            };
-            const onListening = () => {
-                server.off("error", onError);
-                resolve();
-            };
-            server.once("error", onError);
-            server.once("listening", onListening);
-            server.listen({ host, port, exclusive: true });
-        });
-        const address = server.address();
-        if (!address || typeof address === "string") {
-            await new Promise((resolve) => server.close(() => resolve()));
-            throw new Error("Control Center API loopback listener adresi doğrulanamadı.");
+        if (!state.active) {
+            state.active = true;
+            state.startedAt = new Date().toISOString();
         }
-        state.server = server;
-        state.actualPort = address.port;
-        state.startedAt = new Date().toISOString();
         return snapshot();
     };
-    const close = async () => {
-        const server = state.server;
-        state.server = null;
-        state.actualPort = null;
-        if (!server)
-            return;
-        await new Promise((resolve) => server.close(() => resolve()));
-    };
+    const close = async () => { state.active = false; };
     return Object.freeze({ start, close, snapshot, executeDesktop });
 }
-export const __test = Object.freeze({
-    LOOPBACK_HOST,
-    MAX_REQUEST_BYTES,
-    allowedAuthorities,
-    allowedOrigins,
-    validateReplaceEnvelope,
-    validateBrowserSettings,
-    validateEmptyObject,
-});

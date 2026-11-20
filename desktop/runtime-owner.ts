@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import net from "node:net";
 import { assertNoOtherLocalRuntime } from "./control-client.js";
 
 export type RuntimeJobLease = {
@@ -28,23 +27,6 @@ type OwnedRuntime = {
   job?: RuntimeJobLease;
   generation: number;
 };
-
-async function requireFreeControlPort(): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const socket = net.createConnection({ host: "127.0.0.1", port: 24891 });
-    const finish = (error?: Error) => {
-      clearTimeout(timer);
-      socket.removeAllListeners();
-      socket.destroy();
-      if (error) reject(error); else resolve();
-    };
-    const timer = setTimeout(() => finish(new Error("Cannot establish whether the Control Center port is free.")), 1_500);
-    socket.once("connect", () => finish(new Error("Another local runtime is already listening; refusing a second backend.")));
-    socket.once("error", (error: NodeJS.ErrnoException) => {
-      finish(error.code === "ECONNREFUSED" ? undefined : new Error("Control Center port ownership is unavailable."));
-    });
-  });
-}
 
 /** One serialized backend lifecycle beneath Electron; no renderer or generic execution API. */
 export function createRuntimeOwner(
@@ -107,7 +89,6 @@ export function createRuntimeOwner(
   async function startWorker(): Promise<void> {
     if (!desired || worker) return;
     onState("starting");
-    await requireFreeControlPort();
     await assertNoOtherLocalRuntime();
     const launch = await resolveLaunch();
     const nativeJob = await launch.createJob?.();

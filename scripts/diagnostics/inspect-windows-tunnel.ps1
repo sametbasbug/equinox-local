@@ -19,11 +19,9 @@ if (Test-Path -LiteralPath $log -PathType Leaf) {
   }
 }
 
-$portListening = $false
-try { $portListening = @(
-  Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort 24891 -State Listen -ErrorAction Stop
-).Count -gt 0 } catch { $portListening = $false }
-
+# The Electron Control Center no longer listens on TCP 24891. Observe only
+# presence and privacy of its fixed current-user IPC discovery descriptor.
+$ipcDescriptor = Join-Path $root 'state\cli-ipc.json'
 
 # Classify startup barriers without reading any private values. Use the
 # installed, version-pinned helper to verify ACLs; do not repair anything.
@@ -63,7 +61,8 @@ try {
   ShellRunning = @(Get-Process -Name 'EquinoxLocal' -ErrorAction SilentlyContinue).Count -gt 0
   TunnelClientRunning = @(Get-Process -Name 'tunnel-client' -ErrorAction SilentlyContinue).Count -gt 0
   NodeProcessCount = @(Get-Process -Name 'node' -ErrorAction SilentlyContinue).Count
-  LocalControlCenterListening = $portListening
+  PrivateControlIpcDescriptorPresent = Test-Path -LiteralPath $ipcDescriptor -PathType Leaf
+  PrivateControlIpcDescriptorAcl = Test-PrivateStateAcl $ipcDescriptor 'file'
   TransportConfigExists = Test-Path -LiteralPath (Join-Path $root 'transport.json') -PathType Leaf
   RuntimeKeyFileExists = Test-Path -LiteralPath (Join-Path $root 'secrets\openai-runtime-key') -PathType Leaf
   TunnelProfileDirectoryExists = Test-Path -LiteralPath (Join-Path $root 'tunnel-profile') -PathType Container
