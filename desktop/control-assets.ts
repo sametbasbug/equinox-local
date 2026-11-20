@@ -15,6 +15,7 @@ const CONTENT_SECURITY_POLICY = [
   "base-uri 'none'",
   "form-action 'none'",
 ].join("; ");
+const NAV_SECTIONS = new Set(["dashboard", "projects", "tasks", "browser", "permissions", "integrations", "activity"]);
 const ASSETS = new Map<string, readonly [string, string]>([
   ["/", ["equinox-control-center.html", "text/html; charset=utf-8"]],
   ["/assets/control-center.css", ["equinox-control-center.css", "text/css; charset=utf-8"]],
@@ -48,8 +49,12 @@ export function installControlAssets(privateSession: Session, root: string, deve
       const asset = ASSETS.get(url.pathname);
       if (!asset || (url.pathname !== "/" && url.search)) return new Response(null, { status: 404 });
       if (url.pathname === "/") {
+        const section = url.searchParams.get("section");
+        const task = url.searchParams.get("task");
         if ([...url.searchParams.keys()].some(key => key !== "section" && key !== "task") ||
-            url.searchParams.getAll("section").length > 1 || url.searchParams.getAll("task").length > 1) {
+            url.searchParams.getAll("section").length > 1 || url.searchParams.getAll("task").length > 1 ||
+            (section !== null && !NAV_SECTIONS.has(section)) ||
+            (task !== null && (!/^task-[a-z0-9-]{6,80}$/u.test(task) || (section !== null && section !== "tasks")))) {
           return new Response(null, { status: 403 });
         }
       }

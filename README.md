@@ -95,7 +95,7 @@ flowchart LR
     TG[Optional Telegram bot] --> L
 ```
 
-- **Local management:** The in-progress Electron 7.0.0 cutover packages the existing Control Center interface inside the native application. The existing loopback management API is transitional; runtime capabilities remain subject to configured access and product guards.
+- **Local management:** The in-progress Electron 7.0.0 cutover packages the existing Control Center interface inside the native application. Electron reads Control Center data through the existing private, authenticated local IPC bridge; the old loopback API remains temporarily for installer/status consumers and installed-shell migration. Runtime capabilities remain subject to configured access and product guards.
 - **Separate browser identities:** Agent Browser and Your Browser maintain independent profiles and consent. Your personal Chrome is never an implicit fallback.
 - **Resumable actions:** Task continuation preserves state without automatically repeating a chat send whose result is uncertain.
 - **One signed Main channel:** A completed four-target Main build is published as immutable source-SHA native artifacts and an Ed25519-signed latest selector. The native installer verifies this before replacing program files. Main presentation version and exact source commit are distinct; changes can ship without a new numbered GitHub Release.
