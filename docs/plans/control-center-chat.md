@@ -1,28 +1,36 @@
-# Equinox Local: in-app Chat after Electron 7.0
+# Equinox Local Chat: native conversation workspace
 
-Status: **isolated unauthenticated Electron loading proven; interactive login and complete in-app Chat not yet shipped.** Companion character selection is already in Main. Keep the existing Control Center layout, one Electron runtime owner, no localhost dashboard, and the existing signed Main distribution. This page tracks practical implementation decisions, not a promise that the website or a remote agent allows embedding.
+Status: **design corrected 2026-11-21; not implemented or released.** User reference: [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids). This page supersedes the earlier embedded-ChatGPT-web proposal.
 
-## User outcome
+## What the user means
 
-A person can open **Chat** inside Equinox Local and talk to their ChatGPT account without opening ChatGPT in a separate Chrome window. Their regular ChatGPT account/conversations remain owned by ChatGPT; Equinox Local does not become a surrogate OpenAI API client, clone an OAuth session, or silently duplicate conversation contents into local storage. The separately running Nyx/Codex, Hemera/Claude Code and Asteria/Antigravity sessions are **not** interchangeable with a ChatGPT website session. Agent-specific chat adapters are a separate explicit integration decision, not something a character selector can impersonate.
+Build an **Equinox-designed, Codex-like chat interface** in the existing Electron Control Center: independent thread list and chat composer, message stream, intermediate progress and native tool/action cards, conversation selection, task association, and clear paused/running/completed states. This is **not** `chatgpt.com` rendered in `WebContentsView`, nor an iframe, nor a link to a browser window. The visual companion selector remains independent from the choice of underlying conversation/agent.
 
-## Admission and isolation
+Keep the product's existing authenticated current-user IPC, `equinox://control/` bundled UI, one runtime owner, Browser extension bridge, security policy, Main signing/update gates and source Factory identity. Do not create another localhost web server, extra anonymous agent service, test suites or storage of passwords/session cookies.
 
-1. **Proof first:** use a temporary, isolated Electron development identity to verify `https://chatgpt.com/` actually loads and permits a normal interactive login/ChatGPT session in `WebContentsView` on supported macOS and Windows. Do not request or handle credentials programmatically. Do not publish the Chat tab if sign-in or session continuity cannot work.
-2. If viable, give remote ChatGPT a separate persistent, user-private Electron session partition. The bundled `equinox://control/` UI keeps its own locked origin and preload. Remote web content receives **no Node, preload, Equinox IPC, token, local file, native bridge, or Equinox Browser automation**. Use `sandbox`, `contextIsolation`, `webSecurity`, and a denied-by-default permissions/download policy.
-3. Only a **fixed ChatGPT destination** may be started from an admitted main-frame action. Evaluate required authentication redirects carefully; refuse arbitrary navigation, pop-ups and unknown protocols, while offering an explicit user-initiated external-browser link where required. Never inject scripts or read chat messages/credentials from the remote renderer.
-4. A single `WebContentsView` is attached only while the bundled Chat section is selected, confined to the content pane. The native owner manages resize, hide/show, close-to-tray, Quit and session cleanup. Validate/clamp any renderer-supplied bounds and visibility request; never turn the preload into generic URL or browser-navigation IPC.
-5. The normal Equinox Browser **remains the only automation route**; the embedded page is strictly a user-facing chat surface. The Chat tab must not claim access to personal Chrome cookies or automatically copy them. If ChatGPT restricts an embedded login, report the limitation and avoid a fake chat composer or unsafe cookie workaround.
+## Reference project: what it actually does
 
-## Actual feasibility checkpoint (2026-11-21)
+As documented by Chat On Steroids, its own Electron UI controls and records ChatGPT conversations through **a browser extension that observes and automates the ChatGPT page**. Its local MCP tools run in the user's environment; Goal/Loop/Compact & Resume and multi-worker features build around that bridge. It uses a ChatGPT account's conversations rather than calling Codex directly or assuming the OpenAI API is bundled with a ChatGPT subscription. The project explicitly states that browser integration **is not a public ChatGPT automation API**, may break as the website changes, and may be restricted by provider terms. Use architectural lessons rather than copy its implementation or make compliance claims.
 
-A separate, temporary Electron 46.0.0-alpha.10 process using `WebContentsView` and an isolated nonpersistent user profile successfully loaded `https://chatgpt.com/`. The full ChatGPT logged-out UI, New chat, Log in and composer were visually observed in the WebContentsView, not in a normal Chrome window. Node integration, preload, downloads and permissions were disabled; no cookie/profile copy or API token was used. The external view was removed, its process exited, and its temporary script/profile/screenshot were deleted. **This proves only logged-out rendering.** No credentials were entered, no ChatGPT login or conversation persistence was tested, and no in-app Control Center integration or backend agent routing was implemented. Do not treat it as working Chat or ship a fake tab.
+## Existing Equinox foundation (verify/extend rather than duplicate)
 
-## Delivery order
+- Equinox Browser already binds exact browser instance, context, tab and ChatGPT conversation identity for Auto Continue and Task Capsules. Its bridge exposes bounded ChatGPT turn inspection and explicit message delivery for the existing Telegram Chat Bridge.
+- In `src/telegram-chat-bridge-controller.ts`, `inspectBinding`, `deliverText`, `readFinal` and `startTaskChat` already enforce browser-instance identity, composer readiness, exact task/conversation match, and ambiguous-delivery **no automatic replay**. These are a basis for a **shared native Chat transport adapter**, not a reason to create a second independent DOM automation engine.
+- The native UI should use the existing read-only/control-request IPC admission and a small set of narrowly defined chat operations. Only the local backend reaches the Equinox Browser bridge; HTML never receives arbitrary Chrome automation, filesystem or raw Local tool access.
+- The browser remains the underlying ChatGPT session authority, with explicit user-owned sign-in in Chrome. Do not copy Chrome login cookies into Electron or pretend a provider account is an official API credential. ChatGPT plan/limits do not equal API entitlement.
 
-- Research/verify a real isolated ChatGPT load and sign-in behavior; retain no test suites or temporary files afterwards.
-- Integrate Chat as a native panel in the existing Control Center, with an explicit visible loading/error state and a user-owned login flow. Do not add a second dashboard or an additional localhost server.
-- Verify manual macOS and Windows chat opening, account continuity, native window bounds, switching to/from other Control Center sections, runtime restart, no unexpected permissions or access to Local IPC; run existing typecheck/static/security/build gates.
-- Consider selected external-agent chat adapters only once their supported interfaces and identity/session behavior are verified. The visual companion preference itself is not permission to start a CLI agent, switch an account, or route a message to another service.
+## Minimal, usable vertical slice
 
-No automated acceptance/smoke tests may be added to the repository.
+1. Observe an existing ChatGPT conversation by exact browser context, instance, tab and conversation ID, exposing its title, current turn status and latest authorized visible messages through a bounded existing browser bridge. Handle disconnected, unavailable, refused and stale bindings visibly.
+2. Build a **native** Chat section within Control Center: chat list/selection, own composer, conversation feed and streaming/progress/tool indicators with user-friendly states, not a transplanted web page. Reuse the existing visual language rather than adding another application's UI shell.
+3. Send text through the shared bounded delivery operation with unique delivery identity, readiness checks, and a clear ambiguous result when the send may have crossed the browser boundary. Never silently retry a potentially committed send. UI reads back exact conversation/turn outcome.
+4. Tie a chat to optional Equinox Task Capsule and existing notifications/continuations only on explicit selection. Do not automatically switch between Nyx (Codex), Hemera (Claude Code), Asteria (Antigravity) and ChatGPT just because the companion graphic changes.
+5. Later: conversation creation, attachments, per-chat model/effort controls and specialized external agent adapters **only after** confirmed support and manual validation. Unsupported controls must not be decorative or fake.
+
+## Risks and real acceptance
+
+- ChatGPT UI/browser extension interaction is **not an official service API**. Document account-policy risks and avoid abusive automation or workarounds to provider restrictions. Prefer supported interfaces where available; no promise that one login can power every agent backend.
+- Verify actual user-session ChatGPT text send, observable assistant progress and final output, conversation identity, interruption and uncertain-delivery handling on macOS and Windows. Check native UI layout, role-private data, logs, no localhost dashboard, no extra runtime owner, and signed Main gates. No physical Windows ARM64 device test is required.
+- The abandoned `WebContentsView` proof established only that logged-out ChatGPT HTML can render. Its uncommitted native-web-embed implementation was **fully reverted**, its temporary QA app shut down and profile/files removed; it is **not** the desired product and must not be revived.
+
+No automated test suites may be added to the repository. This plan is not a shipped feature.
