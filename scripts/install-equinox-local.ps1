@@ -301,12 +301,13 @@ function Stop-ExistingEquinoxExecutables([string]$InstallRoot, [string]$ProgramR
         -not [string]::Equals([string]$still.ExecutablePath,$app,[StringComparison]::OrdinalIgnoreCase)) { continue }
     # taskkill /T terminates only descendants of this exact, revalidated
     # signed product shell root, never all instances of a process by name.
-    # taskkill can return nonzero when a descendant already exited. In
-    # Windows PowerShell 5.1 native stderr is terminating under Stop. Always
-    # re-check exact owned process identities in the loop below instead.
+    # taskkill can return nonzero if a verified descendant exits during /T.
+    # PowerShell 5.1 turns native stderr into an error record even when 2>$null
+    # is used. Suppress only this benign race; always re-query exact owned
+    # process identities below and fail if any owned process remains.
     $previousPreference = $ErrorActionPreference
     try {
-      $ErrorActionPreference = 'Continue'
+      $ErrorActionPreference = 'SilentlyContinue'
       & $systemKill /PID ([string]$shell.ProcessId) /T /F 2>$null | Out-Null
     } finally { $ErrorActionPreference = $previousPreference }
   }
