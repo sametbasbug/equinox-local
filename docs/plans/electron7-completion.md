@@ -92,3 +92,7 @@ The active Source config uses `sourceLauncherOwnsLifecycle=1`; its generated Ele
 - Native Control Center now shows `Connected / Private desktop IPC` instead of advertising TCP `127.0.0.1:24891` as its own origin. Windows foreground tunnel invocation opts into `--mcp.stdio-failure-policy exit` so a crashed MCP child is returned to its known local-only supervisor rather than silently restarted by a second tunnel policy. Native Windows installed behavior remains **unverified** while the device connector is unavailable.
 
 **Remaining blockers:** Legacy HTTP dashboard/static assets are still live for the *installed old Source ASAR* and upgrade/rollback handoff. Do not delete them before new Source app installation. The Windows supervisor's local-only/reconnect policy still needs unification under Electron main. Native macOS/Windows release verification, official 7.0.0 release and Factory app ASAR update have not happened.
+
+### Native installation-facing cleanup
+
+The new signed installer continues to open the installed app, not a browser URL. Removed unused `CONTROL_CENTER_URL` shell constant from both canonical and site download copies and removed stale `controlCenterUrl` response fields from bootstrapping/first-install results. Updated English/Turkish website setup text and tunnel setup docs to direct users to the packaged desktop Control Center, not `http://127.0.0.1:24891/`. The website now describes pinned Windows winapp desktop support accurately. Website Astro build and integrity checks passed; generated `website/dist` was cleaned.

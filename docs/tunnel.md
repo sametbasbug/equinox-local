@@ -81,7 +81,7 @@ Secure MCP Tunnel is outbound-only from the Equinox Local machine to OpenAI's tu
 - publish the local MCP stdio process on the internet;
 - configure a public reverse proxy for Equinox Local.
 
-Control Center remains loopback-only.
+The Control Center interface runs inside the Electron app package and communicates with the runtime over authenticated current-user IPC. No browser-accessible localhost dashboard is needed.
 
 ## Troubleshooting
 
