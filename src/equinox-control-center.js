@@ -624,9 +624,14 @@ function renderDashboard() {
         ? `${peekaboo.engine === "winapp" ? "Microsoft winapp" : "Peekaboo"} ${peekaboo.version}`
         : "Optional desktop capability");
     setDot("peekaboo-status-dot", peekaboo.needsAttention ? "warn" : peekabooReady ? "good" : "neutral");
-    setText("api-status", controlCenter.active ? "Listening" : "Unavailable");
-    setText("api-detail", controlCenter.port ? `127.0.0.1:${controlCenter.port}` : "127.0.0.1 only");
-    setDot("api-status-dot", controlCenter.active ? "good" : "bad");
+    // The native app speaks authenticated local IPC; its public UI should not
+    // advertise the legacy HTTP status listener as the Control Center origin.
+    const desktopIpc = Boolean(window.equinoxShell?.requestJson);
+    const apiReady = desktopIpc ? Boolean(status.server?.pid && state.health) : controlCenter.active;
+    setText("api-status", apiReady ? (desktopIpc ? "Connected" : "Listening") : "Unavailable");
+    setText("api-detail", desktopIpc ? "Private desktop IPC" :
+        controlCenter.port ? `127.0.0.1:${controlCenter.port}` : "127.0.0.1 only");
+    setDot("api-status-dot", apiReady ? "good" : "bad");
     setText("project-count", String(configStatus.projectCount ?? Object.keys(state.config?.projects || {}).length));
     setText("folder-count", String(Object.keys(state.config?.fileRoots || {}).length));
     setText("default-project", state.config?.defaultProject || configStatus.defaultProject || "—");

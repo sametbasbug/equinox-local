@@ -159,7 +159,12 @@ export async function runWindowsShellRuntimeSupervisor({ platform = process.plat
             await initializeTunnel();
             process.stderr.write("[Equinox Windows supervisor] state=tunnel-starting.\n");
             const tunnelStart = Date.now();
-            const result = await runChildImpl(tunnel, ["run", "--profile", PROFILE, "--profile-dir", paths.profileDir], {
+            // Electron is the application owner. Do not let tunnel-client silently
+            // restart a crashed MCP stdio backend under a second recovery policy.
+            // A child failure exits this foreground tunnel; the existing bounded
+            // local-only fallback keeps Control Center available for diagnostics.
+            const result = await runChildImpl(tunnel, ["run", "--profile", PROFILE,
+                "--profile-dir", paths.profileDir, "--mcp.stdio-failure-policy", "exit"], {
                 cwd, env: childEnv(env, "tunnel"), stdin: "ignore",
             });
             if (result.terminatingSignal)

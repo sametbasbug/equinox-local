@@ -23,7 +23,7 @@ import { readEquinoxLocalMainSourcePointer } from "./equinox-local-main-source-p
 import { inspectEquinoxLocalMainNativeStoredRelease, promoteEquinoxLocalMainNativeCandidate, readEquinoxLocalMainNativePointer } from "./equinox-local-main-native-state.js";
 import { inspectCanonicalMainCheckout } from "./equinox-local-main-update.js";
 import {
-  EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL,
+  readEquinoxLocalHealthStatus,
   waitForEquinoxLocalVersion,
 } from "./equinox-local-update-activation.js";
 import { requestWindowsShellRuntimeRestart } from "./equinox-local-windows-shell-control.js";
@@ -207,9 +207,7 @@ export async function waitForExactSourceHealth({
   let lastError: unknown = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, { method: "GET", redirect: "error", cache: "no-store", credentials: "omit", headers: { accept: "application/json" } });
-      if (!response?.ok) throw new Error(`HTTP ${response?.status ?? "unknown"}`);
-      const body = await response.json();
+      const body = await readEquinoxLocalHealthStatus(fetchImpl);
       const observed = body?.status;
       if (observed?.health?.state === "HEALTHY"
         && observed?.installation?.kind === "managed-source"
@@ -262,12 +260,7 @@ export async function waitForExactNativeMainHealth({
   let lastError:unknown = null;
   for (let attempt=0;attempt<attempts;attempt++) {
     try {
-      const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL,{
-        method:"GET",redirect:"error",cache:"no-store",credentials:"omit",
-        headers:{accept:"application/json"},
-      });
-      if (response.status !== 200) throw new Error("Main native runtime status HTTP response is invalid.");
-      const result = await response.json();
+      const result = await readEquinoxLocalHealthStatus(fetchImpl);
       const observed = result?.status;
       const installed = observed?.installation;
       if (observed?.health?.state === "HEALTHY" &&

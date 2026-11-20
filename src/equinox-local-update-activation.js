@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readEquinoxLocalPrivateStatus } from "./equinox-local-ipc-status.js";
 import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -14,6 +15,24 @@ function recordOrNull(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 export const EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL = "http://127.0.0.1:24891/api/v1/status";
+// New Electron releases verify the responding backend over current-user
+// authenticated IPC, not a browser-accessible local HTTP status endpoint.
+// Custom fetch adapters remain for existing legacy installer simulations;
+// old pre-7 runtimes may still require HTTP when explicitly rolling back.
+export async function readEquinoxLocalHealthStatus(fetchImpl = globalThis.fetch, legacy = false) {
+    if (!legacy && fetchImpl === globalThis.fetch)
+        return readEquinoxLocalPrivateStatus();
+    const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, {
+        method: "GET", redirect: "error", cache: "no-store", credentials: "omit",
+        headers: { accept: "application/json" },
+    });
+    if (!response?.ok)
+        throw new Error(`Legacy health endpoint returned HTTP ${response?.status ?? "unknown"}.`);
+    const result = await response.json();
+    if (!result || typeof result !== "object" || Array.isArray(result))
+        throw new Error("Legacy health response is invalid.");
+    return result;
+}
 const HEALTH_ATTEMPTS = 30;
 const HEALTH_DELAY_MS = 500;
 function boundedMessage(value) {
@@ -269,16 +288,7 @@ export async function waitForEquinoxLocalVersion(expectedVersion, { fetchImpl = 
     let lastError = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
         try {
-            const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, {
-                method: "GET",
-                redirect: "error",
-                cache: "no-store",
-                credentials: "omit",
-                headers: { accept: "application/json" },
-            });
-            if (!response?.ok)
-                throw new Error(`Health endpoint returned HTTP ${response?.status ?? "unknown"}.`);
-            const body = recordOrNull(await response.json());
+            const body = recordOrNull(await readEquinoxLocalHealthStatus(fetchImpl, compareEquinoxVersions(expectedVersion, "7.0.0") < 0));
             const status = recordOrNull(body?.status);
             const server = recordOrNull(status?.server);
             const health = recordOrNull(status?.health);
@@ -304,16 +314,7 @@ export async function waitForEquinoxLocalManagedSource(expectedVersion, expected
     let lastError = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
         try {
-            const response = await fetchImpl(EQUINOX_LOCAL_CONTROL_CENTER_STATUS_URL, {
-                method: "GET",
-                redirect: "error",
-                cache: "no-store",
-                credentials: "omit",
-                headers: { accept: "application/json" },
-            });
-            if (!response?.ok)
-                throw new Error(`Health endpoint returned HTTP ${response?.status ?? "unknown"}.`);
-            const body = recordOrNull(await response.json());
+            const body = recordOrNull(await readEquinoxLocalHealthStatus(fetchImpl, compareEquinoxVersions(expectedVersion, "7.0.0") < 0));
             const status = recordOrNull(body?.status);
             const server = recordOrNull(status?.server);
             const health = recordOrNull(status?.health);
