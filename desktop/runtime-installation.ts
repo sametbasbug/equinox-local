@@ -122,7 +122,10 @@ export async function resolveInstalledRuntime(
   env.EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER = "EQUINOX_RUNTIME_CHILD_STARTED";
   const createLease = imported.createWindowsJobObjectLease;
   return {
-    command: node, args: [gate], cwd: release, env, controlHelper: helper,
+    // Never make the signed native release tree the process working directory.
+    // Windows GPU drivers and other injected native components can create
+    // incidental log directories under CWD, invalidating the exact tree seal.
+    command: node, args: [gate], cwd: installRoot, env, controlHelper: helper,
     createJob: () => createLease({ helperPath: helper }), readyMarker: "EQUINOX_RUNTIME_CHILD_STARTED",
   };
 }

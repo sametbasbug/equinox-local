@@ -124,7 +124,10 @@ export async function runWindowsShellRuntimeSupervisor({ platform = process.plat
         path.win32.normalize(env.EQUINOX_LOCAL_INSTALL_ROOT || "").toLowerCase() !== paths.installRoot.toLowerCase()) {
         throw new Error("Windows runtime source or release path is invalid.");
     }
-    const cwd = path.win32.dirname(serverPath);
+    // All worker paths are absolute. Keep their CWD outside the immutable
+    // signed native-store/release tree: Windows graphics drivers may create
+    // diagnostic folders in CWD, which would break signed update admission.
+    const cwd = paths.installRoot;
     const node = path.win32.join(releaseDir, "runtime", "node", "bin", "node.exe");
     const tunnel = path.win32.join(releaseDir, "runtime", "tunnel", "tunnel-client.exe");
     const localOnly = (reconnect = null) => runChildImpl(node, [serverPath], {
