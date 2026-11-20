@@ -197,6 +197,7 @@ async function callAuthenticatedControlSocket(request) {
     }
     return await new Promise((resolve, reject) => {
         const socket = net.createConnection(endpoint);
+        socket.setEncoding("utf8");
         let settled = false;
         let received = "";
         const fail = (error) => {
@@ -211,7 +212,7 @@ async function callAuthenticatedControlSocket(request) {
         socket.on("data", (chunk) => {
             if (settled)
                 return;
-            received += chunk.toString("utf8");
+            received += chunk;
             if (Buffer.byteLength(received, "utf8") > 8 * 1024 * 1024) {
                 fail(new Error("Desktop control IPC reply is too large."));
                 return;

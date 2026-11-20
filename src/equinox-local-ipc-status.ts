@@ -46,6 +46,7 @@ export async function readEquinoxLocalPrivateStatus(): Promise<Record<string, an
     path: "/api/v1/status", backgroundRefresh: true});
   return await new Promise<Record<string, any>>((resolve, reject) => {
     const socket = net.createConnection(endpoint);
+    socket.setEncoding("utf8");
     let settled = false;
     let data = "";
     const fail = (error: Error) => {
@@ -56,9 +57,9 @@ export async function readEquinoxLocalPrivateStatus(): Promise<Record<string, an
     };
     socket.setTimeout(3_000, () => fail(new Error("Private status request timed out.")));
     socket.once("connect", () => socket.write(`${request}\n`));
-    socket.on("data", (chunk: Buffer) => {
+    socket.on("data", (chunk: string) => {
       if (settled) return;
-      data += chunk.toString("utf8");
+      data += chunk;
       if (Buffer.byteLength(data, "utf8") > 2 * 1024 * 1024) {
         fail(new Error("Private status reply exceeded its size limit.")); return;
       }
