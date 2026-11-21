@@ -1871,8 +1871,19 @@ const readChatBridgeVisibleText = (scope) => {
   const first = scope.firstElementChild;
   if (first?.tagName === 'H4' && first.classList.contains('sr-only')) {
     const heading = String(first.innerText || first.textContent || '').trim();
-    if ((heading === 'ChatGPT dedi:' || heading === 'ChatGPT said:')
-        && raw.startsWith(heading + '\n')) return raw.slice(heading.length + 1).trim();
+    // ChatGPT's in-progress assistant placeholder may use the concatenated
+    // accessibility label "ChatGPT dedi:ChatGPT" without a newline. Do not
+    // expose it as a streamed reply, but do not strip genuine assistant prose
+    // if the browser already excluded the screen-reader heading from innerText.
+    if (/^(?:ChatGPT dedi:|ChatGPT said:)(?:ChatGPT)?$/u.test(heading)
+        && raw.startsWith(heading)) {
+      const remaining = raw.slice(heading.length).trim();
+      const visibleChildren = [...scope.children].slice(1)
+        .map(child => String(child.innerText || child.textContent || '').trim())
+        .filter(Boolean).join('\n');
+      const normalize = text => text.replace(/\s+/gu, '');
+      if (normalize(remaining) === normalize(visibleChildren)) return remaining;
+    }
   }
   return raw;
 };`;
