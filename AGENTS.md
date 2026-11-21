@@ -45,6 +45,11 @@ These instructions apply to the entire Equinox Local canonical product repositor
 - The maintainer permanently removed automated tests and acceptance/smoke suites. Do not author or restore test files. Static validation, typechecks, security analysis and production builds remain permitted.
 - Retain required native platform packaging, signed Main release publication and production Ed25519/hash/source-integrity checks. Do not downgrade runtime or distribution security checks as a substitute for tests.
 - Static code inspection is allowed. No build, installation or health claim may be made without actual evidence.
+- Inspect installed macOS app Info.plist files using read-only Python plistlib or PlistBuddy.
+  Never run plutil -extract ... json without an explicit stdout destination (-o -)
+  on an installed bundle: it can overwrite the input plist and invalidate the
+  Factory's on-disk signature. Verify Source-role identity and a strict deep
+  code signature after any authorized bundle repair.
 - After a successful Equinox Local runtime restart, do not invoke another Equinox Local tool in the same assistant turn. Verify only in a fresh turn.
 - After `update_runtime` successfully schedules a local Factory or public signed update, invoke no more Equinox Local tools in that assistant turn; immediately provide the user a final status. Confirm the installed version and health only in a fresh turn. A no-update result does not enter this boundary.
 
