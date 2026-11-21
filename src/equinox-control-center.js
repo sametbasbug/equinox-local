@@ -683,10 +683,20 @@ async function sendNativeChatMessage() {
         renderNativeChatState(stateResult.chat);
     }
     catch (error) {
-        // After crossing a network/IPC boundary a mutation can be ambiguous.
-        // Keep the draft, fail closed, and require manual inspection in Chrome.
-        chatBlocked = true;
-        setNativeChatNotice("Delivery could not be confirmed. Check the ChatGPT conversation in Chrome before continuing. " + (error instanceof Error ? error.message : ""));
+        const message = error instanceof Error ? error.message : "";
+        if (newMessage && message.startsWith("New Chat was not submitted: ")) {
+            // The backend cancelled the temporary Task and confirmed no Chrome submit.
+            // The failed creation ID is never reused, including across restarts.
+            chatNewCreationId = `nch-${crypto.randomUUID()}`;
+            chatBlocked = false;
+            setNativeChatNotice(message + " You can retry the unsent draft.");
+        }
+        else {
+            // A mutation crossing the IPC/browser boundary may be ambiguous.
+            // Keep the draft and require manual inspection before another action.
+            chatBlocked = true;
+            setNativeChatNotice("Delivery could not be confirmed. Check the ChatGPT conversation in Chrome before continuing. " + message);
+        }
     }
     finally {
         chatSending = false;

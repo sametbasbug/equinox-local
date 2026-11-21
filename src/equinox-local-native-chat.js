@@ -286,8 +286,23 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 return { confirmed: true, taskId: newTaskId, chat: await read() };
             }
             catch (error) {
+                if (taskId && error?.code === "CHAT_BRIDGE_CREATE_NOT_STARTED" && taskStore?.cancel) {
+                    // The starter confirmed no submit boundary was crossed and closed its new tab.
+                    // Keep a cancelled durable creation ID, rather than an orphaned active task.
+                    let cancelled = false;
+                    try {
+                        await taskStore.cancel(taskId);
+                        cancelled = true;
+                    }
+                    catch { /* Uncertain cleanup must remain blocked. */ }
+                    if (cancelled) {
+                        const definitive = new Error("New Chat was not submitted: " + (error instanceof Error ? error.message : "The initial composer was not ready."));
+                        definitive.statusCode = 409;
+                        throw definitive;
+                    }
+                }
                 if (taskId)
-                    blocked = true; // Persisted evidence; never silently replay the opener.
+                    blocked = true; // Other failures may have crossed the submit boundary.
                 throw error;
             }
             finally {

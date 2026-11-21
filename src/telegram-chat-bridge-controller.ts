@@ -337,13 +337,21 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
               // The current ChatGPT UI uses an unnamed primary composer action (type=submit) for Send.
               // Keep older explicit ids as safe fallbacks; never target voice/stop (type=button).
               const selector = '[data-composer-body] button.bg-composer-primary[type="submit"], button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
-              const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
-              const button = document.querySelector(selector);
+              const isVisible = node => {
+                const rect = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                return node.isConnected && node.getClientRects().length > 0
+                  && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+              };
+              const editors = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]')].filter(isVisible);
+              const composer = editors.length === 1 ? editors[0] : null;
+              const buttons = [...document.querySelectorAll(selector)].filter(isVisible);
+              const button = buttons.length === 1 ? buttons[0] : null;
               const text = composer ? String(composer.textContent || '').trim() : '';
-              if (!composer) return { ready: false, reason: "composer_missing", name: null, text };
+              if (!composer) return { ready: false, reason: editors.length > 1 ? "composer_ambiguous" : "composer_missing", name: null, text };
               if (!text) return { ready: false, reason: "composer_empty", name: null, text };
               if (text !== ${JSON.stringify(prompt)}) return { ready: false, reason: "composer_changed", name: null, text };
-              if (!button || !button.isConnected) return { ready: false, reason: "send_button_missing", name: null, text };
+              if (!button) return { ready: false, reason: buttons.length > 1 ? "send_button_ambiguous" : "send_button_missing", name: null, text };
               if (button.getAttribute('data-testid') === 'stop-button') return { ready: false, reason: "generation_active", name: null, text };
               if (Boolean(button.disabled) || button.getAttribute('aria-disabled') === 'true') return { ready: false, reason: "send_disabled", name: null, text };
               const name = String(button.getAttribute('aria-label') || button.textContent || '').replace(/\s+/gu, ' ').trim();

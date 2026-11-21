@@ -15,6 +15,7 @@ type ChatBridge = {
 type TaskStore = {
   checkpoint:(args:{title:string;objective:string;completed:string[];next:string[];references:{type:string;label:string;value:string}[]})=>Promise<any>;
   bindChat:(args:{taskId:string;binding:Binding})=>Promise<any>;
+  cancel?:(taskId:string)=>Promise<any>;
   list:(args:{limit:number})=>Promise<any[]>;
 };
 const MAX_MESSAGES = 30;
@@ -244,7 +245,18 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         }
         return{confirmed:true,taskId:newTaskId,chat:await read()};
       }catch(error){
-        if(taskId)blocked=true; // Persisted evidence; never silently replay the opener.
+        if(taskId&&(error as {code?:string})?.code==="CHAT_BRIDGE_CREATE_NOT_STARTED"&&taskStore?.cancel){
+          // The starter confirmed no submit boundary was crossed and closed its new tab.
+          // Keep a cancelled durable creation ID, rather than an orphaned active task.
+          let cancelled=false;
+          try{await taskStore.cancel(taskId);cancelled=true;}catch{/* Uncertain cleanup must remain blocked. */}
+          if(cancelled){
+            const definitive:Error&{statusCode?:number}=new Error("New Chat was not submitted: "+(error instanceof Error?error.message:"The initial composer was not ready."));
+            definitive.statusCode=409;
+            throw definitive;
+          }
+        }
+        if(taskId)blocked=true; // Other failures may have crossed the submit boundary.
         throw error;
       }finally{creating=false;}
     })();
