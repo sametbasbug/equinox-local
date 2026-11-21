@@ -452,6 +452,8 @@ let chatThreadList:UiRemoteData[] = [];
 let chatDuplicateCount = 0;
 let chatActive:UiRemoteData = null;
 let chatTurn = "unbound";
+let chatThreadRenderSignature = "";
+let chatFeedRenderSignature = "";
 function setNativeChatNotice(message:string) {setText("native-chat-notice",message);}
 function nativeChatErrorMessage(error:unknown):string {
   const text=error instanceof Error?error.message:String(error);
@@ -460,6 +462,11 @@ function nativeChatErrorMessage(error:unknown):string {
   return text;
 }
 function renderNativeChatThreads() {
+  // The 3-second status refresh must not steal focus from the conversation
+  // buttons or rebuild an unchanged sidebar.
+  const signature=JSON.stringify({threads:chatThreadList.map(t=>[t.conversationId,t.tabId,t.title]),selected:chatActive?.conversationId,duplicates:chatDuplicateCount});
+  if(signature===chatThreadRenderSignature)return;
+  chatThreadRenderSignature=signature;
   const list=$("native-chat-thread-list");
   list.replaceChildren();
   for(const thread of chatThreadList){
@@ -488,9 +495,12 @@ function renderNativeChatState(chat:UiRemoteData) {
   const thread=chatThreadList.find(item=>item.conversationId===chatActive?.conversationId);
   setText("native-chat-title",thread?.title||"Choose a conversation");
   const feed=$("native-chat-feed");
+  const items=Array.isArray(chat.items)?chat.items:[];
+  const signature=JSON.stringify({selected:chatActive?.conversationId||null,items});
+  if(signature!==chatFeedRenderSignature){
+  chatFeedRenderSignature=signature;
   const scrolledNearBottom=feed.scrollHeight-feed.scrollTop-feed.clientHeight<95;
   feed.replaceChildren();
-  const items=Array.isArray(chat.items)?chat.items:[];
   if(!items.length){
     const note=document.createElement("p");note.className="native-chat-empty";
     note.textContent=chatActive?"No previous conversation messages are available. Messages sent here will appear below.":"Select a conversation already open in Your Browser.";
@@ -505,6 +515,7 @@ function renderNativeChatState(chat:UiRemoteData) {
     feed.append(bubble);
   }
   if(scrolledNearBottom)feed.scrollTop=feed.scrollHeight;
+  }
   if(chat.notice)setNativeChatNotice(String(chat.notice).slice(0,190));
   else if(chatTurn==="generating")setNativeChatNotice("ChatGPT is generating. Keep this conversation open in Chrome; delivery will not be retried.");
   else if(chatActive)setNativeChatNotice(chat.historyCount?`Showing ${chat.historyCount} recent messages from ChatGPT. Earlier turns may not be loaded.`:"Your Browser keeps the ChatGPT session. Older turns may not be loaded.");
