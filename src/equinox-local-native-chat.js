@@ -170,8 +170,13 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (Object.keys(body).length !== 2 || typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || !body.text.trim() || body.text.length > 4000 || /[\0]/u.test(body.text))
             invalid("Chat delivery must include a unique id and 1–4000 characters of text.");
         const key = body.deliveryId;
-        if (attempts.has(key))
-            return attempts.get(key);
+        const message = body.text.trim();
+        const prior = attempts.get(key);
+        if (prior) {
+            if (prior.text !== message)
+                invalid("A delivery id cannot be reused with different message text.");
+            return prior.promise;
+        }
         // Retain every delivery identity for the lifetime of this backend.
         // Refuse new sends at the bound rather than evict old IDs and risk replay.
         if (attempts.size >= MAX_DELIVERY_IDS)
@@ -204,7 +209,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 sending = false;
             }
         })();
-        attempts.set(key, attempt);
+        attempts.set(key, { text: message, promise: attempt });
         return attempt;
     };
     // Explicit first-message creation. Reuse the existing Task Capsule + first-party
@@ -219,8 +224,13 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text))
             invalid("The first Chat message must be a single line of 1–1500 characters and a unique creation id.");
         const key = body.creationId;
-        if (createAttempts.has(key))
-            return createAttempts.get(key);
+        const firstMessage = body.text.trim();
+        const prior = createAttempts.get(key);
+        if (prior) {
+            if (prior.text !== firstMessage)
+                invalid("A New Chat creation id cannot be reused with different message text.");
+            return prior.promise;
+        }
         if (createAttempts.size >= MAX_NEW_CHAT_IDS)
             invalid("New Chat reached its request limit for this runtime.");
         if (!taskStore || !chatBridge.startTaskChat)
@@ -284,7 +294,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 creating = false;
             }
         })();
-        createAttempts.set(key, attempt);
+        createAttempts.set(key, { text: firstMessage, promise: attempt });
         return attempt;
     };
     return Object.freeze({ list, select, read, send, startNew });
