@@ -13,6 +13,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     let history = [];
     let historyPartial = false;
     let historyNotice = null;
+    let historyPendingHydration = 0;
     let pending = null;
     let awaitingNewChatIdentity = null;
     let sending = false;
@@ -100,21 +101,75 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         const raw = await call("tabs.list", {});
         if (!Array.isArray(raw))
             throw new Error("Connected browser did not return a tab list.");
-        const tabs = new Map();
+        const open = new Map();
         const duplicated = new Set();
         for (const item of raw.slice(0, 150)) {
             const tabId = Number(item?.id ?? item?.tabId);
             const conversationId = chatGptConversationIdFromUrl(item?.url);
             if (!conversationId || !Number.isSafeInteger(tabId) || tabId < 1)
                 continue;
-            const canonicalUrl = String(item.url);
-            if (tabs.has(conversationId))
+            if (open.has(conversationId))
                 duplicated.add(conversationId);
             else
-                tabs.set(conversationId, { tabId, conversationId, title: safeTitle(item.title) || "ChatGPT conversation", canonicalUrl });
+                open.set(conversationId, { tabId, conversationId, title: safeTitle(item.title) || "ChatGPT conversation",
+                    canonicalUrl: String(item.url), opened: true, projectId: null, projectName: null });
         }
+        // The provider's rendered navigation is the only source of historical
+        // chats. It is a bounded, possibly incomplete view, not an account API.
+        // Prefer the selected tab so a task-bound session stays the read authority.
+        const observer = ([...open.values()].find(t => t.tabId === selected?.tabId)
+            || [...open.values()][0])?.tabId;
+        const ordered = new Map();
+        let sidebarPartial = true;
+        if (observer && Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) >= 13) {
+            try {
+                const report = await call("chat_bridge.sidebar", { tabId: observer }, 12_000);
+                if (report?.tabId === observer && Array.isArray(report.threads)) {
+                    for (const entry of report.threads.slice(0, 100)) {
+                        const id = String(entry?.conversationId || "");
+                        if (!/^[a-zA-Z0-9-]{8,160}$/u.test(id) || duplicated.has(id)
+                            || ordered.has(id) || typeof entry?.title !== "string" || typeof entry?.canonicalUrl !== "string"
+                            || chatGptConversationIdFromUrl(entry.canonicalUrl) !== id)
+                            continue;
+                        const opened = open.get(id);
+                        ordered.set(id, opened
+                            ? { ...opened, title: safeTitle(entry.title), projectId: entry.projectId || null,
+                                projectName: safeTitle(entry.projectName || "") || null }
+                            : { tabId: observer, conversationId: id, title: safeTitle(entry.title),
+                                canonicalUrl: entry.canonicalUrl, opened: false,
+                                projectId: entry.projectId || null, projectName: safeTitle(entry.projectName || "") || null });
+                    }
+                    sidebarPartial = true;
+                }
+            }
+            catch {
+                // A redesign of ChatGPT's navigation must not make open tabs vanish.
+            }
+        }
+        for (const thread of open.values())
+            if (!duplicated.has(thread.conversationId) && !ordered.has(thread.conversationId))
+                ordered.set(thread.conversationId, thread);
         return { browserInstanceId, duplicateCount: duplicated.size,
-            threads: [...tabs.values()].filter(t => !duplicated.has(t.conversationId)).slice(0, 35).map(t => ({ conversationId: t.conversationId, tabId: t.tabId, title: t.title, selected: selected?.conversationId === t.conversationId })) };
+            source: "visible-sidebar", partial: sidebarPartial,
+            threads: [...ordered.values()].slice(0, 100).map(t => ({ ...t,
+                selected: selected?.conversationId === t.conversationId && selected?.tabId === t.tabId })) };
+    };
+    const model = async (value) => {
+        const target = selected;
+        if (!target)
+            return { available: false, reason: "no-conversation", choices: [] };
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            return { available: false, reason: "browser-upgrade-required", choices: [] };
+        if (value.action !== "read" && (selecting || sending || creating || pending || blocked))
+            invalid("Cannot change ChatGPT model settings while the conversation is busy or uncertain.");
+        const revision = selectedRevision;
+        const info = await call("chat_bridge.model", { tabId: target.tabId, conversationId: target.conversationId, ...value }, 12_000);
+        if (revision !== selectedRevision || selected?.tabId !== target.tabId
+            || selected?.conversationId !== target.conversationId || selected?.browserInstanceId !== target.browserInstanceId)
+            throw new Error("Model selection changed conversations; refresh the model controls.");
+        if (info?.tabId !== target.tabId || info?.conversationId !== target.conversationId)
+            throw new Error("Browser did not confirm the model selector's conversation.");
+        return info;
     };
     const select = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
@@ -130,7 +185,16 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             const tab = available.threads.find(t => t.tabId === object.tabId && t.conversationId === object.conversationId);
             if (!tab)
                 invalid("This ChatGPT conversation is no longer available in Your Browser.");
-            const next = { browserContext: "user", browserInstanceId: available.browserInstanceId, tabId: tab.tabId, conversationId: tab.conversationId, canonicalUrl: `https://chatgpt.com/c/${tab.conversationId}` };
+            // For a historical sidebar row, navigate the one verified user browser
+            // tab only after the bridge proves the exact link, no active generation and
+            // no unsent Chrome draft/attachments. Never reuse another thread's state.
+            if (!tab.opened) {
+                const result = await call("chat_bridge.open_history", { tabId: tab.tabId, conversationId: tab.conversationId, canonicalUrl: tab.canonicalUrl }, 18_000);
+                if (result?.tabId !== tab.tabId || result?.conversationId !== tab.conversationId
+                    || result?.canonicalUrl !== tab.canonicalUrl)
+                    invalid("ChatGPT did not confirm the selected historical conversation.");
+            }
+            const next = { browserContext: "user", browserInstanceId: available.browserInstanceId, tabId: tab.tabId, conversationId: tab.conversationId, canonicalUrl: tab.canonicalUrl };
             // A project-scoped URL may be needed to follow the browser's exact conversation identity.
             // Only the browser bridge, never the UI, supplies the canonical URL.
             const raw = await call("tabs.list", {});
@@ -160,6 +224,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 blocked = uncertainConversations.has(conversationKey(next)) || Boolean(awaitingNewChatIdentity);
                 history = [];
                 historyPartial = false;
+                historyPendingHydration = 0;
                 previousHistoryGeneration = false;
                 historyNotice = awaitingNewChatIdentity
                     ? "This New Chat is still waiting for its first response identity in Chrome."
@@ -183,6 +248,10 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                             text: String(item.text).slice(0, 14000), status: "complete", truncated: item.truncated === true,
                             richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 5000 ? item.richText : null }));
                         historyPartial = value.partial === true;
+                        // Navigation may finish before ChatGPT hydrates its transcript.
+                        // Retry at most five subsequent normal reads without a new send.
+                        if (!history.length && Number(value.observedTurns) === 0)
+                            historyPendingHydration = 5;
                     }
                     else
                         historyNotice = "Recent conversation history is not available with this Browser version.";
@@ -252,6 +321,25 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             }
             if (generatingNow)
                 previousHistoryGeneration = true;
+            if (!generatingNow && !pending && historyPendingHydration > 0 && chatBridge.readRecent) {
+                historyPendingHydration--;
+                try {
+                    const fresh = await chatBridge.readRecent({ binding: initialBinding });
+                    if (!sameSelection())
+                        return staleResult();
+                    if (Array.isArray(fresh?.items) && fresh.items.length) {
+                        history = fresh.items.slice(-24).map((item) => ({
+                            id: String(item.id).slice(0, 220), role: item.role, text: String(item.text).slice(0, 14000),
+                            status: "complete", truncated: item.truncated === true,
+                            richText: typeof item.richText === "string" && item.role === "assistant"
+                                && [...item.richText].length <= 5000 ? item.richText : null,
+                        }));
+                        historyPartial = fresh.partial === true;
+                        historyPendingHydration = 0;
+                    }
+                }
+                catch { /* A later explicit refresh can recover without replaying sends. */ }
+            }
             if (awaitingNewChatIdentity && inspected?.status === "ready" && typeof inspected.userEpoch === "string" && inspected.userEpoch) {
                 // A fresh /c/ URL can precede the first user-turn epoch. Read-only
                 // corroboration of the ONLY user message prevents accidentally claiming
@@ -536,5 +624,5 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, select, read, send, startNew });
+    return Object.freeze({ list, select, read, send, startNew, model });
 }

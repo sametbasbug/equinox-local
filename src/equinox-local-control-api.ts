@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;
+  getChatThreads?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -45,7 +45,7 @@ const REPAIR_RECIPE_ID_SET:ReadonlySet<string> = new Set(REPAIR_RECIPE_IDS);
 // IPC auto-refresh is read-only. It must not increment interactive request
 // counters, but it does not grant a broader action to the renderer.
 const CONTROL_CENTER_BACKGROUND_REFRESH_PATHS = new Set([
-  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state",
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
   "/api/v1/files/import-settings", "/api/v1/integrations/telegram/pair",
@@ -311,6 +311,8 @@ export function createEquinoxLocalControlApi({
   getChatState = null,
   sendChatText = null,
   startNewChat = null,
+  getChatModel = null,
+  changeChatModel = null,
   getTasks = null,
   getTask = null,
   updateTask = null,
@@ -479,6 +481,23 @@ export function createEquinoxLocalControlApi({
       if (method === "GET" && pathname === "/api/v1/chat/state") {
         if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");
         send(200, {ok:true,chat:await getChatState()});return;
+      }
+      if (method === "GET" && pathname === "/api/v1/chat/model") {
+        if (typeof getChatModel !== "function") throw badRequest("Native Chat model selection is unavailable.");
+        send(200, {ok:true,model:await getChatModel()});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/model") {
+        authorizeMutation();
+        if (typeof changeChatModel !== "function") throw badRequest("Native Chat model selection is unavailable.");
+        const body=validateExactObject(await readBody(),["action","choice","direction"],"Chat model selection");
+        if (!["discover","choose","power"].includes(String(body.action))
+          ||(body.action==="choose"&&(typeof body.choice!=="string"||!body.choice.trim()||body.choice.length>80))
+          ||(body.action==="power"&&!["left","right"].includes(String(body.direction)))
+          ||(body.action!=="choose"&&body.choice!==undefined)
+          ||(body.action!=="power"&&body.direction!==undefined))
+          throw badRequest("Chat model selection requires an offered choice or an effort direction.");
+        const model=await changeChatModel(body);
+        state.mutationCount+=1;send(200,{ok:true,model});return;
       }
       if (method === "POST" && pathname === "/api/v1/chat/select") {
         authorizeMutation();
@@ -1002,7 +1021,7 @@ export function createEquinoxLocalControlApi({
   // A second permission boundary inside the private IPC server, independent
   // of the renderer and Electron main allowlist. Keep lists synchronized.
 const UI_READ_PATHS = new Set([
-  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state",
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
   "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
@@ -1011,7 +1030,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

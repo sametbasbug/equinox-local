@@ -766,6 +766,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-thread:hover { background: var(--surface-hover); color: var(--text); }
 .native-chat-thread:focus-visible { outline-offset: -3px; }
 .native-chat-thread.is-selected { background: var(--accent-soft); color: var(--text); font-weight: 630; }
+.native-chat-thread-group-heading {
+  margin: 11px 12px 4px 17px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.native-chat-thread-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.native-chat-thread-open { flex: none; color: var(--muted); font-size: 10px; font-weight: 550; }
 .native-chat-list-empty { margin: 3px 8px; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .native-chat-connection {
   flex: none;
@@ -777,6 +788,38 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+.native-chat-model-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 7px 9px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11px;
+}
+.native-chat-model-toolbar > label { font-weight: 650; }
+.native-chat-model-toolbar > select {
+  flex: 1 1 105px;
+  min-width: 95px;
+  max-width: 230px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 6px;
+  background: var(--chat-canvas);
+  color: var(--text);
+  font: inherit;
+}
+.native-chat-model-toolbar > select:disabled { opacity: .65; }
+.native-chat-model-toolbar > button { font-size: 11px; }
+.native-chat-model-power { display: inline-flex; align-items: center; gap: 5px; margin-inline-start: auto; }
+.native-chat-model-power .icon-button { width: 25px; height: 25px; font-size: 17px; }
+.native-chat-model-power .icon-button:disabled { opacity: .35; }
+.native-chat-model-power span { min-width: 42px; text-align: center; white-space: nowrap; }
+.native-chat-model-status { flex-basis: 100%; color: var(--muted); font-size: 10px; }
+.native-chat-model-status:empty { display: none; }
 .native-chat-connection p { margin: 0; }
 #native-chat-list-status { display: flex; align-items: baseline; gap: 7px; color: var(--text-2); font-weight: 600; }
 #native-chat-list-detail { margin-top: 4px; }

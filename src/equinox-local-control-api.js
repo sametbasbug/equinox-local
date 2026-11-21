@@ -7,7 +7,7 @@ const REPAIR_RECIPE_ID_SET = new Set(REPAIR_RECIPE_IDS);
 // IPC auto-refresh is read-only. It must not increment interactive request
 // counters, but it does not grant a broader action to the renderer.
 const CONTROL_CENTER_BACKGROUND_REFRESH_PATHS = new Set([
-    "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state",
+    "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model",
     "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
     "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
     "/api/v1/files/import-settings", "/api/v1/integrations/telegram/pair",
@@ -244,7 +244,7 @@ function validateTaskUpdateRequest(body) {
     }
     return body;
 }
-export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, selectChatThread = null, getChatState = null, sendChatText = null, startNewChat = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
+export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, selectChatThread = null, getChatState = null, sendChatText = null, startNewChat = null, getChatModel = null, changeChatModel = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
     if (!configManager?.snapshot || !configManager?.replacePersisted) {
         throw new Error("Control Center API için configManager gerekli.");
     }
@@ -368,6 +368,28 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 if (typeof getChatState !== "function")
                     throw badRequest("Native chat is unavailable.");
                 send(200, { ok: true, chat: await getChatState() });
+                return;
+            }
+            if (method === "GET" && pathname === "/api/v1/chat/model") {
+                if (typeof getChatModel !== "function")
+                    throw badRequest("Native Chat model selection is unavailable.");
+                send(200, { ok: true, model: await getChatModel() });
+                return;
+            }
+            if (method === "POST" && pathname === "/api/v1/chat/model") {
+                authorizeMutation();
+                if (typeof changeChatModel !== "function")
+                    throw badRequest("Native Chat model selection is unavailable.");
+                const body = validateExactObject(await readBody(), ["action", "choice", "direction"], "Chat model selection");
+                if (!["discover", "choose", "power"].includes(String(body.action))
+                    || (body.action === "choose" && (typeof body.choice !== "string" || !body.choice.trim() || body.choice.length > 80))
+                    || (body.action === "power" && !["left", "right"].includes(String(body.direction)))
+                    || (body.action !== "choose" && body.choice !== undefined)
+                    || (body.action !== "power" && body.direction !== undefined))
+                    throw badRequest("Chat model selection requires an offered choice or an effort direction.");
+                const model = await changeChatModel(body);
+                state.mutationCount += 1;
+                send(200, { ok: true, model });
                 return;
             }
             if (method === "POST" && pathname === "/api/v1/chat/select") {
@@ -918,7 +940,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
     // A second permission boundary inside the private IPC server, independent
     // of the renderer and Electron main allowlist. Keep lists synchronized.
     const UI_READ_PATHS = new Set([
-        "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state",
+        "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model",
         "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
         "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
         "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
@@ -927,7 +949,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
     ]);
     const UI_WRITE_PATHS = {
         POST: new Set([
-            "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new",
+            "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model",
             "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
             "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
             "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

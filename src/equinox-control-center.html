@@ -578,7 +578,7 @@
       </section>
 
       <section id="section-chat" class="page-section native-chat-layout" aria-label="Chat" hidden>
-        <aside class="native-chat-threads" aria-label="Open ChatGPT conversations">
+        <aside class="native-chat-threads" aria-label="ChatGPT conversations">
           <div class="native-chat-thread-controls">
             <button id="native-chat-new" class="button primary native-chat-new" type="button" disabled>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -586,16 +586,16 @@
             </button>
             <label class="native-chat-filter">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 4 4"/></svg>
-              <input id="native-chat-filter" type="search" maxlength="120" placeholder="Filter open chats" aria-label="Filter open chats" aria-controls="native-chat-thread-list" autocomplete="off" disabled>
+              <input id="native-chat-filter" type="search" maxlength="120" placeholder="Search conversations" aria-label="Search conversations" aria-controls="native-chat-thread-list" autocomplete="off" disabled>
             </label>
           </div>
           <div class="native-chat-list-heading">
-            <h2>Open in Chrome</h2>
-            <button id="native-chat-refresh" class="icon-button" type="button" aria-label="Refresh open chats" title="Refresh open chats">
+            <h2>Conversations</h2>
+            <button id="native-chat-refresh" class="icon-button" type="button" aria-label="Refresh conversations" title="Refresh conversations">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5.8 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.2-2"/></svg>
             </button>
           </div>
-          <div id="native-chat-thread-list" class="native-chat-thread-list" role="group" aria-label="Open ChatGPT conversations"></div>
+          <div id="native-chat-thread-list" class="native-chat-thread-list" role="group" aria-label="ChatGPT conversations"></div>
           <div class="native-chat-connection" role="status">
             <p id="native-chat-list-status" data-connection="checking">Checking Your Browser…</p>
             <p id="native-chat-list-detail" hidden></p>
@@ -621,7 +621,7 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-3.5 2v-8.5a8.5 8.5 0 0 1 17-1Z"/><path d="M8 10h8M8 14h5"/></svg>
                 </div>
                 <h3 id="native-chat-empty-title">Choose a conversation</h3>
-                <p id="native-chat-empty-copy">Choose an open Chrome conversation, or select New Chat to begin one.</p>
+                <p id="native-chat-empty-copy">Choose a recent ChatGPT conversation, or select New Chat to begin one.</p>
               </div>
               <div id="native-chat-messages" class="native-chat-messages" hidden></div>
               <div id="native-chat-preview" class="native-chat-preview" aria-live="off" hidden></div>
@@ -633,6 +633,19 @@
           </div>
           <div class="native-chat-column native-chat-dock">
             <p id="native-chat-notice" class="native-chat-notice" role="status" hidden></p>
+            <div id="native-chat-model-toolbar" class="native-chat-model-toolbar" aria-label="ChatGPT model and reasoning settings">
+              <label for="native-chat-model-choice">Model</label>
+              <select id="native-chat-model-choice" aria-label="ChatGPT model" disabled>
+                <option value="">Discover available models</option>
+              </select>
+              <button id="native-chat-model-refresh" class="text-button" type="button" title="Discover models available to this account" disabled>Models</button>
+              <div class="native-chat-model-power" aria-label="Reasoning effort">
+                <button id="native-chat-power-less" class="icon-button" type="button" aria-label="Less reasoning" title="Less reasoning" disabled>−</button>
+                <span id="native-chat-power-label" role="status">Automatic</span>
+                <button id="native-chat-power-more" class="icon-button" type="button" aria-label="More reasoning" title="More reasoning" disabled>+</button>
+              </div>
+              <span id="native-chat-model-status" class="native-chat-model-status" role="status"></span>
+            </div>
             <form id="native-chat-form" class="native-chat-compose">
               <label for="native-chat-text" class="native-chat-sr-only">Message</label>
               <textarea id="native-chat-text" rows="1" maxlength="4000" placeholder="Write a message…" aria-describedby="native-chat-compose-hint" disabled></textarea>

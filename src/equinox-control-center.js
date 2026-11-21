@@ -455,6 +455,11 @@ function holdChatUncertainty() {
 let chatThreadList = [];
 let chatThreadBrowserInstanceId = null;
 let chatDuplicateCount = 0;
+let chatHistoryPartial = false;
+let chatModelState = null;
+let chatModelIdentity = null;
+let chatModelBusy = false;
+let chatModelRenderSignature = "";
 let chatConnection = "checking";
 let chatConnectionError = "";
 let chatActive = null;
@@ -497,36 +502,64 @@ function renderNativeChatThreads() {
     const locale = localeForLanguage(state.language);
     const query = filter.value.trim().toLocaleLowerCase(locale);
     const threads = ready ? chatThreadList.filter(thread => String(thread.title || "ChatGPT conversation").toLocaleLowerCase(locale).includes(query)) : [];
-    const signature = JSON.stringify([state.language, ready, query, threads.map(thread => [thread.conversationId, thread.tabId, thread.title, isSelectedNativeChatThread(thread)])]);
+    const signature = JSON.stringify([state.language, ready, query, threads.map(thread => [thread.conversationId, thread.tabId, thread.title, thread.opened, thread.projectId,
+            thread.projectName, isSelectedNativeChatThread(thread)])]);
     const list = $("native-chat-thread-list");
     if (signature !== chatThreadRenderSignature) {
         chatThreadRenderSignature = signature;
         const focused = document.activeElement instanceof HTMLButtonElement && list.contains(document.activeElement)
-            ? document.activeElement.dataset.tabId : null;
+            ? document.activeElement.dataset.conversationId : null;
         const next = document.createDocumentFragment();
         let nextFocus;
+        const groups = new Map();
         for (const thread of threads) {
-            const button = document.createElement("button");
-            button.type = "button";
-            button.className = "native-chat-thread";
-            button.dataset.tabId = String(thread.tabId);
-            if (isSelectedNativeChatThread(thread)) {
-                button.classList.add("is-selected");
-                button.setAttribute("aria-current", "true");
+            const project = typeof thread.projectId === "string" && thread.projectId
+                ? thread.projectId : "";
+            const groupKey = project || "__recent__";
+            const title = project
+                ? String(thread.projectName || "ChatGPT project") : localizeUiText("Recent conversations");
+            if (!groups.has(groupKey))
+                groups.set(groupKey, { title, rows: [] });
+            groups.get(groupKey).rows.push(thread);
+        }
+        for (const group of groups.values()) {
+            const heading = document.createElement("h3");
+            heading.className = "native-chat-thread-group-heading";
+            heading.textContent = group.title;
+            next.append(heading);
+            for (const thread of group.rows) {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "native-chat-thread";
+                button.dataset.tabId = String(thread.tabId);
+                button.dataset.conversationId = String(thread.conversationId);
+                if (isSelectedNativeChatThread(thread)) {
+                    button.classList.add("is-selected");
+                    button.setAttribute("aria-current", "true");
+                }
+                const name = document.createElement("span");
+                name.className = "native-chat-thread-name";
+                name.textContent = thread.title || localizeUiText("ChatGPT conversation");
+                button.append(name);
+                if (thread.opened) {
+                    const mark = document.createElement("span");
+                    mark.className = "native-chat-thread-open";
+                    mark.textContent = localizeUiText("Open");
+                    button.append(mark);
+                }
+                button.title = name.textContent;
+                button.addEventListener("click", () => { void selectNativeChat(thread); });
+                next.append(button);
+                if (button.dataset.conversationId === focused)
+                    nextFocus = button;
             }
-            button.textContent = thread.title || localizeUiText("ChatGPT conversation");
-            button.title = button.textContent;
-            button.addEventListener("click", () => { void selectNativeChat(thread); });
-            next.append(button);
-            if (button.dataset.tabId === focused)
-                nextFocus = button;
         }
         if (ready && !threads.length) {
             const empty = document.createElement("p");
             empty.className = "native-chat-list-empty";
             empty.textContent = localizeUiText(chatThreadList.length
-                ? "No open chats match your filter."
-                : "Open a ChatGPT conversation in Chrome to see it here.");
+                ? "No conversations match your search."
+                : "Open ChatGPT in Chrome to discover your conversations.");
             next.append(empty);
         }
         list.replaceChildren(next);
@@ -541,6 +574,8 @@ function renderNativeChatThreads() {
         details.push(chatConnectionError);
     if (ready && chatDuplicateCount)
         details.push("Close duplicate Chrome tabs to make those conversations available.");
+    if (ready && chatHistoryPartial)
+        details.push("Conversation history reflects the currently visible ChatGPT sidebar.");
     if (chatCreationBlocked)
         details.push("New Chat is blocked after an unconfirmed creation. Check Chrome for the conversation.");
     const detail = details.map(localizeUiText).join(" ");
@@ -560,6 +595,100 @@ const NATIVE_CHAT_TURN_LABELS = {
     blocked: "Send blocked",
     uncertain: "Delivery uncertain",
 };
+function paintNativeChatModelControls() {
+    const identity = chatConversationKey(chatActive);
+    const compatible = Boolean(identity && chatModelIdentity === identity && chatModelState?.available);
+    const rows = compatible && Array.isArray(chatModelState.choices) ? chatModelState.choices : [];
+    const selected = rows.find((choice) => choice.selected === true)?.label
+        || (compatible ? chatModelState.selectedModel : null);
+    const signature = JSON.stringify([rows.map((choice) => choice.label), selected, state.language]);
+    const picker = $("native-chat-model-choice");
+    if (signature !== chatModelRenderSignature) {
+        chatModelRenderSignature = signature;
+        const options = rows.length ? rows.map((choice) => {
+            const option = document.createElement("option");
+            option.value = choice.label;
+            option.textContent = choice.label;
+            return option;
+        }) : [(() => {
+                const option = document.createElement("option");
+                option.value = "";
+                option.textContent = localizeUiText("Discover available models");
+                return option;
+            })()];
+        picker.replaceChildren(...options);
+    }
+    picker.value = typeof selected === "string" && rows.some((x) => x.label === selected)
+        ? selected : rows[0]?.label || "";
+    const canChange = !chatModelBusy && !chatSelecting && !chatSending && !chatServerSending
+        && !chatNewDraft && !chatBlocked && chatStateAvailable
+        && Boolean(chatActive) && ["ready", "complete"].includes(chatTurn)
+        && !chatComposer().value.trim();
+    picker.disabled = !canChange || rows.length === 0;
+    $("native-chat-model-refresh").disabled = !canChange;
+    const power = compatible ? chatModelState.power : null;
+    const value = Number(power?.value);
+    const min = Number(power?.min);
+    const max = Number(power?.max);
+    const hasPower = power && Number.isInteger(value) && Number.isInteger(min)
+        && Number.isInteger(max) && min <= value && value <= max;
+    const label = compatible ? String(chatModelState.current || power?.label || "")
+        : chatModelState?.reason === "browser-upgrade-required" ? "Browser upgrade required" : "";
+    setNativeChatCopy("native-chat-power-label", label || "Automatic");
+    $("native-chat-power-less").disabled = !canChange || !hasPower || value <= min;
+    $("native-chat-power-more").disabled = !canChange || !hasPower || value >= max;
+    const status = chatModelBusy ? "Checking model options…"
+        : compatible && rows.length ? "Models offered by your ChatGPT account"
+            : compatible ? "Choose Models to inspect your account options"
+                : chatModelState?.reason === "browser-upgrade-required" ? "Update Equinox Browser for model controls" : "";
+    setNativeChatCopy("native-chat-model-status", status);
+}
+async function readNativeChatModel() {
+    const identity = chatConversationKey(chatActive);
+    if (!identity || chatNewDraft)
+        return;
+    const generation = chatSelectionGeneration;
+    try {
+        const data = await requestJson("/api/v1/chat/model", { backgroundRefresh: true });
+        if (identity !== chatConversationKey(chatActive) || generation !== chatSelectionGeneration)
+            return;
+        chatModelIdentity = identity;
+        chatModelState = data.model;
+        paintNativeChatModelControls();
+    }
+    catch {
+        // A temporary model inspection failure must never hide the conversation.
+    }
+}
+async function changeNativeChatModel(action, value) {
+    if (chatModelBusy || chatNewDraft || !chatActive || !["ready", "complete"].includes(chatTurn))
+        return;
+    const identity = chatConversationKey(chatActive);
+    const generation = chatSelectionGeneration;
+    chatModelBusy = true;
+    paintNativeChatModelControls();
+    try {
+        const body = { action };
+        if (action === "choose")
+            body.choice = value;
+        if (action === "power")
+            body.direction = value;
+        const data = await mutationJson("/api/v1/chat/model", "POST", body);
+        if (identity !== chatConversationKey(chatActive) || generation !== chatSelectionGeneration)
+            return;
+        chatModelIdentity = identity;
+        chatModelState = data.model;
+    }
+    catch (error) {
+        if (identity === chatConversationKey(chatActive) && generation === chatSelectionGeneration) {
+            showToast(nativeChatErrorMessage(error));
+        }
+    }
+    finally {
+        chatModelBusy = false;
+        paintNativeChatModelControls();
+    }
+}
 function updateNativeChatControls() {
     const busy = chatSelecting || chatSending || chatServerSending;
     const composer = chatComposer();
@@ -571,6 +700,7 @@ function updateNativeChatControls() {
         || chatBlocked || ["waiting", "generating"].includes(chatTurn);
     $("native-chat-cancel-new").disabled = chatSending;
     $("native-chat-refresh").setAttribute("aria-disabled", String(chatRefreshingThreads || chatNewDraft || busy));
+    paintNativeChatModelControls();
     const preview = $("native-chat-preview");
     preview.hidden = !chatStateAvailable || busy || !preview.hasChildNodes();
     const turn = chatSelecting ? "opening" : chatSending || chatServerSending ? "sending"
@@ -992,6 +1122,13 @@ function renderNativeChatState(chat) {
     chatServerSending = chat.sending === true;
     chatCreationBlocked = chat.creationBlocked === true || chatCreationBlocked;
     const key = chatConversationKey(chatActive);
+    if (key !== chatModelIdentity) {
+        chatModelState = null;
+        chatModelIdentity = key;
+        chatModelRenderSignature = "";
+        if (key)
+            void readNativeChatModel();
+    }
     chatLocallyUncertain = Boolean(key && chatUncertainConversations.has(key));
     chatBlocked = Boolean(chatLocallyUncertain || chat.blocked);
     const title = $("native-chat-title");
@@ -1058,6 +1195,7 @@ async function refreshNativeChat(withThreads = false) {
             chatThreadList = Array.isArray(result.chat?.threads) ? result.chat.threads : [];
             chatThreadBrowserInstanceId = typeof result.chat?.browserInstanceId === "string" ? result.chat.browserInstanceId : null;
             chatDuplicateCount = Number.isSafeInteger(result.chat?.duplicateCount) ? Math.max(0, result.chat.duplicateCount) : 0;
+            chatHistoryPartial = result.chat?.partial === true;
             chatConnection = "ready";
             chatConnectionError = "";
             chatRefreshingThreads = false;
@@ -1076,6 +1214,7 @@ async function refreshNativeChat(withThreads = false) {
             chatThreadList = [];
             chatThreadBrowserInstanceId = null;
             chatDuplicateCount = 0;
+            chatHistoryPartial = false;
             chatConnection = "unavailable";
             chatConnectionError = message;
         }
@@ -1112,6 +1251,8 @@ async function selectNativeChat(thread) {
     const composer = chatComposer();
     composer.value = "";
     composer.maxLength = 4000;
+    chatModelState = null;
+    chatModelIdentity = null;
     chatSelecting = true;
     chatStateAvailable = false;
     const selectionGeneration = ++chatSelectionGeneration;
@@ -4765,6 +4906,14 @@ function bindEvents() {
         if ($("native-chat-refresh").getAttribute("aria-disabled") !== "true")
             void refreshNativeChat(true);
     });
+    $("native-chat-model-refresh").addEventListener("click", () => void changeNativeChatModel("discover"));
+    $("native-chat-model-choice").addEventListener("change", (event) => {
+        const selected = event.target.value;
+        if (selected)
+            void changeNativeChatModel("choose", selected);
+    });
+    $("native-chat-power-less").addEventListener("click", () => void changeNativeChatModel("power", "left"));
+    $("native-chat-power-more").addEventListener("click", () => void changeNativeChatModel("power", "right"));
     $("native-chat-feed").addEventListener("scroll", updateNativeChatJumpToLatest, { passive: true });
     document.addEventListener("selectionchange", refreshNativeChatQuoteSelection);
     $("native-chat-jump-latest").addEventListener("click", () => {
