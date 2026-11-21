@@ -2176,7 +2176,11 @@ async function chatBridgeModelControl({tabId,conversationId,action="read",choice
       }
       const afterModel=options.find(x=>x.selected)?.label||null;
       if(!originallyOpen&&menu()){
-        button.click();await pause(100);
+        const ownedMenu=menu();
+        ownedMenu?.focus();
+        ownedMenu?.dispatchEvent(new KeyboardEvent('keydown',
+          {key:'Escape',code:'Escape',bubbles:true,cancelable:true}));
+        for(let i=0;i<12&&menu();i++)await pause(60);
       }
       return{available:true,current:String(button.innerText||current).trim().slice(0,80),
         choices:options.slice(0,20),power:beforePower,selectedModel:afterModel,
