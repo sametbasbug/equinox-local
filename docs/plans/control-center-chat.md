@@ -35,6 +35,10 @@ Typecheck, generated runtime/desktop JavaScript parity, root static checks, and 
 
 Do not merge/release or advertise the feature as functional until a matching backend and an authenticated real Chrome ChatGPT conversation pass actual send/read and original conversation identity checks (including uncertain-delivery handling) on macOS and Windows. No automated test files may be added.
 
+## Coarse live generation state
+
+The existing, read-only Chat Bridge inspection exposes `generationActive` from Equinox Browser's own continuation observer. The native Chat turn state uses this as a **coarse in-progress indicator**, including when generation begins outside the native composer. It does not pretend to stream partial assistant text, tools or earlier history: the installed Browser extension's `chat_bridge.inspect` is deliberately text-free, and `chat_bridge.read_final` exposes only an exact completed assistant turn. True Codex-style transcript/history and intermediate tool cards require a separately admitted, bounded Browser extension read capability plus Chrome Web Store update, not a second DOM scraping engine or a fake activity feed.
+
 ## Risks and real acceptance
 
 - ChatGPT UI/browser extension interaction is **not an official service API**. Document account-policy risks and avoid abusive automation or workarounds to provider restrictions. Prefer supported interfaces where available; no promise that one login can power every agent backend.

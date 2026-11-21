@@ -89,7 +89,7 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
             const current = inspected?.binding;
             if (current && current.conversationId === selected.conversationId && current.browserInstanceId === selected.browserInstanceId)
                 selected = current;
-            turn = inspected?.status === "waiting" ? "waiting" : "ready";
+            turn = inspected?.generationActive === true ? "generating" : inspected?.status === "waiting" ? "waiting" : "ready";
             if (pending) {
                 const result = await chatBridge.readFinal({ binding: selected, userEpoch: pending.userEpoch, previousAssistantTurnKey: pending.previousAssistantTurnKey });
                 if (result?.status === "ready") {

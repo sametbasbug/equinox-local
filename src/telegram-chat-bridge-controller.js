@@ -428,6 +428,9 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                 binding: target,
                 userEpoch: state?.userEpoch || null,
                 assistantTurnKey: state?.assistantTurnKey || null,
+                generationActive: state?.generationActive === true,
+                composerReady: state?.composerReady === true,
+                composerEmpty: state?.composerEmpty === true,
             });
         }
         catch (error) {
