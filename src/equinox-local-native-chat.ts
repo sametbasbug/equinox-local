@@ -133,16 +133,19 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         const receipt=pending;
         const result=await chatBridge.readFinal({binding:selected,userEpoch:receipt.userEpoch,previousAssistantTurnKey:receipt.previousAssistantTurnKey});
         if(result?.status==="ready"){
+          if(typeof result.text!=="string"){
+            throw Object.assign(new Error("The confirmed ChatGPT reply has no readable text payload."),{code:"CHAT_BRIDGE_READ_FAILED"});
+          }
           // Polling and the post-send refresh can complete simultaneously.
           // Only the first reader that still owns this receipt may append it.
           if(pending===receipt){
-            const reply=String(result.text);
+            const reply=result.text;
             appendMessage({id:receipt.deliveryId+"-reply",role:"assistant",text:reply.slice(0,MAX_ASSISTANT_CHARS),status:"complete",
               truncated:result.truncated===true||reply.length>MAX_ASSISTANT_CHARS});
             pending=null;
           }
           turn="complete";
-        }else turn="generating";
+        }else turn=inspected?.generationActive===true?"generating":"waiting";
       }
       // Preview is ephemeral. Only read it while the browser observer reports
       // active generation, and never append it to completed transcript items.
