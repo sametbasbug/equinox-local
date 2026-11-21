@@ -1637,6 +1637,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     const nativeChatController = createNativeChatController({
         browserBridge: equinoxBrowserBridge,
         chatBridge: telegramChatBridgeController,
+        taskStore: taskCapsuleStore,
     });
     const telegramTaskInboxController = createTelegramTaskInboxController({
         store: taskCapsuleStore,
@@ -2271,6 +2272,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         selectChatThread: (value) => nativeChatController.select(value),
         getChatState: () => nativeChatController.read(),
         sendChatText: (value) => nativeChatController.send(value),
+        startNewChat: (value) => nativeChatController.startNew(value),
         getStatus: async () => {
             const browser = equinoxBrowserBridge.snapshot();
             const browserSettingsByContext = { agent: null, user: null };

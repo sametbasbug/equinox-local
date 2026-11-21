@@ -3,10 +3,11 @@ const MAX_MESSAGES = 30;
 const MAX_TRANSCRIPT_CHARS = 96_000;
 const MAX_ASSISTANT_CHARS = 12_000;
 const MAX_DELIVERY_IDS = 2_048;
+const MAX_NEW_CHAT_IDS = 512;
 function invalid(message) { const error = new Error(message); error.statusCode = 400; throw error; }
 function safeTitle(value) { return typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]/gu, " ").trim().slice(0, 120) : "ChatGPT conversation"; }
 /** Current-user native Chat transport. The browser remains the ChatGPT session authority. */
-export function createNativeChatController({ browserBridge, chatBridge }) {
+export function createNativeChatController({ browserBridge, chatBridge, taskStore }) {
     let selected = null;
     let messages = [];
     let history = [];
@@ -14,7 +15,9 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
     let historyNotice = null;
     let pending = null;
     let sending = false;
+    let creating = false;
     let blocked = false;
+    const createAttempts = new Map();
     const attempts = new Map();
     function appendMessage(message) {
         messages.push(message);
@@ -58,7 +61,7 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
         const object = value;
         if (Object.keys(object).length !== 2 || typeof object.conversationId !== "string" || !Number.isSafeInteger(object.tabId))
             invalid("Invalid conversation selection.");
-        if (sending || pending)
+        if (sending || creating || pending)
             invalid("Cannot change conversation while a message is in flight.");
         const available = await list();
         const tab = available.threads.find(t => t.tabId === object.tabId && t.conversationId === object.conversationId);
@@ -161,7 +164,7 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
         // Refuse new sends at the bound rather than evict old IDs and risk replay.
         if (attempts.size >= MAX_DELIVERY_IDS)
             invalid("This Chat session reached its bounded delivery limit. Restart the runtime before sending again.");
-        if (sending || pending || blocked || !selected)
+        if (sending || creating || pending || blocked || !selected)
             invalid("Select an idle, unblocked ChatGPT conversation before sending. Confirm any uncertain delivery in Chrome.");
         const binding = selected;
         sending = true;
@@ -192,5 +195,83 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
         attempts.set(key, attempt);
         return attempt;
     };
-    return Object.freeze({ list, select, read, send });
+    // Explicit first-message creation. Reuse the existing Task Capsule + first-party
+    // Task Chat starter, and retain request identities even after a failed attempt.
+    // A restart cannot silently recreate an already recorded initiation request.
+    const startNew = async (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            invalid("Invalid New Chat request.");
+        const body = value;
+        if (Object.keys(body).length !== 2 || typeof body.creationId !== "string" ||
+            !/^nch-[a-f0-9-]{36}$/u.test(body.creationId) || typeof body.text !== "string" ||
+            !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text))
+            invalid("The first Chat message must be a single line of 1–1500 characters and a unique creation id.");
+        const key = body.creationId;
+        if (createAttempts.has(key))
+            return createAttempts.get(key);
+        if (createAttempts.size >= MAX_NEW_CHAT_IDS)
+            invalid("New Chat reached its request limit for this runtime.");
+        if (!taskStore || !chatBridge.startTaskChat)
+            invalid("New Chat is unavailable on this installation.");
+        if (creating || sending || pending || blocked)
+            invalid("Finish the current conversation or reconcile an uncertain delivery before starting New Chat.");
+        creating = true;
+        const attempt = (async () => {
+            let taskId = null;
+            try {
+                context();
+                const existing = await taskStore.list({ limit: 100 });
+                if (existing.some(t => Array.isArray(t.references) && t.references.some((ref) => ref.label === "Native Chat creation ID" && ref.value === key)))
+                    invalid("This New Chat request was already recorded. Review existing Task Capsules instead of creating a duplicate.");
+                const task = await taskStore.checkpoint({
+                    title: "Native Chat · " + new Date().toISOString().slice(0, 16).replace("T", " "),
+                    objective: "User-initiated ChatGPT conversation through the Equinox Local native Chat window. The opening prompt stays in the user's ChatGPT conversation, not the Task Capsule.",
+                    completed: [], next: [], references: [{ type: "note", label: "Native Chat creation ID", value: key }],
+                });
+                if (typeof task?.taskId !== "string" || !/^task-[a-z0-9-]{6,80}$/u.test(task.taskId))
+                    throw new Error("New Chat Task Capsule was not persisted.");
+                const newTaskId = task.taskId;
+                taskId = newTaskId;
+                const opened = await chatBridge.startTaskChat({ taskId: newTaskId, checkpointRevision: task.checkpointRevision, initialMessage: body.text.trim() });
+                if (opened?.confirmed !== true || !opened?.binding)
+                    throw new Error("New Chat could not confirm its exact ChatGPT binding.");
+                const source = opened.binding;
+                if (source.browserContext !== "user" || source.browserInstanceId !== context() ||
+                    !Number.isSafeInteger(source.tabId) || source.tabId < 1 ||
+                    !/^[A-Za-z0-9-]{8,160}$/u.test(source.conversationId) ||
+                    chatGptConversationIdFromUrl(source.canonicalUrl) !== source.conversationId)
+                    throw new Error("New Chat returned a different browser conversation identity.");
+                const saved = await taskStore.bindChat({ taskId: newTaskId, binding: source });
+                if (saved?.chatBinding?.conversationId !== source.conversationId || saved.chatBinding.browserInstanceId !== source.browserInstanceId)
+                    throw new Error("New Chat Task Capsule binding could not be confirmed.");
+                selected = { browserContext: "user", browserInstanceId: source.browserInstanceId, tabId: source.tabId, conversationId: source.conversationId, canonicalUrl: source.canonicalUrl };
+                history = [];
+                messages = [];
+                historyNotice = null;
+                historyPartial = false;
+                blocked = false;
+                pending = null;
+                attempts.clear();
+                const messageId = key.replace(/^nch-/u, "tgb-");
+                appendMessage({ id: messageId, role: "user", text: body.text.trim(), status: "sent" });
+                if (typeof opened.userEpoch === "string" && opened.userEpoch) {
+                    pending = { userEpoch: opened.userEpoch, previousAssistantTurnKey: null, deliveryId: messageId };
+                }
+                else
+                    historyNotice = "New Chat opened. The first response can be viewed in Chrome until the turn identity becomes available.";
+                return { confirmed: true, taskId: newTaskId, chat: await read() };
+            }
+            catch (error) {
+                if (taskId)
+                    blocked = true; // Persisted evidence; never silently replay the opener.
+                throw error;
+            }
+            finally {
+                creating = false;
+            }
+        })();
+        createAttempts.set(key, attempt);
+        return attempt;
+    };
+    return Object.freeze({ list, select, read, send, startNew });
 }

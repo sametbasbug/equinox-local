@@ -2463,6 +2463,7 @@ const telegramChatBridgeController:RuntimeBoundary = createTelegramChatBridgeCon
 const nativeChatController = createNativeChatController({
   browserBridge: equinoxBrowserBridge,
   chatBridge: telegramChatBridgeController,
+  taskStore: taskCapsuleStore,
 });
 const telegramTaskInboxController:RuntimeBoundary = createTelegramTaskInboxController({
   store: taskCapsuleStore,
@@ -3151,6 +3152,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   selectChatThread: (value) => nativeChatController.select(value),
   getChatState: () => nativeChatController.read(),
   sendChatText: (value) => nativeChatController.send(value),
+  startNewChat: (value) => nativeChatController.startNew(value),
   getStatus: async () => {
     const browser = equinoxBrowserBridge.snapshot();
     const browserSettingsByContext:Record<"agent"|"user",RuntimeBoundary> = { agent: null, user: null };

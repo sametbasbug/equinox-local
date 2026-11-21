@@ -578,23 +578,23 @@
       </section>
 
       <section id="section-chat" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro"><p>Chat with an existing conversation from your connected Chrome profile. Your messages stay in ChatGPT; recent visible conversation messages can also appear here.</p></div>
+        <div class="section-intro"><p>Start a new ChatGPT conversation or continue one already open in your connected Chrome. Equinox Browser keeps the session in Chrome.</p></div>
         <div class="native-chat-layout">
           <aside class="native-chat-threads" aria-label="ChatGPT conversations">
-            <div class="native-chat-heading"><strong>Conversations</strong><button id="native-chat-refresh" class="button secondary" type="button">Refresh</button></div>
+            <div class="native-chat-heading"><strong>Conversations</strong><div class="native-chat-heading-actions"><button id="native-chat-new" class="button primary" type="button">New Chat</button><button id="native-chat-refresh" class="button secondary" type="button">Refresh</button></div></div>
             <p id="native-chat-list-status" class="muted" role="status">Connect Equinox Browser in Chrome to see your conversations.</p>
             <div id="native-chat-thread-list" class="native-chat-thread-list" role="listbox" aria-label="Open ChatGPT conversations"></div>
           </aside>
           <div class="native-chat-main">
             <div class="native-chat-heading"><div class="native-chat-heading-titles"><strong id="native-chat-title">Choose a conversation</strong><span id="native-chat-task" class="muted" hidden></span></div><span id="native-chat-turn" class="muted" role="status">Not connected</span></div>
             <div id="native-chat-feed" class="native-chat-feed" role="log" aria-live="polite" aria-relevant="additions text">
-              <p class="native-chat-empty">Select a conversation already open in your Chrome profile. This preview cannot import earlier messages.</p>
+              <p class="native-chat-empty">Choose an open Chrome conversation, or select New Chat to begin one.</p>
             </div>
             <p id="native-chat-notice" class="native-chat-notice" role="status">ChatGPT conversations are controlled through Equinox Browser, not a separate API subscription.</p>
             <form id="native-chat-form" class="native-chat-compose">
               <label for="native-chat-text" class="sr-only">Message</label>
               <textarea id="native-chat-text" rows="3" maxlength="4000" placeholder="Write a message…" disabled></textarea>
-              <div class="native-chat-compose-actions"><span class="muted">Ctrl/Cmd + Enter to send</span><button id="native-chat-send" class="button primary" type="submit" disabled>Send</button></div>
+              <div class="native-chat-compose-actions"><span class="muted">Ctrl/Cmd + Enter to send</span><div class="native-chat-compose-buttons"><button id="native-chat-cancel-new" class="button secondary" type="button" hidden>Cancel</button><button id="native-chat-send" class="button primary" type="submit" disabled>Send</button></div></div>
             </form>
           </div>
         </div>

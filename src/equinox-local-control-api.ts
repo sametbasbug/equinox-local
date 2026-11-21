@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;
+  getChatThreads?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -310,6 +310,7 @@ export function createEquinoxLocalControlApi({
   selectChatThread = null,
   getChatState = null,
   sendChatText = null,
+  startNewChat = null,
   getTasks = null,
   getTask = null,
   updateTask = null,
@@ -486,6 +487,16 @@ export function createEquinoxLocalControlApi({
         if (!Number.isSafeInteger(body.tabId)||body.tabId<1||typeof body.conversationId!=="string"||!/^[A-Za-z0-9-]{8,160}$/u.test(body.conversationId)) throw badRequest("Invalid conversation identity.");
         const selected=await selectChatThread(body);
         state.mutationCount+=1;send(200,{ok:true,chat:selected});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/new") {
+        authorizeMutation();
+        if (typeof startNewChat !== "function") throw badRequest("New Chat is unavailable.");
+        const body=validateExactObject(await readBody(),["creationId","text"],"Native New Chat");
+        if (typeof body.creationId!=="string"||!/^nch-[a-f0-9-]{36}$/u.test(body.creationId)||
+            typeof body.text!=="string"||!body.text.trim()||body.text.length>1500||/[\r\n\0]/u.test(body.text))
+          throw badRequest("New Chat requires one initial line of up to 1500 characters and a unique creation id.");
+        const creation=await startNewChat(body);
+        state.mutationCount+=1;send(200,{ok:true,creation});return;
       }
       if (method === "POST" && pathname === "/api/v1/chat/send") {
         authorizeMutation();
@@ -1000,7 +1011,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

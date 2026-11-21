@@ -244,7 +244,7 @@ function validateTaskUpdateRequest(body) {
     }
     return body;
 }
-export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, selectChatThread = null, getChatState = null, sendChatText = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
+export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, selectChatThread = null, getChatState = null, sendChatText = null, startNewChat = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
     if (!configManager?.snapshot || !configManager?.replacePersisted) {
         throw new Error("Control Center API için configManager gerekli.");
     }
@@ -380,6 +380,19 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 const selected = await selectChatThread(body);
                 state.mutationCount += 1;
                 send(200, { ok: true, chat: selected });
+                return;
+            }
+            if (method === "POST" && pathname === "/api/v1/chat/new") {
+                authorizeMutation();
+                if (typeof startNewChat !== "function")
+                    throw badRequest("New Chat is unavailable.");
+                const body = validateExactObject(await readBody(), ["creationId", "text"], "Native New Chat");
+                if (typeof body.creationId !== "string" || !/^nch-[a-f0-9-]{36}$/u.test(body.creationId) ||
+                    typeof body.text !== "string" || !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text))
+                    throw badRequest("New Chat requires one initial line of up to 1500 characters and a unique creation id.");
+                const creation = await startNewChat(body);
+                state.mutationCount += 1;
+                send(200, { ok: true, creation });
                 return;
             }
             if (method === "POST" && pathname === "/api/v1/chat/send") {
@@ -914,7 +927,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
     ]);
     const UI_WRITE_PATHS = {
         POST: new Set([
-            "/api/v1/chat/select", "/api/v1/chat/send",
+            "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new",
             "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
             "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
             "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",
