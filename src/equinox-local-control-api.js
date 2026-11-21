@@ -9,7 +9,6 @@ const REPAIR_RECIPE_ID_SET = new Set(REPAIR_RECIPE_IDS);
 const CONTROL_CENTER_BACKGROUND_REFRESH_PATHS = new Set([
     "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state",
     "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
-    "/api/v1/chat/threads", "/api/v1/chat/state",
     "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
     "/api/v1/files/import-settings", "/api/v1/integrations/telegram/pair",
     "/api/v1/integrations/http-profiles", "/api/v1/config", "/api/v1/update",

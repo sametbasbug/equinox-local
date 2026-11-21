@@ -35,7 +35,7 @@ const DOWNLOAD_LIFECYCLE_VERSION = 1;
 const RANGE_VERSION = 2;
 const AUTO_CONTINUE_VERSION = 1;
 const FRESH_CHAT_RESUME_VERSION = 1;
-const CHAT_BRIDGE_VERSION = 9;
+const CHAT_BRIDGE_VERSION = 10;
 const MAX_PDF_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const HTML5_DRAG_INTERCEPT_TIMEOUT_MS = 1_500;
 const MAX_HTML5_DRAG_ITEMS = 32;
@@ -1754,6 +1754,58 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
     }
     finally {
         scheduleDetach(tabId, CONTINUATION_MUTATION_DETACH_MS);
+    }
+}
+// Only exact selected conversations can disclose bounded recent text to
+// the first-party Local Chat UI. No remote page HTML or arbitrary DOM API.
+async function readChatBridgeRecent({ tabId, conversationId } = {}) {
+    if (!Number.isSafeInteger(tabId) || Number(tabId) < 1 || typeof conversationId !== "string" || !/^[A-Za-z0-9-]{8,160}$/u.test(conversationId))
+        throw new Error("Chat history identity is invalid.");
+    const tab = await chooseTab(Number(tabId));
+    if (chatGptConversationIdentity(tab)?.conversationId !== conversationId)
+        throw new Error("Chat history conversation changed.");
+    const state = await chatGptContinuationState(Number(tabId));
+    if (state.conversationId !== conversationId)
+        throw new Error("Chat history observer identity changed.");
+    await requireDebuggableTab(Number(tabId));
+    await attachTab(Number(tabId));
+    try {
+        const result = await send(Number(tabId), "Runtime.evaluate", { expression: `(() => {
+      const turns=[...document.querySelectorAll('[data-turn-key]')],out=[];
+      let remaining=46000;
+      for(const turn of turns.slice(-12))for(const role of ['user','assistant']){
+        const unit=turn.querySelector('[data-chatgpt-search-unit-key$=":'+role+'"]');
+        if(!unit||remaining<=0)continue;
+        const content=unit.querySelector('[data-chatgpt-selection-message-id]')||unit;
+        const raw=String(content.innerText||content.textContent||'').trim();if(!raw)continue;
+        const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
+        const id=String(unit.getAttribute('data-chatgpt-search-message-ids')||turn.getAttribute('data-turn-key')||'').split(/\s+/u)[0].slice(0,200);
+        out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit});remaining-=limit;
+      }
+      if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
+        const role=unit.getAttribute('data-message-author-role');const raw=String(unit.innerText||unit.textContent||'').trim();
+        if(!raw||remaining<=0)continue;const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
+        out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit});remaining-=limit;
+      }
+      return{items:out.slice(-24),partial:turns.length>12||remaining<=0,observedTurns:turns.length};
+    })()`, returnByValue: true, silent: true });
+        if (result?.exceptionDetails)
+            throw new Error("Chat history inspection failed.");
+        const value = cdpObject(result?.result?.value);
+        if (!Array.isArray(value?.items) || value.items.length > 24)
+            throw new Error("Chat history payload is invalid.");
+        const items = value.items.map((item) => {
+            if (!item || !["user", "assistant"].includes(item.role) || typeof item.text !== "string" || item.text.length > 14000 || typeof item.id !== "string" || item.id.length > 220)
+                throw new Error("Chat history message is invalid.");
+            return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true };
+        });
+        const after = await chooseTab(Number(tabId));
+        if (chatGptConversationIdentity(after)?.conversationId !== conversationId)
+            throw new Error("Chat history tab changed during read.");
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, items, partial: value.partial === true, observedTurns: Number(value.observedTurns) || 0 };
+    }
+    finally {
+        scheduleDetach(Number(tabId), CONTINUATION_MUTATION_DETACH_MS);
     }
 }
 async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, previousAssistantTurnKey, } = {}) {
@@ -8118,6 +8170,7 @@ const COMMANDS = {
     "chat_bridge.inspect": inspectChatBridgeState,
     "chat_bridge.deliver": deliverChatBridgeMessage,
     "chat_bridge.read_final": readChatBridgeFinalResponse,
+    "chat_bridge.recent": readChatBridgeRecent,
     "resume.create": createFreshChatResume,
     "settings.status": popupStatus,
     "settings.update": updateBrowserSettings,

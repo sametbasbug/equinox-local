@@ -45,6 +45,12 @@ The Browser extension's CDP Auto Continue and Chat Bridge paths and the continua
 
 The 1.2.3 Chrome Web Store ZIP is prepared for the maintainer to submit. Until Chrome Web Store approval, only the local unpacked development extension has the fix. This does not guarantee that all future ChatGPT DOM variants will preserve the same behavior.
 
+## Bounded history slice (2026-11-21)
+
+The native Chat pane can import up to **12 most recently rendered turns / 24 text messages**, scoped to an explicitly selected exact ChatGPT browser instance and conversation. Equinox Browser **1.2.4** advertises `chatBridge:10` and adds the read-only `chat_bridge.recent` operation. It returns only text, role, bounded ID and truncation flags from the current DOM, never cookies, HTML, unbounded page data, hidden tokens or tool invocation privileges. The payload is capped at 3,500 Unicode characters per message and 46,000 total code points; legacy role nodes have a limited fallback. Before and after reading, the extension rechecks the selected conversation ID. The shared Local bridge checks instance identity, exact tab and v10 capability before importing. If Chrome is older, this import fails gracefully and local user-initiated sends can still use v9.
+
+The user browser may virtualize old turns, so this is *recent rendered history*, not a complete cloud archive. The native UI labels missing historical data and retains its independently confirmed local sending receipts. No chatgpt.com embedding. Future intermediate updates/tool cards require separately proven DOM semantics rather than inventing cards.
+
 ## Coarse live generation state
 
 The existing, read-only Chat Bridge inspection exposes `generationActive` from Equinox Browser's own continuation observer. The native Chat turn state uses this as a **coarse in-progress indicator**, including when generation begins outside the native composer. It does not pretend to stream partial assistant text, tools or earlier history: the installed Browser extension's `chat_bridge.inspect` is deliberately text-free, and `chat_bridge.read_final` exposes only an exact completed assistant turn. True Codex-style transcript/history and intermediate tool cards require a separately admitted, bounded Browser extension read capability plus Chrome Web Store update, not a second DOM scraping engine or a fake activity feed.

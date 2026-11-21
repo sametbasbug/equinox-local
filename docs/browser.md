@@ -6,7 +6,7 @@
 
 **Source candidate 1.2.2:** fixes trusted Send focus for CLI/Telegram Chat Bridge. The ZIP is prepared for maintainer-led CWS review; it is not an installed Store update until publication.
 
-**Source candidate 1.2.3 (not yet submitted):** fixes a modern ChatGPT page that renders both a hidden and a visible contenteditable composer. The previous Chat Bridge delivery receipt was correctly marked ambiguous and never replayed. The new bridge and Auto Continue composer focus select exactly one connected, nonzero-size, visible editor; no unique visible editor means no delivery. The ChatGPT continuation observer applies the same readiness rule. A CWS review/upload and live validated update are still required before calling 1.2.3 public.
+**Source candidate 1.2.3 (superseded by 1.2.4):** fixes a modern ChatGPT page that renders both a hidden and a visible contenteditable composer. The previous Chat Bridge delivery receipt was correctly marked ambiguous and never replayed. The new bridge and Auto Continue composer focus select exactly one connected, nonzero-size, visible editor; no unique visible editor means no delivery. The ChatGPT continuation observer applies the same readiness rule. A CWS review/upload and live validated update are still required before calling 1.2.3 public.
 
 Equinox Browser is the only browser-automation transport exposed by Equinox Local.
 
@@ -74,3 +74,5 @@ npm run browser:package
 ```
 
 Generated ZIP files are release artifacts and are intentionally not committed to Git.
+
+**Source candidate 1.2.4 (not yet submitted):** adds `chat_bridge.recent` v10, a read-only, exact-conversation scoped recent transcript projection for the first-party Equinox Local Chat. This reads only the currently rendered user/assistant text within the selected Chrome tab, at most 12 turns, 24 messages, ~46,000 characters total, and no HTML, arbitrary page content or cookies. The existing v9 send/final capabilities remain backward compatible. 1.2.4 incorporates the 1.2.3 hidden composer focus fix. CWS submission/review remains maintainer-operated.

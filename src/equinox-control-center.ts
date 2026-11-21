@@ -493,21 +493,21 @@ function renderNativeChatState(chat:UiRemoteData) {
   const items=Array.isArray(chat.items)?chat.items:[];
   if(!items.length){
     const note=document.createElement("p");note.className="native-chat-empty";
-    note.textContent=chatActive?"Only messages sent from this window appear here. Previous ChatGPT conversation history stays in your browser.":"Select a conversation already open in Your Browser.";
+    note.textContent=chatActive?"No previous conversation messages are available. Messages sent here will appear below.":"Select a conversation already open in Your Browser.";
     feed.append(note);
   }else for(const item of items){
     const bubble=document.createElement("div");
     bubble.className="native-chat-message"+(item.role==="user"?" is-user":"")+(item.status==="uncertain"?" is-uncertain":"");
     const label=document.createElement("small");label.textContent=item.role==="user"?"You":"ChatGPT";
     if(item.status==="uncertain")label.textContent+=" · Delivery uncertain";
-    if(item.truncated===true)label.textContent+=" · Partial response";
+    if(item.truncated===true)label.textContent+=" · Truncated";
     bubble.append(label,document.createTextNode(String(item.text||"").slice(0,25000)));
     feed.append(bubble);
   }
   if(scrolledNearBottom)feed.scrollTop=feed.scrollHeight;
   if(chat.notice)setNativeChatNotice(String(chat.notice).slice(0,190));
   else if(chatTurn==="generating")setNativeChatNotice("ChatGPT is generating. Keep this conversation open in Chrome; delivery will not be retried.");
-  else if(chatActive)setNativeChatNotice("This view shows only messages sent here. Your Browser keeps the ChatGPT session and history.");
+  else if(chatActive)setNativeChatNotice(chat.historyCount?`Showing ${chat.historyCount} recent messages from ChatGPT. Earlier turns may not be loaded.`:"Your Browser keeps the ChatGPT session. Older turns may not be loaded.");
 }
 async function refreshNativeChat(withThreads=false) {
   if(state.activeSection!=="chat"||state.setupMode||chatRefreshing)return;

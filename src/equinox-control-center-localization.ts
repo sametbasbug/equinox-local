@@ -17,7 +17,7 @@ const TR_UI = Object.freeze({
   "Send": "Gönder",
   "Write a message…": "Bir mesaj yazın…",
   "Ctrl/Cmd + Enter to send": "Göndermek için Ctrl/Cmd + Enter",
-  "Chat with an existing conversation from your connected Chrome profile. Your messages stay in ChatGPT; only messages sent here appear in this preview.": "Bağlı Chrome profilinizdeki mevcut bir konuşmada sohbet edin. Mesajlarınız ChatGPT’de kalır; bu önizlemede yalnızca buradan gönderilen mesajlar görünür.",
+  "Chat with an existing conversation from your connected Chrome profile. Your messages stay in ChatGPT; recent visible conversation messages can also appear here.": "Bağlı Chrome profilinizdeki mevcut bir konuşmada sohbet edin. Mesajlarınız ChatGPT’de kalır; bu önizlemede yalnızca buradan gönderilen mesajlar görünür.",
   "Connect Equinox Browser to show available conversations.": "Konuşmaları görüntülemek için Equinox Browser’ı bağlayın.",
   "Select a conversation already open in your Chrome profile. This preview cannot import earlier messages.": "Chrome profilinizde açık olan bir konuşmayı seçin. Bu önizleme eski mesajları içe aktaramıyor.",
   "ChatGPT conversations are controlled through Equinox Browser, not a separate API subscription.": "ChatGPT konuşmaları ayrı bir API aboneliğiyle değil Equinox Browser üzerinden yönetilir.",

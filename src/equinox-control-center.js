@@ -469,7 +469,7 @@ function renderNativeChatState(chat) {
     if (!items.length) {
         const note = document.createElement("p");
         note.className = "native-chat-empty";
-        note.textContent = chatActive ? "Only messages sent from this window appear here. Previous ChatGPT conversation history stays in your browser." : "Select a conversation already open in Your Browser.";
+        note.textContent = chatActive ? "No previous conversation messages are available. Messages sent here will appear below." : "Select a conversation already open in Your Browser.";
         feed.append(note);
     }
     else
@@ -481,7 +481,7 @@ function renderNativeChatState(chat) {
             if (item.status === "uncertain")
                 label.textContent += " · Delivery uncertain";
             if (item.truncated === true)
-                label.textContent += " · Partial response";
+                label.textContent += " · Truncated";
             bubble.append(label, document.createTextNode(String(item.text || "").slice(0, 25000)));
             feed.append(bubble);
         }
@@ -492,7 +492,7 @@ function renderNativeChatState(chat) {
     else if (chatTurn === "generating")
         setNativeChatNotice("ChatGPT is generating. Keep this conversation open in Chrome; delivery will not be retried.");
     else if (chatActive)
-        setNativeChatNotice("This view shows only messages sent here. Your Browser keeps the ChatGPT session and history.");
+        setNativeChatNotice(chat.historyCount ? `Showing ${chat.historyCount} recent messages from ChatGPT. Earlier turns may not be loaded.` : "Your Browser keeps the ChatGPT session. Older turns may not be loaded.");
 }
 async function refreshNativeChat(withThreads = false) {
     if (state.activeSection !== "chat" || state.setupMode || chatRefreshing)

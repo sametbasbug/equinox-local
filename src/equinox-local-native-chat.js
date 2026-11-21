@@ -9,6 +9,9 @@ function safeTitle(value) { return typeof value === "string" ? value.replace(/[\
 export function createNativeChatController({ browserBridge, chatBridge }) {
     let selected = null;
     let messages = [];
+    let history = [];
+    let historyPartial = false;
+    let historyNotice = null;
     let pending = null;
     let sending = false;
     let blocked = false;
@@ -70,13 +73,31 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
             invalid("Conversation identity changed during selection.");
         next.canonicalUrl = source.url;
         await chatBridge.inspectTurnIdentity({ binding: next });
-        if (selected?.conversationId !== next.conversationId || selected?.browserInstanceId !== next.browserInstanceId) {
+        const changed = selected?.conversationId !== next.conversationId || selected?.browserInstanceId !== next.browserInstanceId;
+        if (changed) {
             messages = [];
             pending = null;
             blocked = false;
             attempts.clear();
+            history = [];
+            historyPartial = false;
+            historyNotice = null;
         }
         selected = next;
+        if (changed) {
+            try {
+                const value = await chatBridge.readRecent?.({ binding: next });
+                if (value && Array.isArray(value.items)) {
+                    history = value.items.slice(-24).map((item) => ({ id: String(item.id).slice(0, 220), role: item.role, text: String(item.text).slice(0, 14000), status: "complete", truncated: item.truncated === true }));
+                    historyPartial = value.partial === true;
+                }
+                else
+                    historyNotice = "Recent conversation history is not available with this Browser version.";
+            }
+            catch {
+                historyNotice = "Recent history unavailable. You can still send messages in this conversation.";
+            }
+        }
         return await read();
     };
     const read = async () => {
@@ -119,7 +140,8 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
                 turn = "disconnected";
             notice = error instanceof Error ? error.message : "Browser conversation is unavailable.";
         }
-        return { selected: { conversationId: selected.conversationId, tabId: selected.tabId }, items: messages, turn, sending, blocked, notice, limitedHistory: true };
+        return { selected: { conversationId: selected.conversationId, tabId: selected.tabId }, items: [...history, ...messages].slice(-54),
+            turn, sending, blocked, notice: notice || historyNotice, limitedHistory: historyPartial || !history.length, historyCount: history.length };
     };
     const send = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))

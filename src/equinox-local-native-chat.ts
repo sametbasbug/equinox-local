@@ -8,6 +8,7 @@ type ChatBridge = {
   inspectTurnIdentity:(args:{binding:Binding})=>Promise<any>;
   deliverText:(args:{binding:Binding;deliveryId:string;text:string})=>Promise<any>;
   readFinal:(args:{binding:Binding;userEpoch:string;previousAssistantTurnKey:string|null})=>Promise<any>;
+  readRecent?:(args:{binding:Binding})=>Promise<any>;
 };
 const MAX_MESSAGES = 30;
 const MAX_TRANSCRIPT_CHARS = 96_000;
@@ -20,6 +21,9 @@ function safeTitle(value:unknown):string {return typeof value==="string"?value.r
 export function createNativeChatController({browserBridge,chatBridge}:{browserBridge:BrowserBridge;chatBridge:ChatBridge}) {
   let selected:Binding|null=null;
   let messages:Message[]=[];
+  let history:Message[]=[];
+  let historyPartial=false;
+  let historyNotice:string|null=null;
   let pending:{userEpoch:string;previousAssistantTurnKey:string|null;deliveryId:string}|null=null;
   let sending=false;
   let blocked=false;
@@ -69,8 +73,20 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
     if(!source?.url)invalid("Conversation identity changed during selection.");
     next.canonicalUrl=source.url;
     await chatBridge.inspectTurnIdentity({binding:next});
-    if(selected?.conversationId!==next.conversationId||selected?.browserInstanceId!==next.browserInstanceId){messages=[];pending=null;blocked=false;attempts.clear();}
+    const changed=selected?.conversationId!==next.conversationId||selected?.browserInstanceId!==next.browserInstanceId;
+    if(changed){
+      messages=[];pending=null;blocked=false;attempts.clear();history=[];historyPartial=false;historyNotice=null;
+    }
     selected=next;
+    if(changed){
+      try{
+        const value=await chatBridge.readRecent?.({binding:next});
+        if(value&&Array.isArray(value.items)){
+          history=value.items.slice(-24).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),status:"complete",truncated:item.truncated===true}));
+          historyPartial=value.partial===true;
+        }else historyNotice="Recent conversation history is not available with this Browser version.";
+      }catch{historyNotice="Recent history unavailable. You can still send messages in this conversation.";}
+    }
     return await read();
   };
   const read=async()=>{
@@ -100,7 +116,8 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
       else turn="disconnected";
       notice=error instanceof Error?error.message:"Browser conversation is unavailable.";
     }
-    return{selected:{conversationId:selected.conversationId,tabId:selected.tabId},items:messages,turn,sending,blocked,notice,limitedHistory:true};
+    return{selected:{conversationId:selected.conversationId,tabId:selected.tabId},items:[...history,...messages].slice(-54),
+      turn,sending,blocked,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
   };
   const send=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid chat delivery request.");

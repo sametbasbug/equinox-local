@@ -47,6 +47,7 @@ type BridgeController = {
   inspectTurnIdentity: (args?: {binding?: Binding}) => Promise<unknown>;
   deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string}) => Promise<unknown>;
   readFinal: (args?: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null}) => Promise<unknown>;
+  readRecent: (args?: {binding?: Binding}) => Promise<unknown>;
   startTaskChat: (args?: {taskId?: string; checkpointRevision?: number; initialMessage?: string}) => Promise<unknown>;
 };
 type CodedError = Error & {code: string; candidateTabId?: number};
@@ -536,5 +537,18 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     });
   };
 
-  return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, startTaskChat });
+  const readRecent = async ({ binding }: {binding?: Binding}={}) => {
+    const {binding:target}=await inspectBinding(binding,10,{allowMissingUserEpoch:true,allowMissingAssistantTurnKey:true});
+    const value=await callContext(target.browserContext,"chat_bridge.recent",{
+      tabId:target.tabId,conversationId:target.conversationId,
+    },10_000) as (BrowserResult & {items?:unknown;partial?:unknown}) | null;
+    if(!Array.isArray(value?.items)||value.items.length>24)throw new Error("Chat Bridge recent transcript is invalid.");
+    const items=value.items.map((item:any)=>{
+      if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat Bridge transcript message is invalid.");
+      return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true};
+    });
+    return Object.freeze({items,partial:value.partial===true,tabId:target.tabId});
+  };
+
+  return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, startTaskChat });
 }
