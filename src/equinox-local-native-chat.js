@@ -108,6 +108,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             return { selected: null, items: [], turn: "unbound", blocked: false, limitedHistory: true };
         let turn = "idle";
         let notice = null;
+        let preview = null;
         try {
             const inspected = await chatBridge.inspectTurnIdentity({ binding: selected });
             const current = inspected?.binding;
@@ -131,6 +132,17 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 else
                     turn = "generating";
             }
+            // Preview is ephemeral. Only read it while the browser observer reports
+            // active generation, and never append it to completed transcript items.
+            if (turn === "generating" && inspected?.generationActive === true &&
+                Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) >= 11 &&
+                typeof inspected.userEpoch === "string" && chatBridge.readLive) {
+                const live = await chatBridge.readLive({ binding: selected, userEpoch: inspected.userEpoch });
+                if (live?.status === "generating" && typeof live.text === "string" && live.text)
+                    preview = { text: live.text.slice(0, 3200), truncated: live.truncated === true || live.text.length > 3200 };
+                else if (live?.status === "drifted")
+                    throw Object.assign(new Error("Live Chat turn identity changed."), { code: "CHAT_BRIDGE_DRIFTED" });
+            }
         }
         catch (error) {
             const code = error?.code;
@@ -149,7 +161,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             notice = error instanceof Error ? error.message : "Browser conversation is unavailable.";
         }
         return { selected: { conversationId: selected.conversationId, tabId: selected.tabId, browserInstanceId: selected.browserInstanceId }, items: [...history, ...messages].slice(-54),
-            turn, sending, blocked, notice: notice || historyNotice, limitedHistory: historyPartial || !history.length, historyCount: history.length };
+            turn, sending, blocked, preview, notice: notice || historyNotice, limitedHistory: historyPartial || !history.length, historyCount: history.length };
     };
     const send = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
@@ -257,8 +269,10 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 if (typeof opened.userEpoch === "string" && opened.userEpoch) {
                     pending = { userEpoch: opened.userEpoch, previousAssistantTurnKey: null, deliveryId: messageId };
                 }
-                else
-                    historyNotice = "New Chat opened. The first response can be viewed in Chrome until the turn identity becomes available.";
+                else {
+                    blocked = true;
+                    historyNotice = "New Chat opened, but its first response identity is not yet confirmed. Inspect the conversation in Chrome before sending anything else.";
+                }
                 return { confirmed: true, taskId: newTaskId, chat: await read() };
             }
             catch (error) {

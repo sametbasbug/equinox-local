@@ -557,5 +557,20 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     return Object.freeze({items,partial:value.partial===true,tabId:target.tabId});
   };
 
-  return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, startTaskChat });
+  const readLive = async ({binding,userEpoch}:{binding?:Binding;userEpoch?:string}={}) => {
+    if(typeof userEpoch!=="string"||userEpoch.length<1||userEpoch.length>200)
+      throw new Error("Chat Bridge live preview user epoch is invalid.");
+    const {binding:target,state}=await inspectBinding(binding,11,{allowMissingUserEpoch:true,allowMissingAssistantTurnKey:true});
+    if(state?.userEpoch!==userEpoch)return Object.freeze({status:"drifted",text:""});
+    if(!state?.generationActive)return Object.freeze({status:"idle",text:""});
+    const result=await callContext(target.browserContext,"chat_bridge.live",{
+      tabId:target.tabId,conversationId:target.conversationId,userEpoch,
+    },10_000) as (BrowserResult & {status?:unknown;text?:unknown;truncated?:unknown}) | null;
+    if(!result||!["drifted","idle","generating"].includes(result.status as string)||
+      (result.text!==undefined&&(typeof result.text!=="string"||[...result.text].length>3200)))
+      throw new Error("Chat Bridge live preview payload is invalid.");
+    return Object.freeze({status:result.status,text:typeof result.text==="string"?result.text:"",truncated:result.truncated===true});
+  };
+
+  return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, readLive, startTaskChat });
 }

@@ -35,7 +35,7 @@ const DOWNLOAD_LIFECYCLE_VERSION = 1;
 const RANGE_VERSION = 2;
 const AUTO_CONTINUE_VERSION = 1;
 const FRESH_CHAT_RESUME_VERSION = 1;
-const CHAT_BRIDGE_VERSION = 10;
+const CHAT_BRIDGE_VERSION = 11;
 const MAX_PDF_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const HTML5_DRAG_INTERCEPT_TIMEOUT_MS = 1_500;
 const MAX_HTML5_DRAG_ITEMS = 32;
@@ -1810,6 +1810,57 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
     }
     finally {
         scheduleDetach(Number(tabId), CONTINUATION_MUTATION_DETACH_MS);
+    }
+}
+// A transient, strictly read-only partial assistant preview. It never
+// represents a completed answer, tool result, or provider stream event.
+async function readChatBridgeLive({ tabId, conversationId, userEpoch } = {}) {
+    if (!Number.isSafeInteger(tabId) || Number(tabId) < 1 || typeof conversationId !== "string" ||
+        !/^[A-Za-z0-9-]{8,160}$/u.test(conversationId) || typeof userEpoch !== "string" ||
+        userEpoch.length < 1 || userEpoch.length > 200)
+        throw new Error("Live Chat preview identity is invalid.");
+    const selectedId = Number(tabId);
+    const before = await chooseTab(selectedId);
+    if (before.pendingUrl || chatGptConversationIdentity(before)?.conversationId !== conversationId)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
+    const state = await chatGptContinuationState(selectedId);
+    if (state.conversationId !== conversationId || state.userEpoch !== userEpoch)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
+    if (!state.generationActive)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "idle" };
+    if (!state.assistantTurnKey)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "generating", text: "" };
+    await requireDebuggableTab(selectedId);
+    await attachTab(selectedId);
+    try {
+        const result = await send(selectedId, "Runtime.evaluate", { expression: `(() => {
+      const key=${JSON.stringify(state.assistantTurnKey)};
+      const modern=[...document.querySelectorAll('[data-turn-key]')].find(t=>t.getAttribute('data-turn-key')===key);
+      const modernAssistant=modern?.querySelector('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]');
+      const legacy=[...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')].find(t=>t.getAttribute('data-message-id')===key);
+      const root=modernAssistant||legacy;
+      if(!root)return{text:"",truncated:false};
+      const content=modernAssistant?(modernAssistant.querySelector('[data-chatgpt-selection-message-id]')||modernAssistant):root;
+      const chars=[...String(content.innerText||content.textContent||'').trim()];
+      return{text:chars.slice(0,3200).join(''),truncated:chars.length>3200};
+    })()`, returnByValue: true, silent: true });
+        if (result?.exceptionDetails)
+            throw new Error("Live Chat preview read failed.");
+        const item = cdpObject(result?.result?.value);
+        if (!item || typeof item.text !== "string" || [...item.text].length > 3200)
+            throw new Error("Live Chat preview payload is invalid.");
+        const after = await chooseTab(selectedId);
+        if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
+        const updated = await chatGptContinuationState(selectedId);
+        if (updated.conversationId !== conversationId || updated.userEpoch !== userEpoch)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
+        if (!updated.generationActive)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "idle" };
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "generating", text: item.text, truncated: item.truncated === true };
+    }
+    finally {
+        scheduleDetach(selectedId, CONTINUATION_MUTATION_DETACH_MS);
     }
 }
 async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, previousAssistantTurnKey, } = {}) {
@@ -8175,6 +8226,7 @@ const COMMANDS = {
     "chat_bridge.deliver": deliverChatBridgeMessage,
     "chat_bridge.read_final": readChatBridgeFinalResponse,
     "chat_bridge.recent": readChatBridgeRecent,
+    "chat_bridge.live": readChatBridgeLive,
     "resume.create": createFreshChatResume,
     "settings.status": popupStatus,
     "settings.update": updateBrowserSettings,

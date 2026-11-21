@@ -481,12 +481,14 @@ function renderNativeChatState(chat) {
     $("native-chat-task").hidden = !relatedTask;
     const feed = $("native-chat-feed");
     const items = Array.isArray(chat.items) ? chat.items : [];
-    const signature = JSON.stringify({ selected: chatActive?.conversationId || null, items });
+    const preview = chatTurn === "generating" && typeof chat.preview?.text === "string" && chat.preview.text
+        ? { text: chat.preview.text.slice(0, 3200), truncated: chat.preview.truncated === true } : null;
+    const signature = JSON.stringify({ selected: chatActive?.conversationId || null, items, preview });
     if (signature !== chatFeedRenderSignature) {
         chatFeedRenderSignature = signature;
         const scrolledNearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 95;
         feed.replaceChildren();
-        if (!items.length) {
+        if (!items.length && !preview) {
             const note = document.createElement("p");
             note.className = "native-chat-empty";
             note.textContent = chatActive ? "No previous conversation messages are available. Messages sent here will appear below." : "Select a conversation already open in Your Browser.";
@@ -505,6 +507,15 @@ function renderNativeChatState(chat) {
                 bubble.append(label, document.createTextNode(String(item.text || "").slice(0, 25000)));
                 feed.append(bubble);
             }
+        if (preview) {
+            const live = document.createElement("div");
+            live.className = "native-chat-message is-preview";
+            live.setAttribute("aria-live", "off");
+            const label = document.createElement("small");
+            label.textContent = localizeUiText("ChatGPT · Live preview") + (preview.truncated ? " · Truncated" : "");
+            live.append(label, document.createTextNode(preview.text));
+            feed.append(live);
+        }
         if (scrolledNearBottom)
             feed.scrollTop = feed.scrollHeight;
     }

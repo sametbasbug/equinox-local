@@ -18,6 +18,7 @@ const TR_UI = Object.freeze({
   "Write a message…": "Bir mesaj yazın…",
   "Ctrl/Cmd + Enter to send": "Göndermek için Ctrl/Cmd + Enter",
   "New Chat": "Yeni Sohbet",
+  "ChatGPT · Live preview": "ChatGPT · Canlı önizleme",
   "Start a new ChatGPT conversation or continue one already open in your connected Chrome. Equinox Browser keeps the session in Chrome.": "Yeni bir ChatGPT konuşması başlatın veya bağlı Chrome’da zaten açık olan bir konuşmaya devam edin. Oturum Chrome’da Equinox Browser tarafından yönetilir.",
   "Choose an open Chrome conversation, or select New Chat to begin one.": "Açık bir Chrome konuşması seçin veya Yeni Sohbet ile konuşma başlatın.",
   "Connect Equinox Browser to show available conversations.": "Konuşmaları görüntülemek için Equinox Browser’ı bağlayın.",

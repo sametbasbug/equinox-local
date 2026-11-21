@@ -9,6 +9,7 @@ type ChatBridge = {
   deliverText:(args:{binding:Binding;deliveryId:string;text:string})=>Promise<any>;
   readFinal:(args:{binding:Binding;userEpoch:string;previousAssistantTurnKey:string|null})=>Promise<any>;
   readRecent?:(args:{binding:Binding})=>Promise<any>;
+  readLive?:(args:{binding:Binding;userEpoch:string})=>Promise<any>;
   startTaskChat?:(args:{taskId:string;checkpointRevision:number;initialMessage:string})=>Promise<any>;
 };
 type TaskStore = {
@@ -100,7 +101,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   };
   const read=async()=>{
     if(!selected)return{selected:null,items:[],turn:"unbound",blocked:false,limitedHistory:true};
-    let turn="idle";let notice:string|null=null;
+    let turn="idle";let notice:string|null=null;let preview:{text:string;truncated:boolean}|null=null;
     try{
       const inspected=await chatBridge.inspectTurnIdentity({binding:selected});
       const current=inspected?.binding as Binding|undefined;
@@ -121,6 +122,16 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           turn="complete";
         }else turn="generating";
       }
+      // Preview is ephemeral. Only read it while the browser observer reports
+      // active generation, and never append it to completed transcript items.
+      if(turn==="generating"&&inspected?.generationActive===true&&
+         Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)>=11&&
+         typeof inspected.userEpoch==="string"&&chatBridge.readLive){
+        const live=await chatBridge.readLive({binding:selected,userEpoch:inspected.userEpoch});
+        if(live?.status==="generating"&&typeof live.text==="string"&&live.text)
+          preview={text:live.text.slice(0,3200),truncated:live.truncated===true||live.text.length>3200};
+        else if(live?.status==="drifted")throw Object.assign(new Error("Live Chat turn identity changed."),{code:"CHAT_BRIDGE_DRIFTED"});
+      }
     }catch(error){
       const code=(error as {code?:string})?.code;
       if(code==="CHAT_BRIDGE_DRIFTED"||code==="CHAT_BRIDGE_READ_FAILED"){
@@ -132,7 +143,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       notice=error instanceof Error?error.message:"Browser conversation is unavailable.";
     }
     return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-54),
-      turn,sending,blocked,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
+      turn,sending,blocked,preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
   };
   const send=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid chat delivery request.");
@@ -217,7 +228,10 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         appendMessage({id:messageId,role:"user",text:(body.text as string).trim(),status:"sent"});
         if(typeof opened.userEpoch==="string"&&opened.userEpoch){
           pending={userEpoch:opened.userEpoch,previousAssistantTurnKey:null,deliveryId:messageId};
-        }else historyNotice="New Chat opened. The first response can be viewed in Chrome until the turn identity becomes available.";
+        }else {
+          blocked=true;
+          historyNotice="New Chat opened, but its first response identity is not yet confirmed. Inspect the conversation in Chrome before sending anything else.";
+        }
         return{confirmed:true,taskId:newTaskId,chat:await read()};
       }catch(error){
         if(taskId)blocked=true; // Persisted evidence; never silently replay the opener.
