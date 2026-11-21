@@ -455,6 +455,10 @@ let chatThreadRenderSignature = "";
 let chatFeedConversation = null;
 let chatMessageSignatures = [];
 let chatPreviewSignature = "";
+let chatTaskRelated = null;
+let chatTaskPanelIdentity = null;
+let chatTaskPanelGeneration = 0;
+let chatTaskPanelLoading = false;
 const chatComposer = () => document.getElementById("native-chat-text");
 function setNativeChatCopy(id, message) {
     const element = $(id);
@@ -758,6 +762,100 @@ function renderNativeChatTranscript(items, preview) {
         feed.scrollTop = feed.scrollHeight;
     }
 }
+function closeNativeChatTaskPanel() {
+    chatTaskPanelIdentity = null;
+    chatTaskPanelGeneration++;
+    chatTaskPanelLoading = false;
+    $("native-chat-task-reload").removeAttribute("aria-disabled");
+    $("native-chat-task-panel").hidden = true;
+    $("native-chat-task-open").setAttribute("aria-expanded", "false");
+}
+function renderNativeChatTaskDetails(task) {
+    const content = $("native-chat-task-panel-content");
+    const section = (title, value) => {
+        const heading = document.createElement("h3");
+        heading.textContent = localizeUiText(title);
+        const paragraph = document.createElement("p");
+        paragraph.textContent = value;
+        content.append(heading, paragraph);
+    };
+    const steps = (title, entries, { tail = false } = {}) => {
+        const heading = document.createElement("h3");
+        heading.textContent = localizeUiText(title) + " · " + entries.length;
+        content.append(heading);
+        if (!entries.length) {
+            const empty = document.createElement("p");
+            empty.className = "native-chat-task-meta";
+            empty.textContent = localizeUiText("No steps recorded yet.");
+            content.append(empty);
+            return;
+        }
+        const visible = tail ? entries.slice(-8) : entries.slice(0, 8);
+        const list = document.createElement(tail ? "ul" : "ol");
+        for (const line of visible) {
+            const item = document.createElement("li");
+            item.textContent = line;
+            list.append(item);
+        }
+        content.append(list);
+        if (visible.length < entries.length) {
+            const truncated = document.createElement("p");
+            truncated.className = "native-chat-task-meta";
+            truncated.textContent = localizeUiText("Showing 8 of " + entries.length + " steps. See Tasks for the full history.");
+            content.append(truncated);
+        }
+    };
+    content.replaceChildren();
+    const title = document.createElement("strong");
+    title.textContent = String(task.title || task.taskId || "Task").slice(0, 200);
+    content.append(title);
+    const meta = document.createElement("p");
+    meta.className = "native-chat-task-meta";
+    const updated = typeof task.updatedAt === "string" && Number.isFinite(Date.parse(task.updatedAt))
+        ? " · " + new Date(task.updatedAt).toLocaleString(localeForLanguage(state.language)) : "";
+    meta.textContent = [String(task.status || "unknown"), "Checkpoint " + String(task.checkpointRevision || 0)].join(" · ") + updated;
+    content.append(meta);
+    const objective = String(task.objective || "").trim();
+    if (objective)
+        section("Objective", objective);
+    const next = Array.isArray(task.next) ? task.next.filter((line) => typeof line === "string").map(String) : [];
+    const completed = Array.isArray(task.completed) ? task.completed.filter((line) => typeof line === "string").map(String) : [];
+    steps("Next steps", next);
+    steps("Completed", completed, { tail: true });
+}
+async function loadNativeChatTaskPanel() {
+    const related = chatTaskRelated;
+    if (!related || (chatTaskPanelLoading && chatTaskPanelIdentity === related.identity))
+        return;
+    const generation = ++chatTaskPanelGeneration;
+    chatTaskPanelIdentity = related.identity;
+    $("native-chat-task-panel").hidden = false;
+    $("native-chat-task-open").setAttribute("aria-expanded", "true");
+    setNativeChatCopy("native-chat-task-panel-content", "Loading Task Capsule…");
+    chatTaskPanelLoading = true;
+    $("native-chat-task-reload").setAttribute("aria-disabled", "true");
+    try {
+        const result = await requestJson("/api/v1/tasks/" + encodeURIComponent(related.taskId));
+        if (generation !== chatTaskPanelGeneration || chatTaskPanelIdentity !== related.identity)
+            return;
+        const task = result.task;
+        if (!task || task.taskId !== related.taskId || task.chatBinding?.browserContext !== "user"
+            || !chatActive || task.chatBinding?.tabId !== chatActive.tabId
+            || chatTaskRelated?.identity !== related.identity)
+            throw new Error("Task Capsule binding changed. Close this panel and reopen it.");
+        renderNativeChatTaskDetails(task);
+    }
+    catch (error) {
+        if (generation === chatTaskPanelGeneration)
+            setNativeChatCopy("native-chat-task-panel-content", nativeChatErrorMessage(error));
+    }
+    finally {
+        if (generation === chatTaskPanelGeneration) {
+            chatTaskPanelLoading = false;
+            $("native-chat-task-reload").removeAttribute("aria-disabled");
+        }
+    }
+}
 function renderNativeChatState(chat) {
     if (!chat || typeof chat !== "object" || chatNewDraft)
         return;
@@ -786,6 +884,12 @@ function renderNativeChatState(chat) {
     setNativeChatCopy("native-chat-task", taskText);
     $("native-chat-task").hidden = !relatedTask;
     $("native-chat-task").title = taskText;
+    const taskIdentity = relatedTask && key
+        ? [key, String(chatActive.tabId), String(relatedTask.taskId)].join(":") : null;
+    chatTaskRelated = taskIdentity ? { taskId: String(relatedTask.taskId), identity: taskIdentity } : null;
+    $("native-chat-task-open").hidden = !chatTaskRelated;
+    if (chatTaskPanelIdentity && chatTaskPanelIdentity !== taskIdentity)
+        closeNativeChatTaskPanel();
     const preview = chatTurn === "generating" && typeof chat.preview?.text === "string" && chat.preview.text
         ? { role: "assistant", text: chat.preview.text.slice(0, 3200), live: true, truncated: chat.preview.truncated === true } : null;
     renderNativeChatTranscript(Array.isArray(chat.items) ? chat.items : [], preview);
@@ -1031,6 +1135,8 @@ function switchSection(section, { remember = false } = {}) {
     const changed = state.activeSection !== section;
     state.activeSection = section;
     const chatWorkspace = section === "chat";
+    if (!chatWorkspace)
+        closeNativeChatTaskPanel();
     document.body.classList.toggle("chat-workspace-active", chatWorkspace);
     const agentControl = $("agent-control-button");
     const agentActions = chatWorkspace ? $("native-chat-agent-control") : $("restart-runtime-button").parentElement;
@@ -4518,6 +4624,23 @@ function bindEvents() {
     $("native-chat-refresh").addEventListener("click", () => {
         if ($("native-chat-refresh").getAttribute("aria-disabled") !== "true")
             void refreshNativeChat(true);
+    });
+    $("native-chat-task-open").addEventListener("click", () => {
+        if (!$("native-chat-task-panel").hidden)
+            closeNativeChatTaskPanel();
+        else
+            void loadNativeChatTaskPanel();
+    });
+    $("native-chat-task-close").addEventListener("click", closeNativeChatTaskPanel);
+    $("native-chat-task-reload").addEventListener("click", () => {
+        if ($("native-chat-task-reload").getAttribute("aria-disabled") !== "true")
+            void loadNativeChatTaskPanel();
+    });
+    $("native-chat-task-panel").addEventListener("keydown", event => {
+        if (event.key === "Escape") {
+            closeNativeChatTaskPanel();
+            $("native-chat-task-open").focus();
+        }
     });
     $("native-chat-filter").addEventListener("input", renderNativeChatThreads);
     $("native-chat-new").addEventListener("click", beginNewNativeChat);

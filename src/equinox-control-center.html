@@ -608,6 +608,7 @@
               <span id="native-chat-task" hidden></span>
             </div>
             <div class="native-chat-heading-actions">
+              <button id="native-chat-task-open" class="native-chat-task-open" type="button" aria-controls="native-chat-task-panel" aria-expanded="false" hidden>Task details</button>
               <span id="native-chat-turn" class="native-chat-turn" role="status">No chat selected</span>
               <div id="native-chat-agent-control"></div>
             </div>
@@ -643,6 +644,16 @@
             </form>
           </div>
         </div>
+        <aside id="native-chat-task-panel" class="native-chat-task-panel" aria-label="Task Capsule details" hidden>
+          <div class="native-chat-task-panel-header">
+            <strong>Task Capsule</strong>
+            <div class="native-chat-task-panel-actions">
+              <button id="native-chat-task-reload" class="text-button" type="button">Refresh</button>
+              <button id="native-chat-task-close" class="icon-button" type="button" aria-label="Close task details" title="Close task details">×</button>
+            </div>
+          </div>
+          <div id="native-chat-task-panel-content" class="native-chat-task-panel-content" aria-live="polite"></div>
+        </aside>
       </section>
 
       <section id="section-browser" class="page-section" aria-labelledby="section-title" hidden>
