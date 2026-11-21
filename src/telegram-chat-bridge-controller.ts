@@ -47,6 +47,7 @@ type BridgeController = {
   inspectTurnIdentity: (args?: {binding?: Binding}) => Promise<unknown>;
   deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string}) => Promise<unknown>;
   readFinal: (args?: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null}) => Promise<unknown>;
+  readRecent: (args?: {binding?: Binding}) => Promise<unknown>;
   startTaskChat: (args?: {taskId?: string; checkpointRevision?: number; initialMessage?: string}) => Promise<unknown>;
 };
 type CodedError = Error & {code: string; candidateTabId?: number};
@@ -63,7 +64,7 @@ function chatBridgeVersion(contextSnapshot: ContextState | undefined): number {
   return Number(contextSnapshot?.extension?.capabilityVersions?.chatBridge) || 0;
 }
 
-function chatGptConversationIdFromUrl(value: unknown): string | null {
+export function chatGptConversationIdFromUrl(value: unknown): string | null {
   try {
     const url = new URL(String(value || ""));
     if (url.protocol !== "https:" || !["chatgpt.com", "www.chatgpt.com"].includes(url.hostname)
@@ -233,10 +234,13 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     let submitBoundaryCrossed = false;
     let submitAttemptUncertain = false;
     try {
+      // Chrome can create a tab even when the bridge response is lost. Reserve the
+      // mutation boundary BEFORE the request so this cannot be misreported as
+      // a safe pre-creation failure or automatically retried by callers.
+      mutationStarted = true;
       const created = await callContext("user", "tabs.create", { url: "https://chatgpt.com/", active: true }, 8_000) as BrowserResult | null;
       createdTabId = Number(created?.id ?? created?.tabId);
       if (!Number.isInteger(createdTabId) || createdTabId < 1) throw new Error("ChatGPT task-chat creation did not return a tab id.");
-      mutationStarted = true;
 
       let promptSubmitted = false;
       let lastComposerError: unknown = null;
@@ -246,11 +250,21 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         const result = await callContext("user", "eval", {
           tabId: createdTabId,
           expression: `(() => {
-            const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+            const candidates = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]')];
+            const visible = candidates.filter(node => {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return node.isConnected && node.getClientRects().length > 0
+                && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            });
+            const composer = visible.length === 1 ? visible[0] : null;
             return {
               present: Boolean(composer),
               text: composer ? String(composer.textContent || '').trim() : '',
-              generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')),
+              generationActive: [...document.querySelectorAll('button[data-testid="stop-button"]')]
+                .some(button => button.isConnected && button.getClientRects().length > 0
+                  && button.getBoundingClientRect().height > 0 && button.getBoundingClientRect().width > 0
+                  && getComputedStyle(button).visibility !== 'hidden'),
             };
           })()`,
         }, 5_000).catch(() => null) as BrowserResult | null;
@@ -290,11 +304,14 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
 
           let inputError: unknown = null;
           try {
-            await callContext("user", "type_text", {
+            // A long first message sent as sequential key events can outlive
+            // the IPC deadline and leave a partial draft behind. Browser fill
+            // applies one bounded contenteditable replacement without submit;
+            // inspectComposer below still verifies the exact final text.
+            await callContext("user", "fill", {
               tabId: createdTabId,
               ref: composerRef,
-              text: prompt,
-              delayMs: 0,
+              value: prompt,
             }, 12_000);
           } catch (error) {
             inputError = error;
@@ -326,13 +343,21 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
               // The current ChatGPT UI uses an unnamed primary composer action (type=submit) for Send.
               // Keep older explicit ids as safe fallbacks; never target voice/stop (type=button).
               const selector = '[data-composer-body] button.bg-composer-primary[type="submit"], button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
-              const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
-              const button = document.querySelector(selector);
+              const isVisible = node => {
+                const rect = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                return node.isConnected && node.getClientRects().length > 0
+                  && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+              };
+              const editors = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]')].filter(isVisible);
+              const composer = editors.length === 1 ? editors[0] : null;
+              const buttons = [...document.querySelectorAll(selector)].filter(isVisible);
+              const button = buttons.length === 1 ? buttons[0] : null;
               const text = composer ? String(composer.textContent || '').trim() : '';
-              if (!composer) return { ready: false, reason: "composer_missing", name: null, text };
+              if (!composer) return { ready: false, reason: editors.length > 1 ? "composer_ambiguous" : "composer_missing", name: null, text };
               if (!text) return { ready: false, reason: "composer_empty", name: null, text };
               if (text !== ${JSON.stringify(prompt)}) return { ready: false, reason: "composer_changed", name: null, text };
-              if (!button || !button.isConnected) return { ready: false, reason: "send_button_missing", name: null, text };
+              if (!button) return { ready: false, reason: buttons.length > 1 ? "send_button_ambiguous" : "send_button_missing", name: null, text };
               if (button.getAttribute('data-testid') === 'stop-button') return { ready: false, reason: "generation_active", name: null, text };
               if (Boolean(button.disabled) || button.getAttribute('aria-disabled') === 'true') return { ready: false, reason: "send_disabled", name: null, text };
               const name = String(button.getAttribute('aria-label') || button.textContent || '').replace(/\s+/gu, ' ').trim();
@@ -476,6 +501,9 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         binding: target,
         userEpoch: state?.userEpoch || null,
         assistantTurnKey: state?.assistantTurnKey || null,
+        generationActive: state?.generationActive === true,
+        composerReady: state?.composerReady === true,
+        composerEmpty: state?.composerEmpty === true,
       });
     } catch (error) {
       const message = errorMessage(error);
@@ -533,5 +561,33 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     });
   };
 
-  return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, startTaskChat });
+  const readRecent = async ({ binding }: {binding?: Binding}={}) => {
+    const {binding:target}=await inspectBinding(binding,10,{allowMissingUserEpoch:true,allowMissingAssistantTurnKey:true});
+    const value=await callContext(target.browserContext,"chat_bridge.recent",{
+      tabId:target.tabId,conversationId:target.conversationId,
+    },10_000) as (BrowserResult & {items?:unknown;partial?:unknown}) | null;
+    if(!Array.isArray(value?.items)||value.items.length>24)throw new Error("Chat Bridge recent transcript is invalid.");
+    const items=value.items.map((item:any)=>{
+      if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat Bridge transcript message is invalid.");
+      return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true};
+    });
+    return Object.freeze({items,partial:value.partial===true,tabId:target.tabId});
+  };
+
+  const readLive = async ({binding,userEpoch}:{binding?:Binding;userEpoch?:string}={}) => {
+    if(typeof userEpoch!=="string"||userEpoch.length<1||userEpoch.length>200)
+      throw new Error("Chat Bridge live preview user epoch is invalid.");
+    const {binding:target,state}=await inspectBinding(binding,11,{allowMissingUserEpoch:true,allowMissingAssistantTurnKey:true});
+    if(state?.userEpoch!==userEpoch)return Object.freeze({status:"drifted",text:""});
+    if(!state?.generationActive)return Object.freeze({status:"idle",text:""});
+    const result=await callContext(target.browserContext,"chat_bridge.live",{
+      tabId:target.tabId,conversationId:target.conversationId,userEpoch,
+    },10_000) as (BrowserResult & {status?:unknown;text?:unknown;truncated?:unknown}) | null;
+    if(!result||!["drifted","idle","generating"].includes(result.status as string)||
+      (result.text!==undefined&&(typeof result.text!=="string"||[...result.text].length>3200)))
+      throw new Error("Chat Bridge live preview payload is invalid.");
+    return Object.freeze({status:result.status,text:typeof result.text==="string"?result.text:"",truncated:result.truncated===true});
+  };
+
+  return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, readLive, startTaskChat });
 }

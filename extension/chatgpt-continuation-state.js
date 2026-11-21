@@ -11,6 +11,15 @@
         const text = String(value || "").trim();
         return text ? text.split(/\s+/u)[0].slice(0, 200) : null;
     }
+    function isVisibleComposerAction(button) {
+        if (!button.isConnected || !button.getClientRects().length)
+            return false;
+        const rect = button.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0)
+            return false;
+        const style = window.getComputedStyle(button);
+        return style.visibility !== "hidden" && style.display !== "none";
+    }
     function looksLikeModernStopAction(button) {
         if (!button?.querySelector)
             return false;
@@ -40,9 +49,21 @@
         const assistantTurns = [...document.querySelectorAll('section[data-turn="assistant"][data-testid]')];
         const modernTurns = [...document.querySelectorAll('[data-turn-key]')];
         const modernUserUnits = [...document.querySelectorAll('[data-chatgpt-search-unit-key$=":user"][data-chatgpt-search-message-ids]')];
-        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]')
-            || document.querySelector('[data-composer-markdown][contenteditable="true"][role="textbox"]');
-        const modernPrimaryActions = [...document.querySelectorAll('[data-composer-body] button.bg-composer-primary')];
+        // Reject hidden or ambiguous editors; only the single visible composer
+        // authorizes Chat Bridge or Auto Continue delivery.
+        const visibleComposers = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]')]
+            .filter(node => {
+            const rect = node.getBoundingClientRect();
+            const style = window.getComputedStyle(node);
+            return node.isConnected && node.getClientRects().length > 0
+                && rect.width > 0 && rect.height > 0
+                && style.visibility !== 'hidden' && style.display !== 'none';
+        });
+        const composer = visibleComposers.length === 1 ? visibleComposers[0] : null;
+        // ChatGPT can retain an invisible, stale Stop control alongside the
+        // currently visible voice/Send control after a response is complete.
+        const modernPrimaryActions = [...document.querySelectorAll('[data-composer-body] button.bg-composer-primary')]
+            .filter(isVisibleComposerAction);
         const modernGenerationActive = modernPrimaryActions.some(looksLikeModernStopAction);
         const modernTurn = last(modernTurns);
         const modernTurnKey = firstMessageId(modernTurn?.getAttribute('data-turn-key'));
@@ -53,7 +74,7 @@
             : [];
         const modernAssistantTurnKey = firstMessageId(last(modernAssistantUnits)?.getAttribute('data-chatgpt-search-message-ids'));
         const result = {
-            generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')) || modernGenerationActive,
+            generationActive: [...document.querySelectorAll('button[data-testid="stop-button"]')].some(isVisibleComposerAction) || modernGenerationActive,
             userEpoch: modernTurnKey
                 || last(userMessages)?.getAttribute('data-message-id')
                 || last(userTurns)?.getAttribute('data-testid')

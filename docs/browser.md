@@ -4,7 +4,9 @@
 
 **Versions:** The Chrome Web Store version is the authoritative **installed/public extension** version (and appears automatically in the [README badge](../README.md)). The repository's [`extension/manifest.json`](../extension/manifest.json) contains the **source candidate** version, which may be ahead of the Store while a submission is pending review. Equinox Local publishes its own signed Main separately and does not sideload extensions. The maintainer handles Store review/submission.
 
-**Source candidate 1.2.2:** fixes trusted Send focus for CLI/Telegram Chat Bridge. The ZIP is prepared for maintainer-led CWS review; it is not an installed Store update until publication.
+**Historical source candidate 1.2.2 (superseded by 1.2.4):** fixes trusted Send focus for CLI/Telegram Chat Bridge. The ZIP is prepared for maintainer-led CWS review; it is not an installed Store update until publication.
+
+**Source candidate 1.2.3 (superseded by 1.2.4):** fixes a modern ChatGPT page that renders both a hidden and a visible contenteditable composer. The previous Chat Bridge delivery receipt was correctly marked ambiguous and never replayed. The new bridge and Auto Continue composer focus select exactly one connected, nonzero-size, visible editor; no unique visible editor means no delivery. The ChatGPT continuation observer applies the same readiness rule. A CWS review/upload and live validated update are still required before calling 1.2.3 public.
 
 Equinox Browser is the only browser-automation transport exposed by Equinox Local.
 
@@ -72,3 +74,9 @@ npm run browser:package
 ```
 
 Generated ZIP files are release artifacts and are intentionally not committed to Git.
+
+**Source candidate 1.2.4 (superseded by 1.2.5):** adds `chat_bridge.recent` v10, a read-only, exact-conversation scoped recent transcript projection for the first-party Equinox Local Chat. This reads only the currently rendered user/assistant text within the selected Chrome tab, at most 12 turns, 24 messages, ~46,000 characters total, and no HTML, arbitrary page content or cookies. The existing v9 send/final capabilities remain backward compatible. 1.2.4 incorporates the 1.2.3 hidden composer focus fix. CWS submission/review remains maintainer-operated.
+
+**Source candidate 1.2.5 (not yet submitted):** supersedes 1.2.4 and preserves all of its composer focus and recent-history protections. Adds `chat_bridge.live` v11: a separately labeled, ephemeral **read-only live assistant text preview** for the exact selected ChatGPT conversation/turn while generation is active. It reads at most 3,200 rendered Unicode code points and never labels partial output as a complete response or invents tool/result cards. Existing v9/v10 capabilities remain backward compatible. The Chrome Web Store ZIP must be submitted by the maintainer; developer unpacked extension verification is not Store approval.
+
+**2026-11-21 live verification correction:** During the first real v11 generation, Chrome retained a hidden Stop button after the completed answer. The older ChatGPT continuation observer treated that hidden control as active generation, blocking final-answer completion and poll readiness. Source 1.2.5 now checks element visibility (connected, nonzero rectangle, non-hidden computed style) for both modern and legacy Stop controls. This is part of the same not-yet-submitted 1.2.5 candidate, not a separate Store update. The exact 3,200-character bounded assistant projection was read during a genuinely active QA turn.

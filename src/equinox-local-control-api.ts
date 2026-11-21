@@ -20,6 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
+  getChatThreads?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -44,7 +45,7 @@ const REPAIR_RECIPE_ID_SET:ReadonlySet<string> = new Set(REPAIR_RECIPE_IDS);
 // IPC auto-refresh is read-only. It must not increment interactive request
 // counters, but it does not grant a broader action to the renderer.
 const CONTROL_CENTER_BACKGROUND_REFRESH_PATHS = new Set([
-  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks",
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
   "/api/v1/files/import-settings", "/api/v1/integrations/telegram/pair",
@@ -305,6 +306,11 @@ export function createEquinoxLocalControlApi({
   getActivity = async () => [],
   getUpdateStatus = async () => ({}),
   getOnboardingStatus = async () => ({ available: false }),
+  getChatThreads = null,
+  selectChatThread = null,
+  getChatState = null,
+  sendChatText = null,
+  startNewChat = null,
   getTasks = null,
   getTask = null,
   updateTask = null,
@@ -466,6 +472,40 @@ export function createEquinoxLocalControlApi({
         return;
       }
 
+      if (method === "GET" && pathname === "/api/v1/chat/threads") {
+        if (typeof getChatThreads !== "function") throw badRequest("Native chat is unavailable.");
+        send(200, {ok:true,chat:await getChatThreads()});return;
+      }
+      if (method === "GET" && pathname === "/api/v1/chat/state") {
+        if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");
+        send(200, {ok:true,chat:await getChatState()});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/select") {
+        authorizeMutation();
+        if (typeof selectChatThread !== "function") throw badRequest("Native chat is unavailable.");
+        const body=validateExactObject(await readBody(),["tabId","conversationId"],"Native chat selection");
+        if (!Number.isSafeInteger(body.tabId)||body.tabId<1||typeof body.conversationId!=="string"||!/^[A-Za-z0-9-]{8,160}$/u.test(body.conversationId)) throw badRequest("Invalid conversation identity.");
+        const selected=await selectChatThread(body);
+        state.mutationCount+=1;send(200,{ok:true,chat:selected});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/new") {
+        authorizeMutation();
+        if (typeof startNewChat !== "function") throw badRequest("New Chat is unavailable.");
+        const body=validateExactObject(await readBody(),["creationId","text"],"Native New Chat");
+        if (typeof body.creationId!=="string"||!/^nch-[a-f0-9-]{36}$/u.test(body.creationId)||
+            typeof body.text!=="string"||!body.text.trim()||body.text.length>1500||/[\r\n\0]/u.test(body.text))
+          throw badRequest("New Chat requires one initial line of up to 1500 characters and a unique creation id.");
+        const creation=await startNewChat(body);
+        state.mutationCount+=1;send(200,{ok:true,creation});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/send") {
+        authorizeMutation();
+        if (typeof sendChatText !== "function") throw badRequest("Native chat is unavailable.");
+        const body=validateExactObject(await readBody(),["deliveryId","text"],"Native chat delivery");
+        if (typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||!body.text.trim()||body.text.length>4000) throw badRequest("Invalid Chat message or delivery id.");
+        const delivery=await sendChatText(body);
+        state.mutationCount+=1;send(200,{ok:true,delivery});return;
+      }
       if (method === "GET" && pathname === "/api/v1/tasks") {
         if (typeof getTasks !== "function") { const error:ControlError = new Error("Task controls are unavailable on this installation."); error.statusCode = 503; throw error; }
         send(200, { ok: true, tasks: await getTasks() });
@@ -962,7 +1002,7 @@ export function createEquinoxLocalControlApi({
   // A second permission boundary inside the private IPC server, independent
   // of the renderer and Electron main allowlist. Keep lists synchronized.
 const UI_READ_PATHS = new Set([
-  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks",
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
   "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
@@ -971,6 +1011,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

@@ -35,7 +35,7 @@ const DOWNLOAD_LIFECYCLE_VERSION = 1;
 const RANGE_VERSION = 2;
 const AUTO_CONTINUE_VERSION = 1;
 const FRESH_CHAT_RESUME_VERSION = 1;
-const CHAT_BRIDGE_VERSION = 9;
+const CHAT_BRIDGE_VERSION = 11;
 const MAX_PDF_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const HTML5_DRAG_INTERCEPT_TIMEOUT_MS = 1_500;
 const MAX_HTML5_DRAG_ITEMS = 32;
@@ -707,6 +707,19 @@ function freshChatResumeReceiptResult(receipt, duplicatePrevented = false) {
 // Current ChatGPT: primary action is type=submit after typing (voice/stop stay type=button).
 // Previous ChatGPT variants: legacy send test-id or composer-submit-button.
 const CHATGPT_SEND_SELECTOR = '[data-composer-body] button.bg-composer-primary[type="submit"], button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
+// ChatGPT may mount an off-screen editor before its actual visible composer.
+// Multiple visible matching editors are ambiguous: never send in that state.
+const VISIBLE_CHATGPT_COMPOSER_JS = `(() => {
+  const candidates = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]')];
+  const visible = candidates.filter(node => {
+    const rect = node.getBoundingClientRect();
+    const style = window.getComputedStyle(node);
+    return node.isConnected && node.getClientRects().length > 0
+      && rect.width > 0 && rect.height > 0
+      && style.visibility !== 'hidden' && style.display !== 'none';
+  });
+  return visible.length === 1 ? visible[0] : null;
+})()`;
 async function freshChatComposerState(tabId) {
     const tab = await workerTabs().get(tabId);
     const homeRoute = chatGptFreshHomeRoute(tab);
@@ -1461,7 +1474,7 @@ async function deliverAutoContinuation({ continuationId, tabId, conversationId, 
     try {
         const focusResult = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
-      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+      const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
       if (!composer) throw new Error('ChatGPT composer is unavailable');
       if (String(composer.textContent || '').trim()) throw new Error('ChatGPT composer is not empty');
       composer.focus();
@@ -1476,7 +1489,7 @@ async function deliverAutoContinuation({ continuationId, tabId, conversationId, 
         await send(tabId, "Input.insertText", { text: message });
         const fillResult = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
-      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+      const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
       return composer ? String(composer.textContent || '') : null;
     })()`,
             returnByValue: true,
@@ -1617,7 +1630,7 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
         stage = "claimed";
         const focusResult = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
-        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+        const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
         if (!composer) throw new Error('ChatGPT composer is unavailable');
         if (String(composer.textContent || '').trim()) throw new Error('ChatGPT composer is not empty');
         composer.focus();
@@ -1639,7 +1652,7 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
             const submitTarget = await send(tabId, "Runtime.evaluate", {
                 expression: `(() => {
           // Chat Bridge trusted submit readiness after real Input.insertText.
-          const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+          const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
           const button = document.querySelector(${JSON.stringify(chatBridgeSendSelector)});
           if (!composer) return { ready: false, reason: "composer_missing" };
           if (!String(composer.textContent || '').trim()) return { ready: false, reason: "composer_empty" };
@@ -1675,7 +1688,7 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
         const submitFocus = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
         // Chat Bridge coordinate-free submit: focus the trusted Send button.
-        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+        const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
         const button = document.querySelector(${JSON.stringify(chatBridgeSendSelector)});
         // Input.insertText turns line breaks into sibling <p> nodes in
         // ChatGPT's contenteditable composer. textContent silently drops the
@@ -1741,6 +1754,113 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
     }
     finally {
         scheduleDetach(tabId, CONTINUATION_MUTATION_DETACH_MS);
+    }
+}
+// Only exact selected conversations can disclose bounded recent text to
+// the first-party Local Chat UI. No remote page HTML or arbitrary DOM API.
+async function readChatBridgeRecent({ tabId, conversationId } = {}) {
+    if (!Number.isSafeInteger(tabId) || Number(tabId) < 1 || typeof conversationId !== "string" || !/^[A-Za-z0-9-]{8,160}$/u.test(conversationId))
+        throw new Error("Chat history identity is invalid.");
+    const tab = await chooseTab(Number(tabId));
+    if (chatGptConversationIdentity(tab)?.conversationId !== conversationId)
+        throw new Error("Chat history conversation changed.");
+    const state = await chatGptContinuationState(Number(tabId));
+    if (state.conversationId !== conversationId)
+        throw new Error("Chat history observer identity changed.");
+    await requireDebuggableTab(Number(tabId));
+    await attachTab(Number(tabId));
+    try {
+        const result = await send(Number(tabId), "Runtime.evaluate", { expression: `(() => {
+      const turns=[...document.querySelectorAll('[data-turn-key]')],out=[];
+      let remaining=46000;
+      for(const turn of turns.slice(-12))for(const role of ['user','assistant']){
+        const unit=turn.querySelector('[data-chatgpt-search-unit-key$=":'+role+'"]');
+        if(!unit||remaining<=0)continue;
+        const content=unit.querySelector('[data-chatgpt-selection-message-id]')||unit;
+        const raw=String(content.innerText||content.textContent||'').trim();if(!raw)continue;
+        const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
+        const id=String(unit.getAttribute('data-chatgpt-search-message-ids')||turn.getAttribute('data-turn-key')||'').split(/\s+/u)[0].slice(0,200);
+        out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit});remaining-=limit;
+      }
+      if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
+        const role=unit.getAttribute('data-message-author-role');const raw=String(unit.innerText||unit.textContent||'').trim();
+        if(!raw||remaining<=0)continue;const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
+        out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit});remaining-=limit;
+      }
+      return{items:out.slice(-24),partial:turns.length>12||remaining<=0,observedTurns:turns.length};
+    })()`, returnByValue: true, silent: true });
+        if (result?.exceptionDetails)
+            throw new Error("Chat history inspection failed.");
+        const value = cdpObject(result?.result?.value);
+        if (!Array.isArray(value?.items) || value.items.length > 24)
+            throw new Error("Chat history payload is invalid.");
+        const items = value.items.map((item) => {
+            if (!item || !["user", "assistant"].includes(item.role) || typeof item.text !== "string" || item.text.length > 14000 || typeof item.id !== "string" || item.id.length > 220)
+                throw new Error("Chat history message is invalid.");
+            return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true };
+        });
+        const after = await chooseTab(Number(tabId));
+        if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
+            throw new Error("Chat history tab changed during read.");
+        // The in-progress assistant text is not a final message. The native UI
+        // separately reports the real generation state until it is completed.
+        if (state.generationActive && items.at(-1)?.role === "assistant")
+            items.pop();
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, items, partial: value.partial === true, observedTurns: Number(value.observedTurns) || 0 };
+    }
+    finally {
+        scheduleDetach(Number(tabId), CONTINUATION_MUTATION_DETACH_MS);
+    }
+}
+// A transient, strictly read-only partial assistant preview. It never
+// represents a completed answer, tool result, or provider stream event.
+async function readChatBridgeLive({ tabId, conversationId, userEpoch } = {}) {
+    if (!Number.isSafeInteger(tabId) || Number(tabId) < 1 || typeof conversationId !== "string" ||
+        !/^[A-Za-z0-9-]{8,160}$/u.test(conversationId) || typeof userEpoch !== "string" ||
+        userEpoch.length < 1 || userEpoch.length > 200)
+        throw new Error("Live Chat preview identity is invalid.");
+    const selectedId = Number(tabId);
+    const before = await chooseTab(selectedId);
+    if (before.pendingUrl || chatGptConversationIdentity(before)?.conversationId !== conversationId)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
+    const state = await chatGptContinuationState(selectedId);
+    if (state.conversationId !== conversationId || state.userEpoch !== userEpoch)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
+    if (!state.generationActive)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "idle" };
+    if (!state.assistantTurnKey)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "generating", text: "" };
+    await requireDebuggableTab(selectedId);
+    await attachTab(selectedId);
+    try {
+        const result = await send(selectedId, "Runtime.evaluate", { expression: `(() => {
+      const key=${JSON.stringify(state.assistantTurnKey)};
+      const modern=[...document.querySelectorAll('[data-turn-key]')].find(t=>t.getAttribute('data-turn-key')===key);
+      const modernAssistant=modern?.querySelector('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]');
+      const legacy=[...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')].find(t=>t.getAttribute('data-message-id')===key);
+      const root=modernAssistant||legacy;
+      if(!root)return{text:"",truncated:false};
+      const content=modernAssistant?(modernAssistant.querySelector('[data-chatgpt-selection-message-id]')||modernAssistant):root;
+      const chars=[...String(content.innerText||content.textContent||'').trim()];
+      return{text:chars.slice(0,3200).join(''),truncated:chars.length>3200};
+    })()`, returnByValue: true, silent: true });
+        if (result?.exceptionDetails)
+            throw new Error("Live Chat preview read failed.");
+        const item = cdpObject(result?.result?.value);
+        if (!item || typeof item.text !== "string" || [...item.text].length > 3200)
+            throw new Error("Live Chat preview payload is invalid.");
+        const after = await chooseTab(selectedId);
+        if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
+        const updated = await chatGptContinuationState(selectedId);
+        if (updated.conversationId !== conversationId || updated.userEpoch !== userEpoch)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
+        if (!updated.generationActive)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "idle" };
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "generating", text: item.text, truncated: item.truncated === true };
+    }
+    finally {
+        scheduleDetach(selectedId, CONTINUATION_MUTATION_DETACH_MS);
     }
 }
 async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, previousAssistantTurnKey, } = {}) {
@@ -8105,6 +8225,8 @@ const COMMANDS = {
     "chat_bridge.inspect": inspectChatBridgeState,
     "chat_bridge.deliver": deliverChatBridgeMessage,
     "chat_bridge.read_final": readChatBridgeFinalResponse,
+    "chat_bridge.recent": readChatBridgeRecent,
+    "chat_bridge.live": readChatBridgeLive,
     "resume.create": createFreshChatResume,
     "settings.status": popupStatus,
     "settings.update": updateBrowserSettings,

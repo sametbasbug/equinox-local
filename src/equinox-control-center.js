@@ -8,9 +8,10 @@ const NAVIGATION_SHORTCUTS = Object.freeze({
     Digit2: "projects",
     Digit3: "tasks",
     Digit4: "browser",
-    Digit5: "permissions",
-    Digit6: "integrations",
-    Digit7: "activity",
+    Digit5: "chat",
+    Digit6: "permissions",
+    Digit7: "integrations",
+    Digit8: "activity",
 });
 const SUPPORTED_THEMES = new Set(["system", "light", "dark"]);
 const systemThemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
@@ -270,6 +271,7 @@ const sectionMeta = {
     projects: ["Your workspace", "Projects & folders"],
     tasks: ["Your workspace", "Tasks"],
     browser: ["Browser contexts", "Browser"],
+    chat: ["Your workspace", "Chat"],
     permissions: ["Agent control", "Safety & access"],
     integrations: ["Optional capabilities", "Services"],
     activity: ["Diagnostics", "Activity"],
@@ -414,6 +416,344 @@ function setConfigEditingEnabled(enabled) {
     if (!enabled && $("save-agent-access-button"))
         $("save-agent-access-button").disabled = true;
 }
+// The native Chat UI talks only to bounded, authenticated Control Center IPC.
+// Browser automation and account credentials never cross into this renderer.
+let chatRefreshing = false;
+let chatSending = false;
+let chatSelecting = false;
+let chatSelectionGeneration = 0;
+let chatNewDraft = false;
+let chatNewCreationId = null;
+let chatBlocked = false;
+let chatCreationBlocked = false;
+let chatLocallyUncertain = false;
+// An IPC delivery might be committed even if its acknowledgement is lost.
+// Keep the local fence when a user switches away and back to that conversation.
+const chatUncertainConversations = new Set();
+const chatConversationKey = (value) => value?.browserInstanceId && value?.conversationId
+    ? String(value.browserInstanceId) + ":" + String(value.conversationId) : null;
+function holdChatUncertainty() {
+    const key = chatConversationKey(chatActive);
+    if (key)
+        chatUncertainConversations.add(key);
+    chatLocallyUncertain = true;
+    chatBlocked = true;
+}
+let chatThreadList = [];
+let chatDuplicateCount = 0;
+let chatActive = null;
+let chatTurn = "unbound";
+let chatThreadRenderSignature = "";
+let chatFeedRenderSignature = "";
+function setNativeChatNotice(message) { setText("native-chat-notice", message); }
+function nativeChatErrorMessage(error) {
+    const text = error instanceof Error ? error.message : String(error);
+    if (/Invalid desktop operation arguments|Unsupported desktop control operation/u.test(text))
+        return "The installed Equinox Local runtime does not support Native Chat yet. Install the matching signed Main version.";
+    return text;
+}
+function renderNativeChatThreads() {
+    // The 3-second status refresh must not steal focus from the conversation
+    // buttons or rebuild an unchanged sidebar.
+    const signature = JSON.stringify({ threads: chatThreadList.map(t => [t.conversationId, t.tabId, t.title]), selected: chatNewDraft ? null : chatActive?.conversationId, duplicates: chatDuplicateCount });
+    if (signature === chatThreadRenderSignature)
+        return;
+    chatThreadRenderSignature = signature;
+    const list = $("native-chat-thread-list");
+    list.replaceChildren();
+    for (const thread of chatThreadList) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "native-chat-thread" + (!chatNewDraft && chatActive?.conversationId === thread.conversationId ? " is-selected" : "");
+        button.setAttribute("role", "option");
+        button.setAttribute("aria-selected", String(chatActive?.conversationId === thread.conversationId));
+        button.textContent = thread.title || "ChatGPT conversation";
+        button.addEventListener("click", () => { void selectNativeChat(thread); });
+        list.append(button);
+    }
+    const total = chatThreadList.length;
+    const status = total ? `${total} available conversation${total === 1 ? "" : "s"}` : "No available ChatGPT conversations in Your Browser.";
+    setText("native-chat-list-status", chatDuplicateCount ? `${status} ${chatDuplicateCount} duplicated conversation${chatDuplicateCount === 1 ? " is" : "s are"} unavailable until its duplicate tabs are closed.` : status);
+}
+function renderNativeChatState(chat) {
+    if (!chat || typeof chat !== "object" || chatNewDraft)
+        return;
+    chatActive = chat.selected || null;
+    chatTurn = typeof chat.turn === "string" ? chat.turn : "unbound";
+    chatCreationBlocked = chat.creationBlocked === true || chatCreationBlocked;
+    // Only a locally uncertain IPC mutation remains sticky across polls.
+    if (chatActive && chatUncertainConversations.has(chatConversationKey(chatActive)))
+        chatLocallyUncertain = true;
+    chatBlocked = Boolean(chatLocallyUncertain || chat.blocked);
+    setText("native-chat-turn", chatTurn === "generating" ? "Responding…" : chatTurn === "ready" ? "Ready" : chatTurn === "complete" ? "Completed" : chatTurn === "disconnected" ? "Disconnected" : chatTurn === "waiting" ? "Waiting" : "Select a conversation");
+    const allowed = Boolean(chatActive) && !chatSelecting && !chatSending && !chatBlocked && !chat.sending && !(["generating", "disconnected", "waiting"].includes(chatTurn));
+    $("native-chat-text").disabled = !allowed;
+    $("native-chat-send").disabled = !allowed || !$("native-chat-text").value.trim();
+    const thread = chatThreadList.find(item => item.conversationId === chatActive?.conversationId);
+    setText("native-chat-title", thread?.title || "Choose a conversation");
+    const relatedTask = Array.isArray(state.tasks) && chatActive?.browserInstanceId
+        ? state.tasks.find((task) => task?.chatBinding?.browserContext === "user"
+            && task.chatBinding.conversationId === chatActive.conversationId
+            && task.chatBinding.browserInstanceId === chatActive.browserInstanceId)
+        : null;
+    setText("native-chat-task", relatedTask ? `Task Capsule · ${String(relatedTask.title || relatedTask.taskId).slice(0, 64)} · ${String(relatedTask.status || "unknown").slice(0, 24)}` : "");
+    $("native-chat-task").hidden = !relatedTask;
+    const feed = $("native-chat-feed");
+    const items = Array.isArray(chat.items) ? chat.items : [];
+    const preview = chatTurn === "generating" && typeof chat.preview?.text === "string" && chat.preview.text
+        ? { text: chat.preview.text.slice(0, 3200), truncated: chat.preview.truncated === true } : null;
+    const signature = JSON.stringify({ selected: chatActive?.conversationId || null, items, preview });
+    if (signature !== chatFeedRenderSignature) {
+        chatFeedRenderSignature = signature;
+        const scrolledNearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 95;
+        feed.replaceChildren();
+        if (!items.length && !preview) {
+            const note = document.createElement("p");
+            note.className = "native-chat-empty";
+            note.textContent = chatActive ? "No previous conversation messages are available. Messages sent here will appear below." : "Select a conversation already open in Your Browser.";
+            feed.append(note);
+        }
+        else
+            for (const item of items) {
+                const bubble = document.createElement("div");
+                bubble.className = "native-chat-message" + (item.role === "user" ? " is-user" : "") + (item.status === "uncertain" ? " is-uncertain" : "");
+                const label = document.createElement("small");
+                label.textContent = item.role === "user" ? "You" : "ChatGPT";
+                if (item.status === "uncertain")
+                    label.textContent += " · Delivery uncertain";
+                if (item.truncated === true)
+                    label.textContent += " · Truncated";
+                bubble.append(label, document.createTextNode(String(item.text || "").slice(0, 25000)));
+                feed.append(bubble);
+            }
+        if (preview) {
+            const live = document.createElement("div");
+            live.className = "native-chat-message is-preview";
+            live.setAttribute("aria-live", "off");
+            const label = document.createElement("small");
+            label.textContent = localizeUiText("ChatGPT · Live preview") + (preview.truncated ? " · Truncated" : "");
+            live.append(label, document.createTextNode(preview.text));
+            feed.append(live);
+        }
+        if (scrolledNearBottom)
+            feed.scrollTop = feed.scrollHeight;
+    }
+    if (chat.notice)
+        setNativeChatNotice(String(chat.notice).slice(0, 190));
+    else if (chatTurn === "generating")
+        setNativeChatNotice("ChatGPT is generating. Keep this conversation open in Chrome; delivery will not be retried.");
+    else if (chatActive)
+        setNativeChatNotice(chat.historyCount ? `Showing ${chat.historyCount} recent messages from ChatGPT. Earlier turns may not be loaded.` : "Your Browser keeps the ChatGPT session. Older turns may not be loaded.");
+}
+async function refreshNativeChat(withThreads = false) {
+    if (state.activeSection !== "chat" || state.setupMode || chatRefreshing || chatNewDraft)
+        return;
+    chatRefreshing = true;
+    const selectionGeneration = chatSelectionGeneration;
+    try {
+        if (withThreads || !chatThreadList.length) {
+            const result = await requestJson("/api/v1/chat/threads", { backgroundRefresh: true });
+            if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
+                return;
+            chatThreadList = Array.isArray(result.chat?.threads) ? result.chat.threads : [];
+            chatDuplicateCount = Number.isSafeInteger(result.chat?.duplicateCount) ? Math.max(0, result.chat.duplicateCount) : 0;
+            renderNativeChatThreads();
+        }
+        const chat = await requestJson("/api/v1/chat/state", { backgroundRefresh: true });
+        if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
+            return;
+        renderNativeChatState(chat.chat);
+        renderNativeChatThreads();
+    }
+    catch (error) {
+        if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
+            return;
+        setNativeChatNotice(nativeChatErrorMessage(error));
+        $("native-chat-text").disabled = true;
+        $("native-chat-send").disabled = true;
+        setText("native-chat-list-status", nativeChatErrorMessage(error));
+    }
+    finally {
+        chatRefreshing = false;
+    }
+}
+async function selectNativeChat(thread) {
+    if (chatSending || chatSelecting)
+        return;
+    if ($("native-chat-text").value.trim() && (chatNewDraft || thread.conversationId !== chatActive?.conversationId)) {
+        setNativeChatNotice("Clear the unsent message or choose Cancel before switching conversations.");
+        return;
+    }
+    chatNewDraft = false;
+    chatNewCreationId = null;
+    $("native-chat-cancel-new").hidden = true;
+    $("native-chat-text").value = "";
+    $("native-chat-text").maxLength = 4000;
+    chatSelecting = true;
+    const selectionGeneration = ++chatSelectionGeneration;
+    try {
+        $("native-chat-text").disabled = true;
+        const data = await mutationJson("/api/v1/chat/select", "POST", { tabId: thread.tabId, conversationId: thread.conversationId });
+        if (selectionGeneration !== chatSelectionGeneration)
+            return;
+        const key = chatConversationKey(data.chat?.selected);
+        chatLocallyUncertain = Boolean(key && chatUncertainConversations.has(key));
+        chatBlocked = Boolean(chatLocallyUncertain || data.chat?.blocked);
+        renderNativeChatState(data.chat);
+        setText("native-chat-title", thread.title || "ChatGPT conversation");
+        renderNativeChatThreads();
+    }
+    catch (error) {
+        setNativeChatNotice(nativeChatErrorMessage(error));
+    }
+    finally {
+        chatSelecting = false;
+    }
+}
+function beginNewNativeChat() {
+    if (chatNewDraft) {
+        cancelNewNativeChat();
+        return;
+    }
+    if ($("native-chat-text").value.trim()) {
+        setNativeChatNotice("Clear the unsent message before starting a new conversation.");
+        return;
+    }
+    if (chatCreationBlocked) {
+        setNativeChatNotice("A previous New Chat creation could not be confirmed. Inspect Chrome before creating another conversation.");
+        return;
+    }
+    if (chatSending || chatSelecting || chatBlocked || ["waiting", "generating"].includes(chatTurn)) {
+        setNativeChatNotice("A message is still active or uncertain. Verify the current conversation before starting another.");
+        return;
+    }
+    chatNewDraft = true;
+    chatSelectionGeneration++;
+    $("native-chat-cancel-new").hidden = false;
+    chatNewCreationId = `nch-${crypto.randomUUID()}`;
+    chatThreadRenderSignature = "";
+    renderNativeChatThreads();
+    setText("native-chat-title", "New Chat");
+    $("native-chat-task").hidden = true;
+    setText("native-chat-turn", "Compose first message");
+    const feed = $("native-chat-feed");
+    feed.replaceChildren();
+    const empty = document.createElement("p");
+    empty.className = "native-chat-empty";
+    empty.textContent = "Write your first message to open a new ChatGPT conversation in Your Browser.";
+    feed.append(empty);
+    const composer = $("native-chat-text");
+    composer.value = "";
+    composer.maxLength = 1500;
+    composer.disabled = false;
+    $("native-chat-send").disabled = true;
+    setNativeChatNotice("First message: one line, up to 1,500 characters. A Task Capsule and an exact new ChatGPT conversation are created when you press Send.");
+    composer.focus();
+}
+function cancelNewNativeChat() {
+    if (chatSending)
+        return;
+    chatNewDraft = false;
+    chatNewCreationId = null;
+    chatSelectionGeneration++;
+    $("native-chat-cancel-new").hidden = true;
+    const composer = $("native-chat-text");
+    composer.value = "";
+    composer.maxLength = 4000;
+    chatThreadRenderSignature = "";
+    chatFeedRenderSignature = "";
+    void refreshNativeChat(true);
+}
+async function sendNativeChatMessage() {
+    const composer = $("native-chat-text");
+    const text = composer.value.trim();
+    if (chatSending || chatBlocked || (!chatActive && !chatNewDraft) || !text || text.length > 4000)
+        return;
+    if (chatNewDraft && (text.length > 1500 || /[\r\n]/u.test(text))) {
+        setNativeChatNotice("The first message must be one line of at most 1,500 characters.");
+        return;
+    }
+    chatSending = true;
+    composer.disabled = true;
+    $("native-chat-send").disabled = true;
+    const newMessage = chatNewDraft;
+    const creationId = chatNewCreationId;
+    const deliveryId = `tgb-${crypto.randomUUID()}`;
+    try {
+        if (newMessage) {
+            if (!creationId)
+                throw new Error("New Chat creation identity is missing.");
+            const response = await mutationJson("/api/v1/chat/new", "POST", { text, creationId });
+            if (response.creation?.confirmed !== true)
+                throw new Error("New Chat creation could not be confirmed.");
+            chatNewDraft = false;
+            chatNewCreationId = null;
+            chatSelectionGeneration++;
+            composer.maxLength = 4000;
+            composer.value = "";
+            $("native-chat-cancel-new").hidden = true;
+            chatLocallyUncertain = false;
+            chatBlocked = false;
+            chatThreadRenderSignature = "";
+            chatFeedRenderSignature = "";
+            const list = await requestJson("/api/v1/chat/threads", { backgroundRefresh: true });
+            chatThreadList = Array.isArray(list.chat?.threads) ? list.chat.threads : [];
+            chatDuplicateCount = Number.isSafeInteger(list.chat?.duplicateCount) ? list.chat.duplicateCount : 0;
+            try {
+                const updated = await requestJson("/api/v1/tasks", { backgroundRefresh: true });
+                state.tasks = Array.isArray(updated.tasks) ? updated.tasks : state.tasks;
+            }
+            catch { /* Task metadata will refresh separately. */ }
+            renderNativeChatState(response.creation.chat);
+            renderNativeChatThreads();
+            setNativeChatNotice("New Chat created in Chrome. Waiting for the first response…");
+            return;
+        }
+        const response = await mutationJson("/api/v1/chat/send", "POST", { text, deliveryId });
+        if (response.delivery?.confirmed !== true) {
+            holdChatUncertainty();
+            setNativeChatNotice("Delivery is uncertain. Verify the Chrome conversation before taking further action. Nothing will be automatically resent.");
+        }
+        else {
+            composer.value = "";
+            setNativeChatNotice("Message delivered to the selected ChatGPT conversation. Waiting for its reply…");
+        }
+        const stateResult = await requestJson("/api/v1/chat/state");
+        renderNativeChatState(stateResult.chat);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (newMessage && message.startsWith("New Chat was not submitted: ")) {
+            // The backend cancelled the temporary Task and confirmed no Chrome submit.
+            // The failed creation ID is never reused, including across restarts.
+            chatNewCreationId = `nch-${crypto.randomUUID()}`;
+            chatLocallyUncertain = false;
+            chatBlocked = false;
+            composer.disabled = false;
+            $("native-chat-send").disabled = !composer.value.trim();
+            setNativeChatNotice(message + " You can retry the unsent draft.");
+        }
+        else {
+            // A mutation crossing the IPC/browser boundary may be ambiguous.
+            // Keep the draft and require manual inspection before another action.
+            if (newMessage) {
+                chatCreationBlocked = true;
+                chatLocallyUncertain = true;
+                chatBlocked = true;
+            }
+            else
+                holdChatUncertainty();
+            setNativeChatNotice("Delivery could not be confirmed. Check the ChatGPT conversation in Chrome before continuing. " + message);
+        }
+    }
+    finally {
+        chatSending = false;
+        if (chatBlocked) {
+            composer.disabled = true;
+            $("native-chat-send").disabled = true;
+        }
+    }
+}
 function switchSection(section, { remember = false } = {}) {
     if (!sectionMeta[section])
         return;
@@ -423,6 +763,8 @@ function switchSection(section, { remember = false } = {}) {
         return;
     const changed = state.activeSection !== section;
     state.activeSection = section;
+    if (section === "chat" && changed)
+        void refreshNativeChat(true);
     if (remember && section !== "setup") {
         try {
             localStorage.setItem(SECTION_STORAGE_KEY, section);
@@ -458,6 +800,8 @@ function switchSection(section, { remember = false } = {}) {
                 renderActivity();
             else if (section === "browser")
                 renderBrowserPage();
+            else if (section === "chat")
+                void refreshNativeChat(true);
             else if (section === "integrations")
                 renderIntegrations();
             else if (section === "dashboard")
@@ -3900,6 +4244,17 @@ function bindEvents() {
             applyTheme();
     });
     $("language-select").addEventListener("change", (event) => setLanguage(event.target.value));
+    $("native-chat-refresh").addEventListener("click", () => { void refreshNativeChat(true); });
+    $("native-chat-new").addEventListener("click", beginNewNativeChat);
+    $("native-chat-cancel-new").addEventListener("click", cancelNewNativeChat);
+    $("native-chat-form").addEventListener("submit", (event) => { event.preventDefault(); void sendNativeChatMessage(); });
+    $("native-chat-text").addEventListener("input", () => { $("native-chat-send").disabled = chatSending || chatBlocked || $("native-chat-text").disabled || !$("native-chat-text").value.trim() || (chatNewDraft && /[\r\n]/u.test($("native-chat-text").value)); });
+    $("native-chat-text").addEventListener("keydown", (event) => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        void sendNativeChatMessage();
+    } });
+    setInterval(() => { if (state.activeSection === "chat" && !document.hidden)
+        void refreshNativeChat(); }, 3_000);
     const companionPicker = $("companion-select");
     companionPicker.value = window.equinoxShell?.getCompanionId() ?? "nyx";
     companionPicker.disabled = !window.equinoxShell?.setCompanionId;
@@ -4075,6 +4430,8 @@ applyStaticLanguage();
 notifyNativeLanguage();
 bindEvents();
 switchSection(state.activeSection);
+if (state.activeSection === "chat")
+    void refreshNativeChat(true);
 renderLastRefreshed();
 setInterval(renderTurnBudgetLive, 1_000);
 setInterval(() => { void refreshLiveState(); }, AUTO_REFRESH_LIVE_MS);

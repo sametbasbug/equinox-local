@@ -144,6 +144,7 @@ import {
 } from "./telegram-integration.js";
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
+import { createNativeChatController } from "./equinox-local-native-chat.js";
 import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
 import { installEquinoxLocalCli, installEquinoxLocalSourceCli } from "./equinox-local-cli-installation.js";
 import {
@@ -2459,6 +2460,11 @@ const telegramChatBridgeController:RuntimeBoundary = createTelegramChatBridgeCon
   browserBridge: equinoxBrowserBridge,
   agentControl,
 });
+const nativeChatController = createNativeChatController({
+  browserBridge: equinoxBrowserBridge,
+  chatBridge: telegramChatBridgeController,
+  taskStore: taskCapsuleStore,
+});
 const telegramTaskInboxController:RuntimeBoundary = createTelegramTaskInboxController({
   store: taskCapsuleStore,
   autoContinueController,
@@ -3142,6 +3148,11 @@ const applyUpdateForControlCenter = async () => withMutationLocks(["local-update
 
 equinoxLocalControlApi = createEquinoxLocalControlApi({
   configManager: equinoxLocalConfigManager,
+  getChatThreads: () => nativeChatController.list(),
+  selectChatThread: (value) => nativeChatController.select(value),
+  getChatState: () => nativeChatController.read(),
+  sendChatText: (value) => nativeChatController.send(value),
+  startNewChat: (value) => nativeChatController.startNew(value),
   getStatus: async () => {
     const browser = equinoxBrowserBridge.snapshot();
     const browserSettingsByContext:Record<"agent"|"user",RuntimeBoundary> = { agent: null, user: null };

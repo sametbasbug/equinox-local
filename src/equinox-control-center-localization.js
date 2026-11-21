@@ -7,6 +7,20 @@ export function localeForLanguage(language) {
     return normalizeLanguage(language) === "tr" ? "tr-TR" : "en-US";
 }
 const TR_UI = Object.freeze({
+    "Chat": "Sohbet",
+    "Conversations": "Konuşmalar",
+    "Choose a conversation": "Bir konuşma seçin",
+    "Message": "Mesaj",
+    "Send": "Gönder",
+    "Write a message…": "Bir mesaj yazın…",
+    "Ctrl/Cmd + Enter to send": "Göndermek için Ctrl/Cmd + Enter",
+    "New Chat": "Yeni Sohbet",
+    "ChatGPT · Live preview": "ChatGPT · Canlı önizleme",
+    "Start a new ChatGPT conversation or continue one already open in your connected Chrome. Equinox Browser keeps the session in Chrome.": "Yeni bir ChatGPT konuşması başlatın veya bağlı Chrome’da zaten açık olan bir konuşmaya devam edin. Oturum Chrome’da Equinox Browser tarafından yönetilir.",
+    "Choose an open Chrome conversation, or select New Chat to begin one.": "Açık bir Chrome konuşması seçin veya Yeni Sohbet ile konuşma başlatın.",
+    "Connect Equinox Browser to show available conversations.": "Konuşmaları görüntülemek için Equinox Browser’ı bağlayın.",
+    "Select a conversation already open in your Chrome profile. This preview cannot import earlier messages.": "Chrome profilinizde açık olan bir konuşmayı seçin. Bu önizleme eski mesajları içe aktaramıyor.",
+    "ChatGPT conversations are controlled through Equinox Browser, not a separate API subscription.": "ChatGPT konuşmaları ayrı bir API aboneliğiyle değil Equinox Browser üzerinden yönetilir.",
     "Update": "Güncelle",
     "Updating…": "Güncelleniyor…",
     "Updating Equinox Local": "Equinox Local güncelleniyor",
