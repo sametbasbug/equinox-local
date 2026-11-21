@@ -234,10 +234,13 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     let submitBoundaryCrossed = false;
     let submitAttemptUncertain = false;
     try {
+      // Chrome can create a tab even when the bridge response is lost. Reserve the
+      // mutation boundary BEFORE the request so this cannot be misreported as
+      // a safe pre-creation failure or automatically retried by callers.
+      mutationStarted = true;
       const created = await callContext("user", "tabs.create", { url: "https://chatgpt.com/", active: true }, 8_000) as BrowserResult | null;
       createdTabId = Number(created?.id ?? created?.tabId);
       if (!Number.isInteger(createdTabId) || createdTabId < 1) throw new Error("ChatGPT task-chat creation did not return a tab id.");
-      mutationStarted = true;
 
       let promptSubmitted = false;
       let lastComposerError: unknown = null;
