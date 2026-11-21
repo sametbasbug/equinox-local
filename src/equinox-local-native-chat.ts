@@ -2,14 +2,17 @@ import { chatGptConversationIdFromUrl } from "./telegram-chat-bridge-controller.
 
 type BrowserTab = {id?:number;tabId?:number;url?:string;title?:string};
 type Binding = {browserContext:"user";browserInstanceId:string;tabId:number;conversationId:string;canonicalUrl:string};
-type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"complete"|"uncertain"};
+type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"complete"|"uncertain";truncated?:boolean};
 type BrowserBridge = {snapshot:()=>any;call:(method:string,args:object,options:{context:"user";timeoutMs:number})=>Promise<unknown>};
 type ChatBridge = {
   inspectTurnIdentity:(args:{binding:Binding})=>Promise<any>;
   deliverText:(args:{binding:Binding;deliveryId:string;text:string})=>Promise<any>;
   readFinal:(args:{binding:Binding;userEpoch:string;previousAssistantTurnKey:string|null})=>Promise<any>;
 };
-const MAX_MESSAGES = 40;
+const MAX_MESSAGES = 30;
+const MAX_TRANSCRIPT_CHARS = 96_000;
+const MAX_ASSISTANT_CHARS = 12_000;
+const MAX_DELIVERY_IDS = 2_048;
 function invalid(message:string):never {const error:Error&{statusCode?:number}=new Error(message);error.statusCode=400;throw error;}
 function safeTitle(value:unknown):string {return typeof value==="string"?value.replace(/[\x00-\x1f\x7f]/gu," ").trim().slice(0,120):"ChatGPT conversation";}
 
@@ -21,6 +24,10 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
   let sending=false;
   let blocked=false;
   const attempts=new Map<string,Promise<unknown>>();
+  function appendMessage(message:Message) {
+    messages.push(message);
+    while(messages.length>MAX_MESSAGES||messages.reduce((sum,item)=>sum+item.text.length,0)>MAX_TRANSCRIPT_CHARS)messages.shift();
+  }
   const call=(method:string,args:object,timeoutMs=6_000)=>browserBridge.call(method,args,{context:"user",timeoutMs});
   const context=()=>{
     const c=browserBridge.snapshot()?.contexts?.user;
@@ -34,14 +41,17 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
     const raw=await call("tabs.list",{});
     if(!Array.isArray(raw))throw new Error("Connected browser did not return a tab list.");
     const tabs=new Map<string,{tabId:number;conversationId:string;title:string;canonicalUrl:string}>();
+    const duplicated=new Set<string>();
     for(const item of (raw as BrowserTab[]).slice(0,150)) {
       const tabId=Number(item?.id??item?.tabId);
       const conversationId=chatGptConversationIdFromUrl(item?.url);
       if(!conversationId||!Number.isSafeInteger(tabId)||tabId<1)continue;
       const canonicalUrl=String(item.url);
-      if(!tabs.has(conversationId))tabs.set(conversationId,{tabId,conversationId,title:safeTitle(item.title)||"ChatGPT conversation",canonicalUrl});
+      if(tabs.has(conversationId))duplicated.add(conversationId);
+      else tabs.set(conversationId,{tabId,conversationId,title:safeTitle(item.title)||"ChatGPT conversation",canonicalUrl});
     }
-    return {browserInstanceId,threads:[...tabs.values()].slice(0,35).map(t=>({conversationId:t.conversationId,tabId:t.tabId,title:t.title,selected:selected?.conversationId===t.conversationId}))};
+    return {browserInstanceId,duplicateCount:duplicated.size,
+      threads:[...tabs.values()].filter(t=>!duplicated.has(t.conversationId)).slice(0,35).map(t=>({conversationId:t.conversationId,tabId:t.tabId,title:t.title,selected:selected?.conversationId===t.conversationId}))};
   };
   const select=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid conversation selection.");
@@ -74,8 +84,10 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
       if(pending){
         const result=await chatBridge.readFinal({binding:selected,userEpoch:pending.userEpoch,previousAssistantTurnKey:pending.previousAssistantTurnKey});
         if(result?.status==="ready"){
-          messages.push({id:pending.deliveryId+"-reply",role:"assistant",text:String(result.text).slice(0,25000),status:"complete"});
-          messages=messages.slice(-MAX_MESSAGES);pending=null;turn="complete";
+          const reply=String(result.text);
+          appendMessage({id:pending.deliveryId+"-reply",role:"assistant",text:reply.slice(0,MAX_ASSISTANT_CHARS),status:"complete",
+            truncated:result.truncated===true||reply.length>MAX_ASSISTANT_CHARS});
+          pending=null;turn="complete";
         }else turn="generating";
       }
     }catch(error){
@@ -96,6 +108,9 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
     if(Object.keys(body).length!==2||typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||!body.text.trim()||body.text.length>4000||/[\0]/u.test(body.text))invalid("Chat delivery must include a unique id and 1–4000 characters of text.");
     const key=body.deliveryId;
     if(attempts.has(key))return attempts.get(key)!;
+    // Retain every delivery identity for the lifetime of this backend.
+    // Refuse new sends at the bound rather than evict old IDs and risk replay.
+    if(attempts.size>=MAX_DELIVERY_IDS)invalid("This Chat session reached its bounded delivery limit. Restart the runtime before sending again.");
     if(sending||pending||blocked||!selected)invalid("Select an idle, unblocked ChatGPT conversation before sending. Confirm any uncertain delivery in Chrome.");
     const binding=selected;
     sending=true;
@@ -104,26 +119,22 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
         const result=await chatBridge.deliverText({binding,deliveryId:key,text:(body.text as string).trim()});
         if(result?.confirmed!==true){
           blocked=true;
-          messages.push({id:key,role:"user",text:(body.text as string).trim(),status:"uncertain"});
-          messages=messages.slice(-MAX_MESSAGES);
+          appendMessage({id:key,role:"user",text:(body.text as string).trim(),status:"uncertain"});
           return{confirmed:false,ambiguous:true};
         }
-        messages.push({id:key,role:"user",text:(body.text as string).trim(),status:"sent"});
-        messages=messages.slice(-MAX_MESSAGES);
+        appendMessage({id:key,role:"user",text:(body.text as string).trim(),status:"sent"});
         pending={userEpoch:result.userEpoch,previousAssistantTurnKey:result.previousAssistantTurnKey,deliveryId:key};
         return{confirmed:true,ambiguous:false};
       }catch(error){
         const code=(error as {code?:string})?.code;
         if(code==="CHAT_BRIDGE_AMBIGUOUS"){
           blocked=true;
-          messages.push({id:key,role:"user",text:(body.text as string).trim(),status:"uncertain"});
-          messages=messages.slice(-MAX_MESSAGES);
+          appendMessage({id:key,role:"user",text:(body.text as string).trim(),status:"uncertain"});
         }
         throw error;
       }finally{sending=false;}
     })();
     attempts.set(key,attempt);
-    if(attempts.size>100)attempts.delete(attempts.keys().next().value!);
     return attempt;
   };
   return Object.freeze({list,select,read,send});

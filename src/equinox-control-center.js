@@ -423,6 +423,7 @@ let chatSending = false;
 let chatSelecting = false;
 let chatBlocked = false;
 let chatThreadList = [];
+let chatDuplicateCount = 0;
 let chatActive = null;
 let chatTurn = "unbound";
 function setNativeChatNotice(message) { setText("native-chat-notice", message); }
@@ -445,7 +446,9 @@ function renderNativeChatThreads() {
         button.addEventListener("click", () => { void selectNativeChat(thread); });
         list.append(button);
     }
-    setText("native-chat-list-status", chatThreadList.length ? `${chatThreadList.length} open conversation${chatThreadList.length === 1 ? "" : "s"}` : "No ChatGPT conversations found in Your Browser.");
+    const total = chatThreadList.length;
+    const status = total ? `${total} available conversation${total === 1 ? "" : "s"}` : "No available ChatGPT conversations in Your Browser.";
+    setText("native-chat-list-status", chatDuplicateCount ? `${status} ${chatDuplicateCount} duplicated conversation${chatDuplicateCount === 1 ? " is" : "s are"} unavailable until its duplicate tabs are closed.` : status);
 }
 function renderNativeChatState(chat) {
     if (!chat || typeof chat !== "object")
@@ -477,6 +480,8 @@ function renderNativeChatState(chat) {
             label.textContent = item.role === "user" ? "You" : "ChatGPT";
             if (item.status === "uncertain")
                 label.textContent += " · Delivery uncertain";
+            if (item.truncated === true)
+                label.textContent += " · Partial response";
             bubble.append(label, document.createTextNode(String(item.text || "").slice(0, 25000)));
             feed.append(bubble);
         }
@@ -497,6 +502,7 @@ async function refreshNativeChat(withThreads = false) {
         if (withThreads || !chatThreadList.length) {
             const result = await requestJson("/api/v1/chat/threads", { backgroundRefresh: true });
             chatThreadList = Array.isArray(result.chat?.threads) ? result.chat.threads : [];
+            chatDuplicateCount = Number.isSafeInteger(result.chat?.duplicateCount) ? Math.max(0, result.chat.duplicateCount) : 0;
             renderNativeChatThreads();
         }
         const chat = await requestJson("/api/v1/chat/state", { backgroundRefresh: true });

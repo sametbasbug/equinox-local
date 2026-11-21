@@ -1,5 +1,8 @@
 import { chatGptConversationIdFromUrl } from "./telegram-chat-bridge-controller.js";
-const MAX_MESSAGES = 40;
+const MAX_MESSAGES = 30;
+const MAX_TRANSCRIPT_CHARS = 96_000;
+const MAX_ASSISTANT_CHARS = 12_000;
+const MAX_DELIVERY_IDS = 2_048;
 function invalid(message) { const error = new Error(message); error.statusCode = 400; throw error; }
 function safeTitle(value) { return typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]/gu, " ").trim().slice(0, 120) : "ChatGPT conversation"; }
 /** Current-user native Chat transport. The browser remains the ChatGPT session authority. */
@@ -10,6 +13,11 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
     let sending = false;
     let blocked = false;
     const attempts = new Map();
+    function appendMessage(message) {
+        messages.push(message);
+        while (messages.length > MAX_MESSAGES || messages.reduce((sum, item) => sum + item.text.length, 0) > MAX_TRANSCRIPT_CHARS)
+            messages.shift();
+    }
     const call = (method, args, timeoutMs = 6_000) => browserBridge.call(method, args, { context: "user", timeoutMs });
     const context = () => {
         const c = browserBridge.snapshot()?.contexts?.user;
@@ -26,16 +34,20 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
         if (!Array.isArray(raw))
             throw new Error("Connected browser did not return a tab list.");
         const tabs = new Map();
+        const duplicated = new Set();
         for (const item of raw.slice(0, 150)) {
             const tabId = Number(item?.id ?? item?.tabId);
             const conversationId = chatGptConversationIdFromUrl(item?.url);
             if (!conversationId || !Number.isSafeInteger(tabId) || tabId < 1)
                 continue;
             const canonicalUrl = String(item.url);
-            if (!tabs.has(conversationId))
+            if (tabs.has(conversationId))
+                duplicated.add(conversationId);
+            else
                 tabs.set(conversationId, { tabId, conversationId, title: safeTitle(item.title) || "ChatGPT conversation", canonicalUrl });
         }
-        return { browserInstanceId, threads: [...tabs.values()].slice(0, 35).map(t => ({ conversationId: t.conversationId, tabId: t.tabId, title: t.title, selected: selected?.conversationId === t.conversationId })) };
+        return { browserInstanceId, duplicateCount: duplicated.size,
+            threads: [...tabs.values()].filter(t => !duplicated.has(t.conversationId)).slice(0, 35).map(t => ({ conversationId: t.conversationId, tabId: t.tabId, title: t.title, selected: selected?.conversationId === t.conversationId })) };
     };
     const select = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
@@ -81,8 +93,9 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
             if (pending) {
                 const result = await chatBridge.readFinal({ binding: selected, userEpoch: pending.userEpoch, previousAssistantTurnKey: pending.previousAssistantTurnKey });
                 if (result?.status === "ready") {
-                    messages.push({ id: pending.deliveryId + "-reply", role: "assistant", text: String(result.text).slice(0, 25000), status: "complete" });
-                    messages = messages.slice(-MAX_MESSAGES);
+                    const reply = String(result.text);
+                    appendMessage({ id: pending.deliveryId + "-reply", role: "assistant", text: reply.slice(0, MAX_ASSISTANT_CHARS), status: "complete",
+                        truncated: result.truncated === true || reply.length > MAX_ASSISTANT_CHARS });
                     pending = null;
                     turn = "complete";
                 }
@@ -117,6 +130,10 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
         const key = body.deliveryId;
         if (attempts.has(key))
             return attempts.get(key);
+        // Retain every delivery identity for the lifetime of this backend.
+        // Refuse new sends at the bound rather than evict old IDs and risk replay.
+        if (attempts.size >= MAX_DELIVERY_IDS)
+            invalid("This Chat session reached its bounded delivery limit. Restart the runtime before sending again.");
         if (sending || pending || blocked || !selected)
             invalid("Select an idle, unblocked ChatGPT conversation before sending. Confirm any uncertain delivery in Chrome.");
         const binding = selected;
@@ -126,12 +143,10 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
                 const result = await chatBridge.deliverText({ binding, deliveryId: key, text: body.text.trim() });
                 if (result?.confirmed !== true) {
                     blocked = true;
-                    messages.push({ id: key, role: "user", text: body.text.trim(), status: "uncertain" });
-                    messages = messages.slice(-MAX_MESSAGES);
+                    appendMessage({ id: key, role: "user", text: body.text.trim(), status: "uncertain" });
                     return { confirmed: false, ambiguous: true };
                 }
-                messages.push({ id: key, role: "user", text: body.text.trim(), status: "sent" });
-                messages = messages.slice(-MAX_MESSAGES);
+                appendMessage({ id: key, role: "user", text: body.text.trim(), status: "sent" });
                 pending = { userEpoch: result.userEpoch, previousAssistantTurnKey: result.previousAssistantTurnKey, deliveryId: key };
                 return { confirmed: true, ambiguous: false };
             }
@@ -139,8 +154,7 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
                 const code = error?.code;
                 if (code === "CHAT_BRIDGE_AMBIGUOUS") {
                     blocked = true;
-                    messages.push({ id: key, role: "user", text: body.text.trim(), status: "uncertain" });
-                    messages = messages.slice(-MAX_MESSAGES);
+                    appendMessage({ id: key, role: "user", text: body.text.trim(), status: "uncertain" });
                 }
                 throw error;
             }
@@ -149,8 +163,6 @@ export function createNativeChatController({ browserBridge, chatBridge }) {
             }
         })();
         attempts.set(key, attempt);
-        if (attempts.size > 100)
-            attempts.delete(attempts.keys().next().value);
         return attempt;
     };
     return Object.freeze({ list, select, read, send });
