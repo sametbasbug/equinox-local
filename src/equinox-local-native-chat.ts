@@ -98,12 +98,18 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
       if(current&&current.conversationId===selected.conversationId&&current.browserInstanceId===selected.browserInstanceId)selected=current;
       turn=inspected?.generationActive===true?"generating":inspected?.status==="waiting"?"waiting":"ready";
       if(pending){
-        const result=await chatBridge.readFinal({binding:selected,userEpoch:pending.userEpoch,previousAssistantTurnKey:pending.previousAssistantTurnKey});
+        const receipt=pending;
+        const result=await chatBridge.readFinal({binding:selected,userEpoch:receipt.userEpoch,previousAssistantTurnKey:receipt.previousAssistantTurnKey});
         if(result?.status==="ready"){
-          const reply=String(result.text);
-          appendMessage({id:pending.deliveryId+"-reply",role:"assistant",text:reply.slice(0,MAX_ASSISTANT_CHARS),status:"complete",
-            truncated:result.truncated===true||reply.length>MAX_ASSISTANT_CHARS});
-          pending=null;turn="complete";
+          // Polling and the post-send refresh can complete simultaneously.
+          // Only the first reader that still owns this receipt may append it.
+          if(pending===receipt){
+            const reply=String(result.text);
+            appendMessage({id:receipt.deliveryId+"-reply",role:"assistant",text:reply.slice(0,MAX_ASSISTANT_CHARS),status:"complete",
+              truncated:result.truncated===true||reply.length>MAX_ASSISTANT_CHARS});
+            pending=null;
+          }
+          turn="complete";
         }else turn="generating";
       }
     }catch(error){
