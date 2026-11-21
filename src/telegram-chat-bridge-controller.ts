@@ -247,7 +247,14 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         const result = await callContext("user", "eval", {
           tabId: createdTabId,
           expression: `(() => {
-            const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+            const candidates = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]')];
+            const visible = candidates.filter(node => {
+              const rect = node.getBoundingClientRect();
+              const style = getComputedStyle(node);
+              return node.isConnected && node.getClientRects().length > 0
+                && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+            });
+            const composer = visible.length === 1 ? visible[0] : null;
             return {
               present: Boolean(composer),
               text: composer ? String(composer.textContent || '').trim() : '',

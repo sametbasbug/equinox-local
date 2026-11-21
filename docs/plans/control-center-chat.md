@@ -67,6 +67,12 @@ The production first-party `src/equinox-control-center.html` and matching compil
 
 Native Chat's three-second status refresh was also updated to retain existing conversation buttons and transcript DOM when no list/message content changed. This avoids unnecessary re-rendering, focus loss and selected-text disruption during long chats. Existing typecheck, static checks and byte-exact TS/JS verification passed; no new repo tests were created.
 
+## New conversation action (next feature gate)
+
+The first native Chat view currently **selects existing Chrome ChatGPT conversations only**. It has no fake “New Chat” button. The existing `telegramChatBridgeController.startTaskChat` already implements the guarded new-tab/first-turn creation and exact Task Capsule binding used by `eqlocal chat start`; reuse that same path for a future explicit native New Chat action, and bind a new exact Task Capsule before selecting the resulting conversation. A new-chat timeout can be ambiguous, so it must never silently create a second task/tab or replay its opening message. The initial-composer inspection used by this existing path now applies the same **exactly one visible editor** rule as Browser 1.2.4's send path, eliminating another hidden-composer mismatch. No general arbitrary Chrome execution API should be exposed to the renderer.
+
+Once this action exists, ensure the native UI clearly distinguishes Task Capsule-bound new conversations from existing user Chrome conversations and does not imply that selecting the Nyx/Hemera/Asteria visual companions routes execution to their independent coding-agent runtimes. The original task also requests tool/result cards and intermediate progress; those are separate browser-observation capabilities and are **not yet implemented**.
+
 ## Risks and real acceptance
 
 - ChatGPT UI/browser extension interaction is **not an official service API**. Document account-policy risks and avoid abusive automation or workarounds to provider restrictions. Prefer supported interfaces where available; no promise that one login can power every agent backend.
