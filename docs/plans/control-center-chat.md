@@ -117,6 +117,12 @@ The source Task Chat first-turn writer now uses the existing bounded Browser fil
 
 Separate attempts to invoke Browser fill through an ephemeral nested eqlocal CLI adapter from an active terminal_exec did not constitute a real production New Chat acceptance: one call timed out while another stand-alone CLI process explicitly rejected a stale snapshot ref after ChatGPT hydration, with no message submission. The real Browser fill connector succeeded; source still handles stale refs by taking a fresh snapshot only when the postcondition shows the composer remains blank. The authenticated installed backend and complete New Chat GUI path have not been proven as a single chain. Do not misreport those partial results as success.
 
+## Confirmed long first-turn browser behavior (2026-11-21)
+
+An independent **real authenticated Chrome session** test used the current Equinox Browser semantic operations to validate the revised primitive end to end, without installing an alternate Local runtime. A temporary new ChatGPT root tab initially returned a stale snapshot ref during hydration; because the DOM still had **one empty visible composer and zero turns**, a fresh textbox snapshot was taken. A single bounded **fill** staged exactly **1,259 characters**. The first-party live composer was verified to match byte-for-byte; there was exactly one visible, enabled Send button and zero existing turns. One semantic click returned actionDispatched/primaryActionSucceeded true and outcomeUncertain false. Chrome published the fresh conversation identity, and the **assistant** emitted the exact expected EQL_LONG_FILL_REAL_QA_OK token with generation stopped. The QA tab was closed. There was no blind retry of a click or a second send.
+
+This demonstrates real long-first-message Browser input/delivery/final behavior and validates the primitives used by the source starter. It is **not** acceptance of the complete new feature's installed Native Chat New Chat button and task binding. The currently installed Factory still carries the released main backend; the feature branch's complete new-chat chain cannot be claimed installed until a source-role cutover and matching GUI proof occur.
+
 ## Risks and real acceptance
 
 - ChatGPT UI/browser extension interaction is **not an official service API**. Document account-policy risks and avoid abusive automation or workarounds to provider restrictions. Prefer supported interfaces where available; no promise that one login can power every agent backend.
