@@ -421,6 +421,7 @@ function setConfigEditingEnabled(enabled) {
 let chatRefreshing = false;
 let chatSending = false;
 let chatSelecting = false;
+let chatSelectionGeneration = 0;
 let chatNewDraft = false;
 let chatNewCreationId = null;
 let chatBlocked = false;
@@ -546,18 +547,25 @@ async function refreshNativeChat(withThreads = false) {
     if (state.activeSection !== "chat" || state.setupMode || chatRefreshing || chatNewDraft)
         return;
     chatRefreshing = true;
+    const selectionGeneration = chatSelectionGeneration;
     try {
         if (withThreads || !chatThreadList.length) {
             const result = await requestJson("/api/v1/chat/threads", { backgroundRefresh: true });
+            if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
+                return;
             chatThreadList = Array.isArray(result.chat?.threads) ? result.chat.threads : [];
             chatDuplicateCount = Number.isSafeInteger(result.chat?.duplicateCount) ? Math.max(0, result.chat.duplicateCount) : 0;
             renderNativeChatThreads();
         }
         const chat = await requestJson("/api/v1/chat/state", { backgroundRefresh: true });
+        if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
+            return;
         renderNativeChatState(chat.chat);
         renderNativeChatThreads();
     }
     catch (error) {
+        if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
+            return;
         setNativeChatNotice(nativeChatErrorMessage(error));
         $("native-chat-text").disabled = true;
         $("native-chat-send").disabled = true;
@@ -580,9 +588,12 @@ async function selectNativeChat(thread) {
     $("native-chat-text").value = "";
     $("native-chat-text").maxLength = 4000;
     chatSelecting = true;
+    const selectionGeneration = ++chatSelectionGeneration;
     try {
         $("native-chat-text").disabled = true;
         const data = await mutationJson("/api/v1/chat/select", "POST", { tabId: thread.tabId, conversationId: thread.conversationId });
+        if (selectionGeneration !== chatSelectionGeneration)
+            return;
         const key = chatConversationKey(data.chat?.selected);
         chatLocallyUncertain = Boolean(key && chatUncertainConversations.has(key));
         chatBlocked = Boolean(chatLocallyUncertain || data.chat?.blocked);
@@ -611,6 +622,7 @@ function beginNewNativeChat() {
         return;
     }
     chatNewDraft = true;
+    chatSelectionGeneration++;
     $("native-chat-cancel-new").hidden = false;
     chatNewCreationId = `nch-${crypto.randomUUID()}`;
     chatThreadRenderSignature = "";
@@ -637,6 +649,7 @@ function cancelNewNativeChat() {
         return;
     chatNewDraft = false;
     chatNewCreationId = null;
+    chatSelectionGeneration++;
     $("native-chat-cancel-new").hidden = true;
     const composer = $("native-chat-text");
     composer.value = "";
@@ -669,6 +682,7 @@ async function sendNativeChatMessage() {
                 throw new Error("New Chat creation could not be confirmed.");
             chatNewDraft = false;
             chatNewCreationId = null;
+            chatSelectionGeneration++;
             composer.maxLength = 4000;
             composer.value = "";
             $("native-chat-cancel-new").hidden = true;

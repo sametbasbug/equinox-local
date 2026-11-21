@@ -114,6 +114,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   };
   const read=async()=>{
     if(!selected)return{selected:null,items:[],turn:"unbound",blocked:false,limitedHistory:true};
+    const startingConversation=conversationKey(selected);
     let turn="idle";let notice:string|null=null;let preview:{text:string;truncated:boolean}|null=null;
     try{
       const inspected=await chatBridge.inspectTurnIdentity({binding:selected});
@@ -170,14 +171,26 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         else if(live?.status==="drifted")throw Object.assign(new Error("Live Chat turn identity changed."),{code:"CHAT_BRIDGE_DRIFTED"});
       }
     }catch(error){
-      const code=(error as {code?:string})?.code;
-      if(code==="CHAT_BRIDGE_DRIFTED"||code==="CHAT_BRIDGE_READ_FAILED"){
-        // A terminal response identity mismatch must never be replayed or
-        // silently rebound to a different Chrome conversation.
-        pending=null;blocked=true;uncertainConversations.add(conversationKey(selected));turn="disconnected";
-      }else if(pending){turn="waiting";}
-      else turn="disconnected";
-      notice=error instanceof Error?error.message:"Browser conversation is unavailable.";
+      // A late error from conversation A must not mark newly selected B as
+      // uncertain or disconnected. The stale-response guard below owns it.
+      if(conversationKey(selected)===startingConversation){
+        const code=(error as {code?:string})?.code;
+        if(code==="CHAT_BRIDGE_DRIFTED"||code==="CHAT_BRIDGE_READ_FAILED"){
+          // A terminal response identity mismatch must never be replayed or
+          // silently rebound to a different Chrome conversation.
+          pending=null;blocked=true;uncertainConversations.add(conversationKey(selected));turn="disconnected";
+        }else if(pending){turn="waiting";}
+        else turn="disconnected";
+        notice=error instanceof Error?error.message:"Browser conversation is unavailable.";
+      }
+    }
+    // Browser reads can finish after another sidebar selection. Never
+    // attribute a previous conversation's text/preview to the new selection.
+    if(conversationKey(selected)!==startingConversation){
+      return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},
+        items:[],turn:"waiting",sending,blocked:true,preview:null,
+        notice:"Conversation changed while reading. Refresh the selected conversation.",
+        limitedHistory:true,historyCount:0};
     }
     return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-54),
       turn,sending,blocked,preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
