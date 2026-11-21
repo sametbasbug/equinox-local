@@ -30,6 +30,54 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     // intentionally omits browser instance and conversation identifiers.
     const associatedTasks = new Map();
     const conversationKey = (binding) => binding.browserInstanceId + ":" + binding.conversationId;
+    const restoreTaskBinding = async (binding) => {
+        if (!taskStore?.readInternal)
+            return;
+        // The public Task projection omits private instance and conversation IDs.
+        // Resolve those only inside this trusted controller, never in UI payloads.
+        const candidates = await taskStore.list({ limit: 100 });
+        const matches = [];
+        for (const candidate of candidates) {
+            if (candidate?.chatBinding?.browserContext !== "user" || candidate.chatBinding.tabId !== binding.tabId
+                || typeof candidate.taskId !== "string" || candidate.status !== "active")
+                continue;
+            let record;
+            try {
+                record = await taskStore.readInternal(candidate.taskId);
+            }
+            catch {
+                continue;
+            } // Missing/unreadable candidate must not hide other matches.
+            const original = record?.chatBinding;
+            if (record?.status === "active" && original?.browserContext === "user"
+                && original.browserInstanceId === binding.browserInstanceId
+                && original.tabId === binding.tabId
+                && original.conversationId === binding.conversationId) {
+                matches.push(record.taskId);
+                if (matches.length > 1)
+                    break;
+            }
+        }
+        if (matches.length === 1)
+            associatedTasks.set(conversationKey(binding), matches[0]);
+        else
+            associatedTasks.delete(conversationKey(binding));
+    };
+    const currentTaskId = async (binding) => {
+        if (!taskStore?.readInternal)
+            return null;
+        const key = conversationKey(binding);
+        // Task Capsules can be rebound while the selected conversation is open.
+        // Re-check the bounded trusted in-memory store on each status read; never
+        // trust a previously cached association when another active task matches.
+        try {
+            await restoreTaskBinding(binding);
+        }
+        catch {
+            associatedTasks.delete(key);
+        }
+        return associatedTasks.get(key) ?? null;
+    };
     const createAttempts = new Map();
     const attempts = new Map();
     function appendMessage(message) {
@@ -90,7 +138,13 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             if (!source?.url)
                 invalid("Conversation identity changed during selection.");
             next.canonicalUrl = source.url;
-            await chatBridge.inspectTurnIdentity({ binding: next });
+            const inspected = await chatBridge.inspectTurnIdentity({ binding: next });
+            const confirmed = inspected?.binding;
+            if (!confirmed || confirmed.browserContext !== "user"
+                || confirmed.browserInstanceId !== next.browserInstanceId
+                || confirmed.tabId !== next.tabId
+                || confirmed.conversationId !== next.conversationId)
+                invalid("The selected Chrome tab changed during selection. Re-select the conversation.");
             // A conversation reopened in a different Chrome tab is a different
             // authenticated transport binding. Never reuse that tab's stale history,
             // preview or task-specific send state merely because its URL ID matches.
@@ -113,6 +167,13 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             }
             selected = next;
             if (changed) {
+                try {
+                    await restoreTaskBinding(next);
+                }
+                catch {
+                    // Task discovery is optional; errors must not break the Chat transport.
+                    associatedTasks.delete(conversationKey(next));
+                }
                 try {
                     const value = await chatBridge.readRecent?.({ binding: next });
                     if (value?.tabId !== undefined && value.tabId !== next.tabId)
@@ -294,8 +355,11 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         // attribute a previous conversation's text/preview to the new selection.
         if (!sameSelection())
             return staleResult();
+        const taskId = turn === "disconnected" ? null : await currentTaskId(initialBinding);
+        if (!sameSelection())
+            return staleResult();
         return { selected: { conversationId: selected.conversationId, tabId: selected.tabId, browserInstanceId: selected.browserInstanceId }, items: [...history, ...messages].slice(-54),
-            turn, sending, blocked, creationBlocked, taskId: associatedTasks.get(conversationKey(selected)) ?? null,
+            turn, sending, blocked, creationBlocked, taskId,
             preview, notice: notice || historyNotice, limitedHistory: historyPartial || !history.length, historyCount: history.length };
     };
     const send = async (value) => {

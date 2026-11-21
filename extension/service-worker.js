@@ -1863,6 +1863,18 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw `const projectChatBridgeRichT
   // whitespace only. Any missing/extra substantive character falls back.
   if (!actual || projected.replace(/\s+/g,'') !== actual.replace(/\s+/g,'')) return null;
   return formatted;
+};
+// Exclude the speaker heading ONLY when the real DOM labels it as
+// accessibility-only H4. A reply that quotes those words remains untouched.
+const readChatBridgeVisibleText = (scope) => {
+  const raw = String(scope.innerText || scope.textContent || '').trim();
+  const first = scope.firstElementChild;
+  if (first?.tagName === 'H4' && first.classList.contains('sr-only')) {
+    const heading = String(first.innerText || first.textContent || '').trim();
+    if ((heading === 'ChatGPT dedi:' || heading === 'ChatGPT said:')
+        && raw.startsWith(heading + '\n')) return raw.slice(heading.length + 1).trim();
+  }
+  return raw;
 };`;
 // Only exact selected conversations can disclose bounded recent text to
 // the first-party Local Chat UI. No remote page HTML or arbitrary DOM API.
@@ -1888,7 +1900,8 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         const unit=units[0];
         if(!unit||remaining<=0)continue;
         const content=unit.querySelector('[data-chatgpt-selection-message-id]')||unit;
-        const raw=String(content.innerText||content.textContent||'').trim();if(!raw)continue;
+        const raw=role==='assistant'?readChatBridgeVisibleText(content):
+          String(content.innerText||content.textContent||'').trim();if(!raw)continue;
         const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const id=String(unit.getAttribute('data-chatgpt-search-message-ids')||turn.getAttribute('data-turn-key')||'').split(/\s+/u)[0].slice(0,200);
         const richText=role==='assistant'&&chars.length<=limit
@@ -1897,7 +1910,9 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText});remaining-=limit;
       }
       if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
-        const role=unit.getAttribute('data-message-author-role');const raw=String(unit.innerText||unit.textContent||'').trim();
+        const role=unit.getAttribute('data-message-author-role');
+        const raw=role==='assistant'?readChatBridgeVisibleText(unit):
+          String(unit.innerText||unit.textContent||'').trim();
         if(!raw||remaining<=0)continue;const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const richText=role==='assistant'&&chars.length<=limit
           ?projectChatBridgeRichText(unit,Math.min(5000,remainingRich)):null;
@@ -1966,7 +1981,7 @@ async function readChatBridgeLive({ tabId, conversationId, userEpoch } = {}) {
       const root=modernAssistant||legacy;
       if(!root)return{text:"",truncated:false};
       const content=modernAssistant?(modernAssistant.querySelector('[data-chatgpt-selection-message-id]')||modernAssistant):root;
-      const chars=[...String(content.innerText||content.textContent||'').trim()];
+      const chars=[...readChatBridgeVisibleText(content)];
       const richText=chars.length<=3200?projectChatBridgeRichText(content,4000):null;
       return{text:chars.slice(0,3200).join(''),truncated:chars.length>3200,richText};
     })()`, returnByValue: true, silent: true });
@@ -2035,7 +2050,7 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
           ? (modernAssistant.querySelector('[data-chatgpt-selection-message-id]') || modernAssistant)
           : (legacyRoot.matches('[data-message-author-role="assistant"]')
             ? legacyRoot : (legacyRoot.querySelector('[data-message-author-role="assistant"]') || legacyRoot));
-        const raw = String(body.innerText || body.textContent || '').trim();
+        const raw = readChatBridgeVisibleText(body);
         if (!raw) return { found: true, empty: true };
         const chars = [...raw];
         const maxChars = 12000;

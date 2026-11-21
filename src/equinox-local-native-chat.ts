@@ -17,6 +17,7 @@ type TaskStore = {
   bindChat:(args:{taskId:string;binding:Binding})=>Promise<any>;
   cancel?:(taskId:string)=>Promise<any>;
   list:(args:{limit:number})=>Promise<any[]>;
+  readInternal?:(taskId:string)=>Promise<{taskId:string;status:string;chatBinding?:Binding|null}>;
 };
 const MAX_MESSAGES = 30;
 const MAX_TRANSCRIPT_CHARS = 96_000;
@@ -25,7 +26,6 @@ const MAX_DELIVERY_IDS = 2_048;
 const MAX_NEW_CHAT_IDS = 512;
 function invalid(message:string):never {const error:Error&{statusCode?:number}=new Error(message);error.statusCode=400;throw error;}
 function safeTitle(value:unknown):string {return typeof value==="string"?value.replace(/[\x00-\x1f\x7f]/gu," ").trim().slice(0,120):"ChatGPT conversation";}
-
 /** Current-user native Chat transport. The browser remains the ChatGPT session authority. */
 export function createNativeChatController({browserBridge,chatBridge,taskStore}:{browserBridge:BrowserBridge;chatBridge:ChatBridge;taskStore?:TaskStore}) {
   let selected:Binding|null=null;
@@ -50,6 +50,40 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   // intentionally omits browser instance and conversation identifiers.
   const associatedTasks=new Map<string,string>();
   const conversationKey=(binding:Binding)=>binding.browserInstanceId+":"+binding.conversationId;
+  const restoreTaskBinding=async(binding:Binding)=>{
+    if(!taskStore?.readInternal)return;
+    // The public Task projection omits private instance and conversation IDs.
+    // Resolve those only inside this trusted controller, never in UI payloads.
+    const candidates=await taskStore.list({limit:100});
+    const matches:string[]=[];
+    for(const candidate of candidates){
+      if(candidate?.chatBinding?.browserContext!=="user"||candidate.chatBinding.tabId!==binding.tabId
+        ||typeof candidate.taskId!=="string"||candidate.status!=="active")continue;
+      let record:Awaited<ReturnType<NonNullable<TaskStore["readInternal"]>>>;
+      try{record=await taskStore.readInternal(candidate.taskId);}
+      catch{continue;} // Missing/unreadable candidate must not hide other matches.
+      const original=record?.chatBinding;
+      if(record?.status==="active"&&original?.browserContext==="user"
+        &&original.browserInstanceId===binding.browserInstanceId
+        &&original.tabId===binding.tabId
+        &&original.conversationId===binding.conversationId){
+        matches.push(record.taskId);
+        if(matches.length>1)break;
+      }
+    }
+    if(matches.length===1)associatedTasks.set(conversationKey(binding),matches[0]!);
+    else associatedTasks.delete(conversationKey(binding));
+  };
+  const currentTaskId=async(binding:Binding):Promise<string|null>=>{
+    if(!taskStore?.readInternal)return null;
+    const key=conversationKey(binding);
+    // Task Capsules can be rebound while the selected conversation is open.
+    // Re-check the bounded trusted in-memory store on each status read; never
+    // trust a previously cached association when another active task matches.
+    try{await restoreTaskBinding(binding);}
+    catch{associatedTasks.delete(key);}
+    return associatedTasks.get(key)??null;
+  };
   const createAttempts=new Map<string,{text:string;promise:Promise<unknown>}>();
   const attempts=new Map<string,{text:string;conversationKey:string;promise:Promise<unknown>}>();
   function appendMessage(message:Message) {
@@ -98,7 +132,13 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     const source=(raw as BrowserTab[]).find(t=>Number(t.id??t.tabId)===tab.tabId&&chatGptConversationIdFromUrl(t.url)===tab.conversationId);
     if(!source?.url)invalid("Conversation identity changed during selection.");
     next.canonicalUrl=source.url;
-    await chatBridge.inspectTurnIdentity({binding:next});
+    const inspected=await chatBridge.inspectTurnIdentity({binding:next});
+    const confirmed=inspected?.binding;
+    if(!confirmed||confirmed.browserContext!=="user"
+      ||confirmed.browserInstanceId!==next.browserInstanceId
+      ||confirmed.tabId!==next.tabId
+      ||confirmed.conversationId!==next.conversationId)
+      invalid("The selected Chrome tab changed during selection. Re-select the conversation.");
     // A conversation reopened in a different Chrome tab is a different
     // authenticated transport binding. Never reuse that tab's stale history,
     // preview or task-specific send state merely because its URL ID matches.
@@ -119,6 +159,10 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     }
     selected=next;
     if(changed){
+      try{await restoreTaskBinding(next);}catch{
+        // Task discovery is optional; errors must not break the Chat transport.
+        associatedTasks.delete(conversationKey(next));
+      }
       try{
         const value=await chatBridge.readRecent?.({binding:next});
         if(value?.tabId!==undefined && value.tabId!==next.tabId)
@@ -264,8 +308,10 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     // Browser reads can finish after another sidebar selection. Never
     // attribute a previous conversation's text/preview to the new selection.
     if(!sameSelection())return staleResult();
+    const taskId=turn==="disconnected" ? null : await currentTaskId(initialBinding);
+    if(!sameSelection())return staleResult();
     return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-54),
-      turn,sending,blocked,creationBlocked,taskId:associatedTasks.get(conversationKey(selected))??null,
+      turn,sending,blocked,creationBlocked,taskId,
       preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
   };
   const send=async(value:unknown)=>{
