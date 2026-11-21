@@ -45,6 +45,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   // must never reset its send fence or permit a second uncertain message.
   const uncertainConversations=new Set<string>();
   const awaitingFirstTurns=new Map<string,{conversationId:string;text:string;deliveryId:string}>();
+  // Internal exact-binding association. Task Capsule's public projection
+  // intentionally omits browser instance and conversation identifiers.
+  const associatedTasks=new Map<string,string>();
   const conversationKey=(binding:Binding)=>binding.browserInstanceId+":"+binding.conversationId;
   const createAttempts=new Map<string,{text:string;promise:Promise<unknown>}>();
   const attempts=new Map<string,{text:string;conversationKey:string;promise:Promise<unknown>}>();
@@ -205,7 +208,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     // attribute a previous conversation's text/preview to the new selection.
     if(!sameSelection())return staleResult();
     return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-54),
-      turn,sending,blocked,creationBlocked,preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
+      turn,sending,blocked,creationBlocked,taskId:associatedTasks.get(conversationKey(selected))??null,
+      preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
   };
   const send=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid chat delivery request.");
@@ -296,8 +300,11 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           chatGptConversationIdFromUrl(source.canonicalUrl)!==source.conversationId)
           throw new Error("New Chat returned a different browser conversation identity.");
         const saved=await taskStore.bindChat({taskId:newTaskId,binding:source});
-        if(saved?.chatBinding?.conversationId!==source.conversationId||saved.chatBinding.browserInstanceId!==source.browserInstanceId)
+        // bindChat persists and validates the full exact binding internally.
+        // Its PUBLIC result exposes only browserContext and tabId by design.
+        if(saved?.taskId!==newTaskId||saved?.chatBinding?.browserContext!==source.browserContext||saved?.chatBinding?.tabId!==source.tabId)
           throw new Error("New Chat Task Capsule binding could not be confirmed.");
+        associatedTasks.set(conversationKey(source),newTaskId);
         selected={browserContext:"user",browserInstanceId:source.browserInstanceId,tabId:source.tabId,conversationId:source.conversationId,canonicalUrl:source.canonicalUrl};
         selectedRevision++;
         history=[];messages=[];historyNotice=null;historyPartial=false;blocked=false;pending=null;awaitingNewChatIdentity=null;

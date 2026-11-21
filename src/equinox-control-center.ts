@@ -512,10 +512,10 @@ function renderNativeChatState(chat:UiRemoteData) {
   $("native-chat-send").disabled=!allowed||!$("native-chat-text").value.trim();
   const thread=chatThreadList.find(item=>item.conversationId===chatActive?.conversationId);
   setText("native-chat-title",thread?.title||"Choose a conversation");
-  const relatedTask=Array.isArray(state.tasks)&&chatActive?.browserInstanceId
-    ? state.tasks.find((task:UiRemoteData)=>task?.chatBinding?.browserContext==="user"
-      && task.chatBinding.conversationId===chatActive.conversationId
-      && task.chatBinding.browserInstanceId===chatActive.browserInstanceId)
+  const relatedTask=Array.isArray(state.tasks)&&typeof chat.taskId==="string"&&chatActive
+    ? state.tasks.find((task:UiRemoteData)=>task?.taskId===chat.taskId
+      && task?.chatBinding?.browserContext==="user"
+      && task.chatBinding.tabId===chatActive.tabId)
     : null;
   setText("native-chat-task",relatedTask?`Task Capsule · ${String(relatedTask.title||relatedTask.taskId).slice(0,64)} · ${String(relatedTask.status||"unknown").slice(0,24)}`:"");
   $("native-chat-task").hidden=!relatedTask;
