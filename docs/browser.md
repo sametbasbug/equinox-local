@@ -4,7 +4,7 @@
 
 **Versions:** The Chrome Web Store version is the authoritative **installed/public extension** version (and appears automatically in the [README badge](../README.md)). The repository's [`extension/manifest.json`](../extension/manifest.json) contains the **source candidate** version, which may be ahead of the Store while a submission is pending review. Equinox Local publishes its own signed Main separately and does not sideload extensions. The maintainer handles Store review/submission.
 
-**Source candidate 1.2.2:** fixes trusted Send focus for CLI/Telegram Chat Bridge. The ZIP is prepared for maintainer-led CWS review; it is not an installed Store update until publication.
+**Historical source candidate 1.2.2 (superseded by 1.2.4):** fixes trusted Send focus for CLI/Telegram Chat Bridge. The ZIP is prepared for maintainer-led CWS review; it is not an installed Store update until publication.
 
 **Source candidate 1.2.3 (superseded by 1.2.4):** fixes a modern ChatGPT page that renders both a hidden and a visible contenteditable composer. The previous Chat Bridge delivery receipt was correctly marked ambiguous and never replayed. The new bridge and Auto Continue composer focus select exactly one connected, nonzero-size, visible editor; no unique visible editor means no delivery. The ChatGPT continuation observer applies the same readiness rule. A CWS review/upload and live validated update are still required before calling 1.2.3 public.
 
