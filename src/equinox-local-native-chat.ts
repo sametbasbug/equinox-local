@@ -38,8 +38,13 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let sending=false;
   let creating=false;
   let blocked=false;
+  // An ambiguous receipt belongs to the exact conversation; sidebar navigation
+  // must never reset its send fence or permit a second uncertain message.
+  const uncertainConversations=new Set<string>();
+  const awaitingFirstTurns=new Map<string,{conversationId:string;text:string;deliveryId:string}>();
+  const conversationKey=(binding:Binding)=>binding.browserInstanceId+":"+binding.conversationId;
   const createAttempts=new Map<string,{text:string;promise:Promise<unknown>}>();
-  const attempts=new Map<string,{text:string;promise:Promise<unknown>}>();
+  const attempts=new Map<string,{text:string;conversationKey:string;promise:Promise<unknown>}>();
   function appendMessage(message:Message) {
     messages.push(message);
     while(messages.length>MAX_MESSAGES||messages.reduce((sum,item)=>sum+item.text.length,0)>MAX_TRANSCRIPT_CHARS)messages.shift();
@@ -87,7 +92,13 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     await chatBridge.inspectTurnIdentity({binding:next});
     const changed=selected?.conversationId!==next.conversationId||selected?.browserInstanceId!==next.browserInstanceId;
     if(changed){
-      messages=[];pending=null;awaitingNewChatIdentity=null;blocked=false;attempts.clear();history=[];historyPartial=false;historyNotice=null;
+      messages=[];pending=null;
+      awaitingNewChatIdentity=awaitingFirstTurns.get(conversationKey(next))??null;
+      blocked=uncertainConversations.has(conversationKey(next))||Boolean(awaitingNewChatIdentity);
+      history=[];historyPartial=false;
+      historyNotice=awaitingNewChatIdentity
+        ?"This New Chat is still waiting for its first response identity in Chrome."
+        :blocked?"A previous delivery in this conversation is uncertain. Inspect it in Chrome before sending again.":null;
     }
     selected=next;
     if(changed){
@@ -121,6 +132,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
             if(recent?.partial!==true&&users.length===1&&users[0].text?.trim()===awaiting.text){
               pending={userEpoch:inspected.userEpoch,previousAssistantTurnKey:null,deliveryId:awaiting.deliveryId};
               awaitingNewChatIdentity=null;
+              awaitingFirstTurns.delete(conversationKey(selected));
               blocked=false;
               historyNotice=null;
             }
@@ -162,7 +174,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       if(code==="CHAT_BRIDGE_DRIFTED"||code==="CHAT_BRIDGE_READ_FAILED"){
         // A terminal response identity mismatch must never be replayed or
         // silently rebound to a different Chrome conversation.
-        pending=null;blocked=true;turn="disconnected";
+        pending=null;blocked=true;uncertainConversations.add(conversationKey(selected));turn="disconnected";
       }else if(pending){turn="waiting";}
       else turn="disconnected";
       notice=error instanceof Error?error.message:"Browser conversation is unavailable.";
@@ -178,7 +190,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     const message=(body.text as string).trim();
     const prior=attempts.get(key);
     if(prior){
-      if(prior.text!==message)invalid("A delivery id cannot be reused with different message text.");
+      if(prior.text!==message||!selected||prior.conversationKey!==conversationKey(selected))
+        invalid("A delivery id cannot be reused for a different conversation or message.");
       return prior.promise;
     }
     // Retain every delivery identity for the lifetime of this backend.
@@ -192,6 +205,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         const result=await chatBridge.deliverText({binding,deliveryId:key,text:(body.text as string).trim()});
         if(result?.confirmed!==true){
           blocked=true;
+          uncertainConversations.add(conversationKey(binding));
           appendMessage({id:key,role:"user",text:(body.text as string).trim(),status:"uncertain"});
           return{confirmed:false,ambiguous:true};
         }
@@ -202,12 +216,13 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         const code=(error as {code?:string})?.code;
         if(code==="CHAT_BRIDGE_AMBIGUOUS"){
           blocked=true;
+          uncertainConversations.add(conversationKey(binding));
           appendMessage({id:key,role:"user",text:(body.text as string).trim(),status:"uncertain"});
         }
         throw error;
       }finally{sending=false;}
     })();
-    attempts.set(key,{text:message,promise:attempt});
+    attempts.set(key,{text:message,conversationKey:conversationKey(binding),promise:attempt});
     return attempt;
   };
   // Explicit first-message creation. Reuse the existing Task Capsule + first-party
@@ -258,7 +273,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         if(saved?.chatBinding?.conversationId!==source.conversationId||saved.chatBinding.browserInstanceId!==source.browserInstanceId)
           throw new Error("New Chat Task Capsule binding could not be confirmed.");
         selected={browserContext:"user",browserInstanceId:source.browserInstanceId,tabId:source.tabId,conversationId:source.conversationId,canonicalUrl:source.canonicalUrl};
-        history=[];messages=[];historyNotice=null;historyPartial=false;blocked=false;pending=null;awaitingNewChatIdentity=null;attempts.clear();
+        history=[];messages=[];historyNotice=null;historyPartial=false;blocked=false;pending=null;awaitingNewChatIdentity=null;
         const messageId=key.replace(/^nch-/u,"tgb-");
         appendMessage({id:messageId,role:"user",text:(body.text as string).trim(),status:"sent"});
         if(typeof opened.userEpoch==="string"&&opened.userEpoch){
@@ -268,6 +283,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           // DOM epoch. Keep sends blocked, but resolve from exact read-only
           // Browser history on a later status poll instead of locking forever.
           awaitingNewChatIdentity={conversationId:source.conversationId,text:firstMessage,deliveryId:messageId};
+          awaitingFirstTurns.set(conversationKey(selected),awaitingNewChatIdentity);
           blocked=true;
           historyNotice="New Chat opened. Waiting to verify its first turn in Chrome; no message will be resent.";
         }

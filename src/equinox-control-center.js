@@ -425,6 +425,18 @@ let chatNewDraft = false;
 let chatNewCreationId = null;
 let chatBlocked = false;
 let chatLocallyUncertain = false;
+// An IPC delivery might be committed even if its acknowledgement is lost.
+// Keep the local fence when a user switches away and back to that conversation.
+const chatUncertainConversations = new Set();
+const chatConversationKey = (value) => value?.browserInstanceId && value?.conversationId
+    ? String(value.browserInstanceId) + ":" + String(value.conversationId) : null;
+function holdChatUncertainty() {
+    const key = chatConversationKey(chatActive);
+    if (key)
+        chatUncertainConversations.add(key);
+    chatLocallyUncertain = true;
+    chatBlocked = true;
+}
 let chatThreadList = [];
 let chatDuplicateCount = 0;
 let chatActive = null;
@@ -467,6 +479,8 @@ function renderNativeChatState(chat) {
     chatActive = chat.selected || null;
     chatTurn = typeof chat.turn === "string" ? chat.turn : "unbound";
     // Only a locally uncertain IPC mutation remains sticky across polls.
+    if (chatActive && chatUncertainConversations.has(chatConversationKey(chatActive)))
+        chatLocallyUncertain = true;
     chatBlocked = Boolean(chatLocallyUncertain || chat.blocked);
     setText("native-chat-turn", chatTurn === "generating" ? "Responding…" : chatTurn === "ready" ? "Ready" : chatTurn === "complete" ? "Completed" : chatTurn === "disconnected" ? "Disconnected" : chatTurn === "waiting" ? "Waiting" : "Select a conversation");
     const allowed = Boolean(chatActive) && !chatSelecting && !chatSending && !chatBlocked && !chat.sending && !(["generating", "disconnected", "waiting"].includes(chatTurn));
@@ -569,8 +583,8 @@ async function selectNativeChat(thread) {
     try {
         $("native-chat-text").disabled = true;
         const data = await mutationJson("/api/v1/chat/select", "POST", { tabId: thread.tabId, conversationId: thread.conversationId });
-        if (chatActive?.conversationId !== thread.conversationId)
-            chatLocallyUncertain = false;
+        const key = chatConversationKey(data.chat?.selected);
+        chatLocallyUncertain = Boolean(key && chatUncertainConversations.has(key));
         chatBlocked = Boolean(chatLocallyUncertain || data.chat?.blocked);
         renderNativeChatState(data.chat);
         setText("native-chat-title", thread.title || "ChatGPT conversation");
@@ -677,8 +691,7 @@ async function sendNativeChatMessage() {
         }
         const response = await mutationJson("/api/v1/chat/send", "POST", { text, deliveryId });
         if (response.delivery?.confirmed !== true) {
-            chatLocallyUncertain = true;
-            chatBlocked = true;
+            holdChatUncertainty();
             setNativeChatNotice("Delivery is uncertain. Verify the Chrome conversation before taking further action. Nothing will be automatically resent.");
         }
         else {
@@ -703,8 +716,12 @@ async function sendNativeChatMessage() {
         else {
             // A mutation crossing the IPC/browser boundary may be ambiguous.
             // Keep the draft and require manual inspection before another action.
-            chatLocallyUncertain = true;
-            chatBlocked = true;
+            if (newMessage) {
+                chatLocallyUncertain = true;
+                chatBlocked = true;
+            }
+            else
+                holdChatUncertainty();
             setNativeChatNotice("Delivery could not be confirmed. Check the ChatGPT conversation in Chrome before continuing. " + message);
         }
     }
