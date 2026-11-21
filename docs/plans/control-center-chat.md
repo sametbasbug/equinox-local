@@ -109,6 +109,14 @@ A separate 1,163-character initial-message verification through a CLI-based Brow
 
 The first-turn startTaskChat source now reserves mutationStarted **before** invoking tabs.create. A lost response or missing tab ID is classified CHAT_BRIDGE_AMBIGUOUS instead of a potentially retry-safe pre-creation error, with **no blind retry**. Ephemeral inline assertions proved one creation attempt and an ambiguous result for both lost acknowledgement and missing tab ID; existing typecheck, generated JS parity and static checks passed. The earlier longer first-message UI/hydration mismatch remains unproven, and New Chat acceptance is **not** claimed.
 
+## Long first-turn input and composer hydration (2026-11-21)
+
+The 1,150+ character first-message starter failures were traced further without submitting any uncontrolled draft. The Browser's sequential key-event type_text could time out after entering only a prefix (851 characters were observed), while a later test wrote the remaining separate QA content into a new ChatGPT root tab. The drafts were checked against the *exact two harmless test strings*, cleared using semantic fill with an empty value, and a fresh ChatGPT root tab was verified to have a blank composer. No QA content was submitted.
+
+The source Task Chat first-turn writer now uses the existing bounded Browser fill operation, with **no submit option** and the same exact post-write text check that was already present. In a fresh authenticated user Chrome QA tab, direct semantic fill of 1,310 characters matched the visible contenteditable DOM exactly and generated zero turns; it was cleared and closed. This is intended to avoid slow per-character typing, not to bypass the user/composer readiness or ambiguity guards.
+
+Separate attempts to invoke Browser fill through an ephemeral nested eqlocal CLI adapter from an active terminal_exec did not constitute a real production New Chat acceptance: one call timed out while another stand-alone CLI process explicitly rejected a stale snapshot ref after ChatGPT hydration, with no message submission. The real Browser fill connector succeeded; source still handles stale refs by taking a fresh snapshot only when the postcondition shows the composer remains blank. The authenticated installed backend and complete New Chat GUI path have not been proven as a single chain. Do not misreport those partial results as success.
+
 ## Risks and real acceptance
 
 - ChatGPT UI/browser extension interaction is **not an official service API**. Document account-policy risks and avoid abusive automation or workarounds to provider restrictions. Prefer supported interfaces where available; no promise that one login can power every agent backend.

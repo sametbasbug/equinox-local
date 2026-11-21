@@ -252,11 +252,14 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                     }
                     let inputError = null;
                     try {
-                        await callContext("user", "type_text", {
+                        // A long first message sent as sequential key events can outlive
+                        // the IPC deadline and leave a partial draft behind. Browser fill
+                        // applies one bounded contenteditable replacement without submit;
+                        // inspectComposer below still verifies the exact final text.
+                        await callContext("user", "fill", {
                             tabId: createdTabId,
                             ref: composerRef,
-                            text: prompt,
-                            delayMs: 0,
+                            value: prompt,
                         }, 12_000);
                     }
                     catch (error) {
