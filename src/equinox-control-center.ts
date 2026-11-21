@@ -605,14 +605,14 @@ function updateNativeChatControls() {
     : "Enter to send · Shift+Enter for a new line");
 }
 
-type NativeChatMessage = { role: "user" | "assistant"; text: string; truncated: boolean; uncertain?: boolean; live?: boolean };
+type NativeChatMessage = { role: "user" | "assistant"; text: string; richText?: string | null; truncated: boolean; uncertain?: boolean; live?: boolean };
 
 function appendNativeChatInline(element: HTMLElement, text: string) {
   let end = 0;
-  for (const match of text.matchAll(/\x60([^\x60\n]+)\x60|\*\*([^*\n]+)\*\*/gu)) {
+  for (const match of text.matchAll(/(\x60+)([^\x60\n]+)\1|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/gu)) {
     element.append(text.slice(end, match.index));
-    const inline = document.createElement(match[1] === undefined ? "strong" : "code");
-    inline.textContent = match[1] ?? match[2]!;
+    const inline = document.createElement(match[1] ? "code" : match[3] ? "strong" : "em");
+    inline.textContent = match[2] ?? match[3] ?? match[4]!;
     element.append(inline);
     end = match.index + match[0].length;
   }
@@ -680,7 +680,26 @@ function appendNativeChatProse(container: HTMLElement, text: string) {
     paragraph.length = 0;
   };
   let list: HTMLOListElement | HTMLUListElement | null = null;
+  let quote: HTMLElement | null = null;
   for (const line of text.split("\n")) {
+    const quoted = /^ {0,3}>[ 	]?(.*)$/u.exec(line);
+    if (quoted) {
+      flushParagraph();
+      list = null;
+      if (!quote) {
+        quote = document.createElement("blockquote");
+        container.append(quote);
+      } else quote.append(document.createTextNode("\n"));
+      appendNativeChatInline(quote, quoted[1]!);
+      continue;
+    }
+    quote = null;
+    if (/^ {0,3}---[ 	]*$/u.test(line)) {
+      flushParagraph();
+      list = null;
+      container.append(document.createElement("hr"));
+      continue;
+    }
     const marker = NATIVE_CHAT_LIST_MARKER.exec(line);
     if (marker) {
       flushParagraph();
@@ -739,11 +758,13 @@ function renderNativeChatMessage(message: NativeChatMessage) {
   heading.append(label);
   const body = document.createElement("div");
   body.className = "native-chat-message-text";
-  if (message.role === "user" || message.live) {
+  if (message.role === "user" || !message.richText) {
     body.classList.add("native-chat-plain");
     body.textContent = message.text;
   } else {
-    renderNativeChatText(body, message.text);
+    // Only verified v12 semantic output is parsed as Markdown. Never
+    // reinterpret the original v11 plain text as formatting instructions.
+    renderNativeChatText(body, message.richText);
   }
   if (!message.live && !message.uncertain) {
     const copy = document.createElement("button");
@@ -768,7 +789,7 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
   const transcript = $("native-chat-messages");
   const live = $("native-chat-preview");
   const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 96;
-  const signatures = items.map(item => JSON.stringify([item.id, item.role, item.text, item.status, item.truncated]));
+  const signatures = items.map(item => JSON.stringify([item.id, item.role, item.text, item.richText, item.status, item.truncated]));
   const previous = chatMessageSignatures;
   const keepsPrefix = !changedConversation && previous.every((signature, index) => signature === signatures[index]);
   if (!keepsPrefix) transcript.replaceChildren();
@@ -777,6 +798,7 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
     transcript.append(renderNativeChatMessage({
       role: item.role === "user" ? "user" : "assistant",
       text: text.slice(0, 25_000),
+      richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 14_000 ? item.richText : null,
       uncertain: item.status === "uncertain",
       truncated: item.truncated === true || text.length > 25_000,
     }));
@@ -928,7 +950,9 @@ function renderNativeChatState(chat: UiRemoteData) {
   if (chatTaskPanelIdentity && chatTaskPanelIdentity !== taskIdentity) closeNativeChatTaskPanel();
 
   const preview: NativeChatMessage | null = chatTurn === "generating" && typeof chat.preview?.text === "string" && chat.preview.text
-    ? { role: "assistant", text: chat.preview.text.slice(0, 3200), live: true, truncated: chat.preview.truncated === true } : null;
+    ? { role: "assistant", text: chat.preview.text.slice(0, 3200),
+      richText: typeof chat.preview.richText === "string" && [...chat.preview.richText].length <= 4000 ? chat.preview.richText : null,
+      live: true, truncated: chat.preview.truncated === true } : null;
   renderNativeChatTranscript(Array.isArray(chat.items) ? chat.items : [], preview);
   if (chatLocallyUncertain) setNativeChatNotice("Delivery is uncertain. Check this conversation in Chrome before continuing.");
   else if (chat.notice) setNativeChatNotice(String(chat.notice).slice(0, 190));

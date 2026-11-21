@@ -518,6 +518,12 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     }
   };
 
+  const validateChatRichText = (value: unknown, limit: number): string | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== "string" || [...value].length > limit) return null;
+    return value;
+  };
+
   const readFinal = async ({ binding, userEpoch, previousAssistantTurnKey }: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null} = {}) => {
     let target: Binding;
     try {
@@ -557,6 +563,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       text: result.text,
       assistantTurnKey: result.assistantTurnKey,
       truncated: result.truncated === true,
+      richText: validateChatRichText((result as BrowserResult & {richText?:unknown}).richText,14_000),
       tabId: target.tabId,
     });
   };
@@ -567,9 +574,14 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       tabId:target.tabId,conversationId:target.conversationId,
     },10_000) as (BrowserResult & {items?:unknown;partial?:unknown}) | null;
     if(!Array.isArray(value?.items)||value.items.length>24)throw new Error("Chat Bridge recent transcript is invalid.");
+    let remainingRich = 46_000;
     const items=value.items.map((item:any)=>{
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat Bridge transcript message is invalid.");
-      return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true};
+      const candidate=item.role==="assistant"?validateChatRichText(item.richText,5000):null;
+      const size=candidate?[...candidate].length:0;
+      const richText=candidate&&size<=remainingRich?candidate:null;
+      remainingRich-=richText?size:0;
+      return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true,richText};
     });
     return Object.freeze({items,partial:value.partial===true,tabId:target.tabId});
   };
@@ -586,7 +598,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     if(!result||!["drifted","idle","generating"].includes(result.status as string)||
       (result.text!==undefined&&(typeof result.text!=="string"||[...result.text].length>3200)))
       throw new Error("Chat Bridge live preview payload is invalid.");
-    return Object.freeze({status:result.status,text:typeof result.text==="string"?result.text:"",truncated:result.truncated===true});
+    return Object.freeze({status:result.status,text:typeof result.text==="string"?result.text:"",truncated:result.truncated===true,
+      richText:validateChatRichText((result as BrowserResult & {richText?:unknown}).richText,4000)});
   };
 
   return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, readLive, startTaskChat });

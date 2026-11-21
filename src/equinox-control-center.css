@@ -931,6 +931,14 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-message-text h3 { font-size: 1.23em; }
 .native-chat-message-text > :first-child { margin-top: 0; }
 .native-chat-message-text :is(ul, ol) { padding-inline-start: 1.6em; }
+.native-chat-message-text blockquote {
+  margin-inline: 0;
+  padding-inline-start: 13px;
+  border-inline-start: 3px solid var(--line-strong);
+  color: var(--text-2);
+  white-space: pre-wrap;
+}
+.native-chat-message-text hr { border: 0; border-top: 1px solid var(--line); margin-block: 14px; }
 .native-chat-message-text li + li { margin-top: 3px; }
 .native-chat-message-text code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .native-chat-message-text :not(pre) > code { padding: .1em .3em; border-radius: 4px; background: var(--surface-3); }

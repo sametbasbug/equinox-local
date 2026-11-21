@@ -2,7 +2,7 @@ import { chatGptConversationIdFromUrl } from "./telegram-chat-bridge-controller.
 
 type BrowserTab = {id?:number;tabId?:number;url?:string;title?:string};
 type Binding = {browserContext:"user";browserInstanceId:string;tabId:number;conversationId:string;canonicalUrl:string};
-type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"complete"|"uncertain";truncated?:boolean};
+type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"complete"|"uncertain";truncated?:boolean;richText?:string|null};
 type BrowserBridge = {snapshot:()=>any;call:(method:string,args:object,options:{context:"user";timeoutMs:number})=>Promise<unknown>};
 type ChatBridge = {
   inspectTurnIdentity:(args:{binding:Binding})=>Promise<any>;
@@ -37,6 +37,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let awaitingNewChatIdentity:{conversationId:string;text:string;deliveryId:string}|null=null;
   let sending=false;
   let creating=false;
+  let previousHistoryGeneration=false;
   let selecting=false;
   let blocked=false;
   let creationBlocked=false;
@@ -105,6 +106,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       awaitingNewChatIdentity=awaitingFirstTurns.get(conversationKey(next))??null;
       blocked=uncertainConversations.has(conversationKey(next))||Boolean(awaitingNewChatIdentity);
       history=[];historyPartial=false;
+      previousHistoryGeneration=false;
       historyNotice=awaitingNewChatIdentity
         ?"This New Chat is still waiting for its first response identity in Chrome."
         :blocked?"A previous delivery in this conversation is uncertain. Inspect it in Chrome before sending again.":null;
@@ -114,7 +116,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       try{
         const value=await chatBridge.readRecent?.({binding:next});
         if(value&&Array.isArray(value.items)){
-          history=value.items.slice(-24).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),status:"complete",truncated:item.truncated===true}));
+          history=value.items.slice(-24).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,
+            text:String(item.text).slice(0,14000),status:"complete",truncated:item.truncated===true,
+            richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=5000?item.richText:null}));
           historyPartial=value.partial===true;
         }else historyNotice="Recent conversation history is not available with this Browser version.";
       }catch{historyNotice="Recent history unavailable. You can still send messages in this conversation.";}
@@ -131,13 +135,32 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       items:[],turn:"waiting",sending,blocked:true,preview:null,
       notice:"Conversation changed while reading. Refresh the selected conversation.",
       limitedHistory:true,historyCount:0,creationBlocked});
-    let turn="idle";let notice:string|null=null;let preview:{text:string;truncated:boolean}|null=null;
+    let turn="idle";let notice:string|null=null;let preview:{text:string;truncated:boolean;richText?:string|null}|null=null;
     try{
       const inspected=await chatBridge.inspectTurnIdentity({binding:initialBinding});
       if(!sameSelection())return staleResult();
       const current=inspected?.binding as Binding|undefined;
       if(current&&current.conversationId===selected.conversationId&&current.browserInstanceId===selected.browserInstanceId)selected=current;
-      turn=inspected?.generationActive===true?"generating":inspected?.status==="waiting"?"waiting":"ready";
+      const generatingNow=inspected?.generationActive===true;
+      turn=generatingNow?"generating":inspected?.status==="waiting"?"waiting":"ready";
+      // Conversations selected while generating have no local send receipt.
+      // Refresh their bounded history once when the observed generation ends.
+      if(!generatingNow&&previousHistoryGeneration&&!pending&&!messages.length&&chatBridge.readRecent){
+        previousHistoryGeneration=false;
+        try{
+          const fresh=await chatBridge.readRecent({binding:initialBinding});
+          if(!sameSelection())return staleResult();
+          if(Array.isArray(fresh?.items)){
+            history=fresh.items.slice(-24).map((item:any):Message=>({
+              id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
+              status:"complete",truncated:item.truncated===true,
+              richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=5000?item.richText:null,
+            }));
+            historyPartial=fresh.partial===true;
+          }
+        }catch{historyNotice="Recent conversation history could not be refreshed after generation.";}
+      }
+      if(generatingNow)previousHistoryGeneration=true;
       if(awaitingNewChatIdentity&&inspected?.status==="ready"&&typeof inspected.userEpoch==="string"&&inspected.userEpoch){
         // A fresh /c/ URL can precede the first user-turn epoch. Read-only
         // corroboration of the ONLY user message prevents accidentally claiming
@@ -173,7 +196,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           if(pending===receipt){
             const reply=result.text;
             appendMessage({id:receipt.deliveryId+"-reply",role:"assistant",text:reply.slice(0,MAX_ASSISTANT_CHARS),status:"complete",
-              truncated:result.truncated===true||reply.length>MAX_ASSISTANT_CHARS});
+              truncated:result.truncated===true||reply.length>MAX_ASSISTANT_CHARS,
+              richText:typeof result.richText==="string"&&[...result.richText].length<=14000?result.richText:null});
             pending=null;
           }
           turn="complete";
@@ -187,7 +211,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         const live=await chatBridge.readLive({binding:initialBinding,userEpoch:inspected.userEpoch});
         if(!sameSelection())return staleResult();
         if(live?.status==="generating"&&typeof live.text==="string"&&live.text)
-          preview={text:live.text.slice(0,3200),truncated:live.truncated===true||live.text.length>3200};
+          preview={text:live.text.slice(0,3200),truncated:live.truncated===true||live.text.length>3200,
+            richText:typeof live.richText==="string"&&[...live.richText].length<=4000?live.richText:null};
         else if(live?.status==="drifted")throw Object.assign(new Error("Live Chat turn identity changed."),{code:"CHAT_BRIDGE_DRIFTED"});
       }
     }catch(error){
