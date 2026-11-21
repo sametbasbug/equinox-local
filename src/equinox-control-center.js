@@ -425,6 +425,7 @@ let chatSelectionGeneration = 0;
 let chatNewDraft = false;
 let chatNewCreationId = null;
 let chatBlocked = false;
+let chatCreationBlocked = false;
 let chatLocallyUncertain = false;
 // An IPC delivery might be committed even if its acknowledgement is lost.
 // Keep the local fence when a user switches away and back to that conversation.
@@ -479,6 +480,7 @@ function renderNativeChatState(chat) {
         return;
     chatActive = chat.selected || null;
     chatTurn = typeof chat.turn === "string" ? chat.turn : "unbound";
+    chatCreationBlocked = chat.creationBlocked === true || chatCreationBlocked;
     // Only a locally uncertain IPC mutation remains sticky across polls.
     if (chatActive && chatUncertainConversations.has(chatConversationKey(chatActive)))
         chatLocallyUncertain = true;
@@ -617,6 +619,10 @@ function beginNewNativeChat() {
         setNativeChatNotice("Clear the unsent message before starting a new conversation.");
         return;
     }
+    if (chatCreationBlocked) {
+        setNativeChatNotice("A previous New Chat creation could not be confirmed. Inspect Chrome before creating another conversation.");
+        return;
+    }
     if (chatSending || chatSelecting || chatBlocked || ["waiting", "generating"].includes(chatTurn)) {
         setNativeChatNotice("A message is still active or uncertain. Verify the current conversation before starting another.");
         return;
@@ -731,6 +737,7 @@ async function sendNativeChatMessage() {
             // A mutation crossing the IPC/browser boundary may be ambiguous.
             // Keep the draft and require manual inspection before another action.
             if (newMessage) {
+                chatCreationBlocked = true;
                 chatLocallyUncertain = true;
                 chatBlocked = true;
             }

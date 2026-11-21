@@ -38,6 +38,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let sending=false;
   let creating=false;
   let blocked=false;
+  let creationBlocked=false;
   let selectedRevision=0;
   // An ambiguous receipt belongs to the exact conversation; sidebar navigation
   // must never reset its send fence or permit a second uncertain message.
@@ -115,14 +116,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     return await read();
   };
   const read=async()=>{
-    if(!selected)return{selected:null,items:[],turn:"unbound",blocked:false,limitedHistory:true};
+    if(!selected)return{selected:null,items:[],turn:"unbound",blocked:false,creationBlocked,limitedHistory:true};
     const initialBinding=selected;
     const startingRevision=selectedRevision;
     const sameSelection=()=>selectedRevision===startingRevision;
     const staleResult=()=>({selected:{conversationId:selected!.conversationId,tabId:selected!.tabId,browserInstanceId:selected!.browserInstanceId},
       items:[],turn:"waiting",sending,blocked:true,preview:null,
       notice:"Conversation changed while reading. Refresh the selected conversation.",
-      limitedHistory:true,historyCount:0});
+      limitedHistory:true,historyCount:0,creationBlocked});
     let turn="idle";let notice:string|null=null;let preview:{text:string;truncated:boolean}|null=null;
     try{
       const inspected=await chatBridge.inspectTurnIdentity({binding:initialBinding});
@@ -200,7 +201,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     // attribute a previous conversation's text/preview to the new selection.
     if(!sameSelection())return staleResult();
     return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-54),
-      turn,sending,blocked,preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
+      turn,sending,blocked,creationBlocked,preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
   };
   const send=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid chat delivery request.");
@@ -262,6 +263,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       if(prior.text!==firstMessage)invalid("A New Chat creation id cannot be reused with different message text.");
       return prior.promise;
     }
+    if(creationBlocked)invalid("A previous New Chat creation is uncertain. Check Chrome before restarting the Chat session; no new conversation will be opened automatically.");
     if(createAttempts.size>=MAX_NEW_CHAT_IDS)invalid("New Chat reached its request limit for this runtime.");
     if(!taskStore||!chatBridge.startTaskChat)invalid("New Chat is unavailable on this installation.");
     if(creating||sending||pending||blocked)invalid("Finish the current conversation or reconcile an uncertain delivery before starting New Chat.");
@@ -321,7 +323,12 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
             throw definitive;
           }
         }
-        if(taskId)blocked=true; // Other failures may have crossed the submit boundary.
+        if(taskId){
+          // The first tab/prompt may already exist. Switching to another known
+          // conversation must not authorize a second unknown New Chat.
+          creationBlocked=true;
+          blocked=true;
+        }
         throw error;
       }finally{creating=false;}
     })();
