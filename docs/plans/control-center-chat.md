@@ -1,6 +1,6 @@
 # Equinox Local Chat: native conversation workspace
 
-Status: **design corrected 2026-11-21; not implemented or released.** User reference: [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids). This page supersedes the earlier embedded-ChatGPT-web proposal.
+Status: **implemented on Draft PR #354; not merged or released.** Design corrected 2026-11-21. User reference: [Chat On Steroids](https://github.com/totec448-spec/chat-on-steroids). This page supersedes the earlier embedded-ChatGPT-web proposal.
 
 ## What the user means
 
@@ -122,6 +122,14 @@ Separate attempts to invoke Browser fill through an ephemeral nested eqlocal CLI
 An independent **real authenticated Chrome session** test used the current Equinox Browser semantic operations to validate the revised primitive end to end, without installing an alternate Local runtime. A temporary new ChatGPT root tab initially returned a stale snapshot ref during hydration; because the DOM still had **one empty visible composer and zero turns**, a fresh textbox snapshot was taken. A single bounded **fill** staged exactly **1,259 characters**. The first-party live composer was verified to match byte-for-byte; there was exactly one visible, enabled Send button and zero existing turns. One semantic click returned actionDispatched/primaryActionSucceeded true and outcomeUncertain false. Chrome published the fresh conversation identity, and the **assistant** emitted the exact expected EQL_LONG_FILL_REAL_QA_OK token with generation stopped. The QA tab was closed. There was no blind retry of a click or a second send.
 
 This demonstrates real long-first-message Browser input/delivery/final behavior and validates the primitives used by the source starter. It is **not** acceptance of the complete new feature's installed Native Chat New Chat button and task binding. The currently installed Factory still carries the released main backend; the feature branch's complete new-chat chain cannot be claimed installed until a source-role cutover and matching GUI proof occur.
+
+## Delayed New Chat identity and safe draft recovery (2026-11-21)
+
+A newly submitted first message can be confirmed with an exact new Chrome conversation URL before the Browser exposes its first user-turn epoch. Previously the Native Chat controller permanently blocked this new conversation even if the first epoch appeared seconds later. The controller now keeps the first turn pending and **read-only** rechecks the exact bound conversation's recent rendered history. It unlocks only if that history is complete, contains **exactly one user message** matching the original first-turn text, and the observer supplies a nonempty current user epoch. Then it attaches the existing first-turn receipt and reads the answer, **never sending the prompt again**. If history is missing, partial or shows a different/second user turn, the conversation remains blocked for manual reconciliation. Selecting another conversation clears the unconfirmed first-turn state.
+
+The native UI separately tracks uncertainty of **its own IPC mutation**, which must stay sticky, versus backend-side provisional first-turn blocking, which must clear after exact read-only corroboration. A proven no-submit New Chat error now also re-enables the retained draft and its Send control with a fresh creation ID. Unknown delivery results remain fail-closed. TypeScript/runtime parity/static checks passed; no repository test files were added.
+
+Two levels of disposable validation were completed: (1) transient controller checks showed one original send, delayed first-turn recovery and reply, while both a second Chrome user message and an empty history remained blocked; (2) a **real bundled Electron Chat GUI** under equinox://control with shipped preload and feature Control API showed Waiting with one user bubble, then Completed with exactly one assistant bubble and an enabled composer after delayed epoch confirmation. A second explicit New Chat creation produced a synthetic definite pre-submit failure, cancelled its temporary Task and kept the original draft editable. The isolated QA window, process and temporary files were cleaned. The Browser responses in this validation were **synthetic**; actual installed Source Factory matching the feature commit is still a separate release gate.
 
 ## Risks and real acceptance
 

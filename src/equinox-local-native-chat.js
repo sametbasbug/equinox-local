@@ -14,6 +14,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     let historyPartial = false;
     let historyNotice = null;
     let pending = null;
+    let awaitingNewChatIdentity = null;
     let sending = false;
     let creating = false;
     let blocked = false;
@@ -80,6 +81,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (changed) {
             messages = [];
             pending = null;
+            awaitingNewChatIdentity = null;
             blocked = false;
             attempts.clear();
             history = [];
@@ -115,6 +117,29 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             if (current && current.conversationId === selected.conversationId && current.browserInstanceId === selected.browserInstanceId)
                 selected = current;
             turn = inspected?.generationActive === true ? "generating" : inspected?.status === "waiting" ? "waiting" : "ready";
+            if (awaitingNewChatIdentity && inspected?.status === "ready" && typeof inspected.userEpoch === "string" && inspected.userEpoch) {
+                // A fresh /c/ URL can precede the first user-turn epoch. Read-only
+                // corroboration of the ONLY user message prevents accidentally claiming
+                // a later manual Chrome turn as the opener. No prompt is resent.
+                const awaiting = awaitingNewChatIdentity;
+                if (selected.conversationId === awaiting.conversationId && chatBridge.readRecent) {
+                    try {
+                        const recent = await chatBridge.readRecent({ binding: selected });
+                        const users = Array.isArray(recent?.items) ? recent.items.filter((item) => item?.role === "user") : [];
+                        if (recent?.partial !== true && users.length === 1 && users[0].text?.trim() === awaiting.text) {
+                            pending = { userEpoch: inspected.userEpoch, previousAssistantTurnKey: null, deliveryId: awaiting.deliveryId };
+                            awaitingNewChatIdentity = null;
+                            blocked = false;
+                            historyNotice = null;
+                        }
+                    }
+                    catch { /* Incomplete browser history is not proof of the first turn. */ }
+                }
+                if (awaitingNewChatIdentity)
+                    notice = "New Chat is waiting for exact first-turn identity confirmation in Chrome. No message will be resent.";
+            }
+            if (awaitingNewChatIdentity)
+                turn = "waiting";
             if (pending) {
                 const receipt = pending;
                 const result = await chatBridge.readFinal({ binding: selected, userEpoch: receipt.userEpoch, previousAssistantTurnKey: receipt.previousAssistantTurnKey });
@@ -273,6 +298,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 historyPartial = false;
                 blocked = false;
                 pending = null;
+                awaitingNewChatIdentity = null;
                 attempts.clear();
                 const messageId = key.replace(/^nch-/u, "tgb-");
                 appendMessage({ id: messageId, role: "user", text: body.text.trim(), status: "sent" });
@@ -280,8 +306,12 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     pending = { userEpoch: opened.userEpoch, previousAssistantTurnKey: null, deliveryId: messageId };
                 }
                 else {
+                    // A confirmed new tab/conversation can still precede its first turn's
+                    // DOM epoch. Keep sends blocked, but resolve from exact read-only
+                    // Browser history on a later status poll instead of locking forever.
+                    awaitingNewChatIdentity = { conversationId: source.conversationId, text: firstMessage, deliveryId: messageId };
                     blocked = true;
-                    historyNotice = "New Chat opened, but its first response identity is not yet confirmed. Inspect the conversation in Chrome before sending anything else.";
+                    historyNotice = "New Chat opened. Waiting to verify its first turn in Chrome; no message will be resent.";
                 }
                 return { confirmed: true, taskId: newTaskId, chat: await read() };
             }
