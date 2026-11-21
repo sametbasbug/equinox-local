@@ -6,7 +6,7 @@ type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"com
 type BrowserBridge = {snapshot:()=>any;call:(method:string,args:object,options:{context:"user";timeoutMs:number})=>Promise<unknown>};
 type ChatBridge = {
   inspectTurnIdentity:(args:{binding:Binding})=>Promise<any>;
-  deliverText:(args:{binding:Binding;deliveryId:string;text:string})=>Promise<any>;
+  deliverText:(args:{binding:Binding;deliveryId:string;text:string;requireExactTab?:boolean})=>Promise<any>;
   readFinal:(args:{binding:Binding;userEpoch:string;previousAssistantTurnKey:string|null})=>Promise<any>;
   readRecent?:(args:{binding:Binding})=>Promise<any>;
   readLive?:(args:{binding:Binding;userEpoch:string})=>Promise<any>;
@@ -99,7 +99,13 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(!source?.url)invalid("Conversation identity changed during selection.");
     next.canonicalUrl=source.url;
     await chatBridge.inspectTurnIdentity({binding:next});
-    const changed=selected?.conversationId!==next.conversationId||selected?.browserInstanceId!==next.browserInstanceId;
+    // A conversation reopened in a different Chrome tab is a different
+    // authenticated transport binding. Never reuse that tab's stale history,
+    // preview or task-specific send state merely because its URL ID matches.
+    const changed=selected?.conversationId!==next.conversationId
+      ||selected?.browserInstanceId!==next.browserInstanceId
+      ||selected?.tabId!==next.tabId
+      ||selected?.canonicalUrl!==next.canonicalUrl;
     if(changed){
       selectedRevision++;
       messages=[];pending=null;
@@ -115,6 +121,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(changed){
       try{
         const value=await chatBridge.readRecent?.({binding:next});
+        if(value?.tabId!==undefined && value.tabId!==next.tabId)
+          throw new Error("Recent history came from another Chrome tab.");
         if(value&&Array.isArray(value.items)){
           history=value.items.slice(-24).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,
             text:String(item.text).slice(0,14000),status:"complete",truncated:item.truncated===true,
@@ -130,7 +138,10 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(!selected)return{selected:null,items:[],turn:"unbound",blocked:false,creationBlocked,limitedHistory:true};
     const initialBinding=selected;
     const startingRevision=selectedRevision;
-    const sameSelection=()=>selectedRevision===startingRevision;
+    const sameSelection=()=>selectedRevision===startingRevision
+      &&selected?.browserInstanceId===initialBinding.browserInstanceId
+      &&selected?.conversationId===initialBinding.conversationId
+      &&selected?.tabId===initialBinding.tabId;
     const staleResult=()=>({selected:{conversationId:selected!.conversationId,tabId:selected!.tabId,browserInstanceId:selected!.browserInstanceId},
       items:[],turn:"waiting",sending,blocked:true,preview:null,
       notice:"Conversation changed while reading. Refresh the selected conversation.",
@@ -140,7 +151,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       const inspected=await chatBridge.inspectTurnIdentity({binding:initialBinding});
       if(!sameSelection())return staleResult();
       const current=inspected?.binding as Binding|undefined;
-      if(current&&current.conversationId===selected.conversationId&&current.browserInstanceId===selected.browserInstanceId)selected=current;
+      if(!current||current.browserContext!=="user"
+          ||current.conversationId!==initialBinding.conversationId
+          ||current.browserInstanceId!==initialBinding.browserInstanceId
+          ||current.tabId!==initialBinding.tabId) {
+        throw Object.assign(new Error("The selected Chrome tab changed. Select the conversation again from the sidebar."),
+          {code:"CHAT_BRIDGE_TAB_CHANGED"});
+      }
+      selected=current;
       const generatingNow=inspected?.generationActive===true;
       turn=generatingNow?"generating":inspected?.status==="waiting"?"waiting":"ready";
       // Conversations selected while generating have no local send receipt.
@@ -150,6 +168,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         try{
           const fresh=await chatBridge.readRecent({binding:initialBinding});
           if(!sameSelection())return staleResult();
+          if(fresh?.tabId!==undefined && fresh.tabId!==initialBinding.tabId)
+            throw Object.assign(new Error("The selected Chrome tab changed while refreshing history."),{code:"CHAT_BRIDGE_TAB_CHANGED"});
           if(Array.isArray(fresh?.items)){
             history=fresh.items.slice(-24).map((item:any):Message=>({
               id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
@@ -170,6 +190,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           try{
             const recent=await chatBridge.readRecent({binding:initialBinding});
             if(!sameSelection())return staleResult();
+            if(recent?.tabId!==undefined && recent.tabId!==initialBinding.tabId) throw new Error("New Chat read another Chrome tab.");
             const users=Array.isArray(recent?.items)?recent.items.filter((item:any)=>item?.role==="user"):[];
             if(recent?.partial!==true&&users.length===1&&users[0].text?.trim()===awaiting.text){
               pending={userEpoch:inspected.userEpoch,previousAssistantTurnKey:null,deliveryId:awaiting.deliveryId};
@@ -187,6 +208,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         const receipt=pending;
         const result=await chatBridge.readFinal({binding:initialBinding,userEpoch:receipt.userEpoch,previousAssistantTurnKey:receipt.previousAssistantTurnKey});
         if(!sameSelection())return staleResult();
+        if(result?.tabId!==undefined && result.tabId!==initialBinding.tabId)
+          throw Object.assign(new Error("The pending assistant response moved to another Chrome tab."),
+            {code:"CHAT_BRIDGE_TAB_CHANGED"});
         if(result?.status==="ready"){
           if(typeof result.text!=="string"){
             throw Object.assign(new Error("The confirmed ChatGPT reply has no readable text payload."),{code:"CHAT_BRIDGE_READ_FAILED"});
@@ -210,6 +234,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
          typeof inspected.userEpoch==="string"&&chatBridge.readLive){
         const live=await chatBridge.readLive({binding:initialBinding,userEpoch:inspected.userEpoch});
         if(!sameSelection())return staleResult();
+        if(live?.tabId!==undefined && live.tabId!==initialBinding.tabId)
+          throw Object.assign(new Error("The live assistant preview moved to another Chrome tab."),
+            {code:"CHAT_BRIDGE_TAB_CHANGED"});
         if(live?.status==="generating"&&typeof live.text==="string"&&live.text)
           preview={text:live.text.slice(0,3200),truncated:live.truncated===true||live.text.length>3200,
             richText:typeof live.richText==="string"&&[...live.richText].length<=4000?live.richText:null};
@@ -220,9 +247,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       // uncertain or disconnected. The stale-response guard below owns it.
       if(sameSelection()){
         const code=(error as {code?:string})?.code;
-        if(code==="CHAT_BRIDGE_DRIFTED"||code==="CHAT_BRIDGE_READ_FAILED"){
-          // A terminal response identity mismatch must never be replayed or
-          // silently rebound to a different Chrome conversation.
+        if(code==="CHAT_BRIDGE_TAB_CHANGED") {
+          // A read-only tab move is recoverable by explicit reselection.
+          // A pending/mutating send remains uncertain instead of migrating.
+          if(pending||sending){
+            pending=null;blocked=true;uncertainConversations.add(conversationKey(selected));
+          }
+          turn="disconnected";
+        }else if(code==="CHAT_BRIDGE_DRIFTED"||code==="CHAT_BRIDGE_READ_FAILED"){
           pending=null;blocked=true;uncertainConversations.add(conversationKey(selected));turn="disconnected";
         }else if(pending){turn="waiting";}
         else turn="disconnected";
@@ -256,7 +288,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     sending=true;
     const attempt=(async()=>{
       try{
-        const result=await chatBridge.deliverText({binding,deliveryId:key,text:(body.text as string).trim()});
+        const result=await chatBridge.deliverText({binding,deliveryId:key,text:(body.text as string).trim(),requireExactTab:true});
         if(result?.confirmed!==true){
           blocked=true;
           uncertainConversations.add(conversationKey(binding));
@@ -268,6 +300,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         return{confirmed:true,ambiguous:false};
       }catch(error){
         const code=(error as {code?:string})?.code;
+        if(code==="CHAT_BRIDGE_NOT_READY"){
+          // The bridge verified no native send crossed the Chrome mutation
+          // boundary. Preserve the draft and allow a fresh explicit selection.
+          const definitive:Error&{statusCode?:number}=new Error("Chat was not submitted: "+
+            (error instanceof Error?error.message:"The selected Chrome tab is not ready."));
+          definitive.statusCode=409;
+          throw definitive;
+        }
         if(code==="CHAT_BRIDGE_AMBIGUOUS"){
           blocked=true;
           uncertainConversations.add(conversationKey(binding));

@@ -934,6 +934,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-message-heading { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin-bottom: 7px; }
 .native-chat-message-meta { display: block; margin: 0; color: var(--muted); font-size: 12px; font-weight: 620; }
 .native-chat-message.is-user .native-chat-message-heading { justify-content: flex-end; }
+.native-chat-message-actions { display: inline-flex; align-items: center; gap: 6px; }
 .native-chat-message-copy {
   padding: 2px 5px;
   border: 0;

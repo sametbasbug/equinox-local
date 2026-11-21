@@ -100,7 +100,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         }
         return { binding: target, state, reacquired: target.tabId !== binding.tabId };
     };
-    const deliverText = async ({ binding, deliveryId, text } = {}) => {
+    const deliverText = async ({ binding, deliveryId, text, requireExactTab = false } = {}) => {
         const message = typeof text === "string" ? text.trim() : "";
         if (!message || message.length > 4_000 || /\0/u.test(message))
             throw new Error("Telegram Chat Bridge message must contain 1–4000 safe characters.");
@@ -108,6 +108,14 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             throw new Error("Telegram Chat Bridge delivery id is invalid.");
         agentControl.assertMutationAllowed("telegram_chat_bridge_delivery");
         const { binding: target, state } = await inspectBinding(binding);
+        if (requireExactTab && target.tabId !== binding?.tabId) {
+            // Native Chat is explicitly tab-bound. Telegram can continue using
+            // documented re-acquisition, but native sends must never silently jump
+            // to another Chrome tab after the original one disappears.
+            const error = new Error("The selected Chrome tab changed. Select that conversation again before sending.");
+            error.code = "CHAT_BRIDGE_NOT_READY";
+            throw error;
+        }
         if (state.generationActive) {
             const error = new Error("ChatGPT is still generating in the bound conversation. Try again when it is idle.");
             error.code = "CHAT_BRIDGE_NOT_READY";
@@ -557,7 +565,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             (result.text !== undefined && (typeof result.text !== "string" || [...result.text].length > 3200)))
             throw new Error("Chat Bridge live preview payload is invalid.");
         return Object.freeze({ status: result.status, text: typeof result.text === "string" ? result.text : "", truncated: result.truncated === true,
-            richText: validateChatRichText(result.richText, 4000) });
+            richText: validateChatRichText(result.richText, 4000), tabId: target.tabId });
     };
     return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, readLive, startTaskChat });
 }

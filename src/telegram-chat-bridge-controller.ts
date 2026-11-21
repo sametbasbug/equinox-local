@@ -45,7 +45,7 @@ type Inspection = {binding: Binding; state: BrowserState; reacquired: boolean};
 type BridgeController = {
   inspectBinding: (binding: unknown, requiredVersion?: number, options?: {allowMissingAssistantTurnKey?: boolean; allowMissingUserEpoch?: boolean}) => Promise<Inspection>;
   inspectTurnIdentity: (args?: {binding?: Binding}) => Promise<unknown>;
-  deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string}) => Promise<unknown>;
+  deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string; requireExactTab?: boolean}) => Promise<unknown>;
   readFinal: (args?: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null}) => Promise<unknown>;
   readRecent: (args?: {binding?: Binding}) => Promise<unknown>;
   startTaskChat: (args?: {taskId?: string; checkpointRevision?: number; initialMessage?: string}) => Promise<unknown>;
@@ -157,12 +157,22 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     return { binding: target, state, reacquired: target.tabId !== binding.tabId };
   };
 
-  const deliverText = async ({ binding, deliveryId, text }: {binding?: Binding; deliveryId?: string; text?: string} = {}) => {
+  const deliverText = async ({ binding, deliveryId, text, requireExactTab = false }: {
+    binding?: Binding; deliveryId?: string; text?: string; requireExactTab?: boolean
+  } = {}) => {
     const message = typeof text === "string" ? text.trim() : "";
     if (!message || message.length > 4_000 || /\0/u.test(message)) throw new Error("Telegram Chat Bridge message must contain 1–4000 safe characters.");
     if (typeof deliveryId !== "string" || !/^tgb-[a-z0-9-]{6,80}$/u.test(deliveryId)) throw new Error("Telegram Chat Bridge delivery id is invalid.");
     agentControl.assertMutationAllowed("telegram_chat_bridge_delivery");
     const { binding: target, state } = await inspectBinding(binding);
+    if (requireExactTab && target.tabId !== binding?.tabId) {
+      // Native Chat is explicitly tab-bound. Telegram can continue using
+      // documented re-acquisition, but native sends must never silently jump
+      // to another Chrome tab after the original one disappears.
+      const error = new Error("The selected Chrome tab changed. Select that conversation again before sending.") as CodedError;
+      error.code = "CHAT_BRIDGE_NOT_READY";
+      throw error;
+    }
     if (state.generationActive) {
       const error = new Error("ChatGPT is still generating in the bound conversation. Try again when it is idle.") as CodedError;
       error.code = "CHAT_BRIDGE_NOT_READY";
@@ -599,7 +609,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       (result.text!==undefined&&(typeof result.text!=="string"||[...result.text].length>3200)))
       throw new Error("Chat Bridge live preview payload is invalid.");
     return Object.freeze({status:result.status,text:typeof result.text==="string"?result.text:"",truncated:result.truncated===true,
-      richText:validateChatRichText((result as BrowserResult & {richText?:unknown}).richText,4000)});
+      richText:validateChatRichText((result as BrowserResult & {richText?:unknown}).richText,4000),tabId:target.tabId});
   };
 
   return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, readLive, startTaskChat });

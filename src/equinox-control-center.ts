@@ -283,6 +283,12 @@ function setLanguage(nextLanguage: UiRemoteData, { persist = true } = {}) {
   if (state.config) renderAll();
   setText("save-config-button", "Save configuration");
   switchSection(state.activeSection);
+  if (state.activeSection === "chat") {
+    // Relabel the visible conversation locally, without relying on a network
+    // refresh while Chrome is generating or temporarily disconnected.
+    if (chatStateAvailable && chatLastRenderedState && !chatNewDraft) renderNativeChatState(chatLastRenderedState);
+    else updateNativeChatControls();
+  }
   renderLastRefreshed();
   if (state.dialogMode) {
     const isProject = state.dialogKind === "project";
@@ -481,6 +487,8 @@ let chatThreadRenderSignature = "";
 let chatFeedConversation: string | null = null;
 let chatMessageSignatures: string[] = [];
 let chatPreviewSignature = "";
+let chatLastRenderedState: UiRemoteData | null = null;
+let chatQuoteSelection: { body: HTMLElement; text: string } | null = null;
 let chatTaskRelated: { taskId: string; identity: string } | null = null;
 let chatTaskPanelIdentity: string | null = null;
 let chatTaskPanelGeneration = 0;
@@ -741,6 +749,25 @@ function renderNativeChatText(container: HTMLElement, text: string) {
   appendNativeChatProse(container, source.slice(end));
 }
 
+function selectedNativeChatQuote() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.anchorNode || !selection.focusNode) return null;
+  const node = selection.anchorNode;
+  const element = node instanceof Element ? node : node.parentElement;
+  const body = element?.closest<HTMLElement>(".native-chat-message-text");
+  if (!body || !body.isConnected || !body.contains(selection.focusNode)
+      || !body.closest(".native-chat-message:not(.is-user):not(.is-preview)")) return null;
+  const text = selection.toString().trim();
+  return text ? { body, text } : null;
+}
+
+function refreshNativeChatQuoteSelection() {
+  const selection = selectedNativeChatQuote();
+  if (selection) chatQuoteSelection = selection;
+  else if (!(document.activeElement instanceof HTMLElement
+      && document.activeElement.closest(".native-chat-message-actions"))) chatQuoteSelection = null;
+}
+
 function renderNativeChatMessage(message: NativeChatMessage) {
   const article = document.createElement("article");
   article.className = "native-chat-message";
@@ -767,6 +794,8 @@ function renderNativeChatMessage(message: NativeChatMessage) {
     renderNativeChatText(body, message.richText);
   }
   if (!message.live && !message.uncertain) {
+    const actions = document.createElement("div");
+    actions.className = "native-chat-message-actions";
     const copy = document.createElement("button");
     copy.type = "button";
     copy.className = "native-chat-message-copy";
@@ -776,7 +805,48 @@ function renderNativeChatMessage(message: NativeChatMessage) {
     copy.addEventListener("click", async () => {
       showToast(await copyNativeChatText(body, message.text) ? "Message copied." : "Could not copy message.");
     });
-    heading.append(copy);
+    actions.append(copy);
+    if (message.role === "assistant") {
+      const quote = document.createElement("button");
+      quote.type = "button";
+      quote.className = "native-chat-message-copy native-chat-quote";
+      quote.textContent = localizeUiText("Quote");
+      quote.setAttribute("aria-label", localizeUiText("Quote selected text"));
+      quote.title = localizeUiText("Quote selected text");
+      // Always keyboard reachable. The action will only use an actual
+      // selection scoped to this very message, never another conversation.
+      quote.addEventListener("pointerdown", refreshNativeChatQuoteSelection);
+      quote.addEventListener("click", () => {
+        const selection = selectedNativeChatQuote()
+          || (chatQuoteSelection?.body === body && body.isConnected ? chatQuoteSelection : null);
+        chatQuoteSelection = null;
+        const excerpt = selection?.body === body ? selection.text : "";
+        const composer = chatComposer();
+        if (!excerpt) {
+          setNativeChatNotice("Select text in this reply before choosing Quote.");
+          return;
+        }
+        if (composer.disabled || chatNewDraft || !chatActive || chatBlocked) return;
+        const quoted = "> " + excerpt.replace(/\r\n?|\n/gu, "\n> ") + "\n\n";
+        const start = composer.selectionStart;
+        const prefix = composer.value.slice(0, start);
+        const insertion = (prefix && !prefix.endsWith("\n") ? "\n\n" : "") + quoted;
+        // Preserve even text highlighted in the unsent draft. This action
+        // inserts at the caret, never replaces or auto-sends any draft.
+        const next = prefix + insertion + composer.value.slice(start);
+        if (next.length > composer.maxLength) {
+          setNativeChatNotice("This quotation is too long for the message limit. Select a shorter excerpt.");
+          return;
+        }
+        composer.value = next;
+        composer.focus();
+        const cursor = prefix.length + insertion.length;
+        composer.setSelectionRange(cursor, cursor);
+        updateNativeChatControls();
+      });
+      actions.append(quote);
+    }
+    heading.append(actions);
   }
   article.append(heading, body);
   return article;
@@ -790,13 +860,15 @@ function updateNativeChatJumpToLatest() {
 }
 
 function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMessage | null) {
-  const key = chatNewDraft ? null : chatConversationKey(chatActive);
+  const conversation = chatNewDraft ? null : chatConversationKey(chatActive);
+  const key = conversation && chatActive?.tabId ? conversation + ":" + String(chatActive.tabId) : null;
   const changedConversation = key !== chatFeedConversation;
+  if (changedConversation) chatQuoteSelection = null;
   const feed = $("native-chat-feed");
   const transcript = $("native-chat-messages");
   const live = $("native-chat-preview");
   const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 96;
-  const signatures = items.map(item => JSON.stringify([item.id, item.role, item.text, item.richText, item.status, item.truncated]));
+  const signatures = items.map(item => JSON.stringify([state.language, item.id, item.role, item.text, item.richText, item.status, item.truncated]));
   const previous = chatMessageSignatures;
   const keepsPrefix = !changedConversation && previous.every((signature, index) => signature === signatures[index]);
   if (!keepsPrefix) transcript.replaceChildren();
@@ -810,7 +882,7 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
       truncated: item.truncated === true || text.length > 25_000,
     }));
   }
-  const previewSignature = JSON.stringify(preview);
+  const previewSignature = JSON.stringify([state.language, preview]);
   const changedPreview = changedConversation || previewSignature !== chatPreviewSignature;
   if (changedPreview) live.replaceChildren(...(preview ? [renderNativeChatMessage(preview)] : []));
   live.hidden = !preview;
@@ -874,7 +946,9 @@ function renderNativeChatTaskDetails(task: UiRemoteData) {
     if (visible.length < entries.length) {
       const truncated = document.createElement("p");
       truncated.className = "native-chat-task-meta";
-      truncated.textContent = localizeUiText("Showing 8 of " + entries.length + " steps. See Tasks for the full history.");
+      truncated.textContent = state.language === "tr"
+        ? entries.length + " adımdan 8’i gösteriliyor. Geçmişin tamamı Görevler bölümünde."
+        : "Showing 8 of " + entries.length + " steps. See Tasks for the full history.";
       content.append(truncated);
     }
   };
@@ -926,6 +1000,7 @@ async function loadNativeChatTaskPanel() {
 
 function renderNativeChatState(chat: UiRemoteData) {
   if (!chat || typeof chat !== "object" || chatNewDraft) return;
+  chatLastRenderedState = chat;
   chatActive = chat.selected || null;
   chatTurn = typeof chat.turn === "string" ? chat.turn : "unbound";
   chatStateAvailable = true;
@@ -1147,6 +1222,10 @@ async function sendNativeChatMessage() {
     const message = nativeChatErrorMessage(error);
     if (confirmed) {
       setNativeChatNotice("Message sent. Refresh to check the conversation in Chrome.");
+    } else if (!newMessage && message.startsWith("Chat was not submitted: ")) {
+      // A strict-tab preflight proved no Chrome mutation occurred. Keep the
+      // draft and do not label this definite refusal as an ambiguous send.
+      setNativeChatNotice(message);
     } else if (newMessage && message.startsWith("New Chat was not submitted: ")) {
       // The backend confirmed no Chrome submit. The failed creation ID stays reserved.
       chatNewCreationId = "nch-" + crypto.randomUUID();
@@ -4586,6 +4665,7 @@ function bindEvents() {
     if ($("native-chat-refresh").getAttribute("aria-disabled") !== "true") void refreshNativeChat(true);
   });
   $("native-chat-feed").addEventListener("scroll", updateNativeChatJumpToLatest, { passive: true });
+  document.addEventListener("selectionchange", refreshNativeChatQuoteSelection);
   $("native-chat-jump-latest").addEventListener("click", () => {
     const feed = $("native-chat-feed");
     feed.scrollTop = feed.scrollHeight;
