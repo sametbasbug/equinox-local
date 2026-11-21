@@ -613,7 +613,8 @@
               <div id="native-chat-agent-control"></div>
             </div>
           </header>
-          <div id="native-chat-feed" class="native-chat-feed" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation messages" tabindex="0">
+          <div class="native-chat-feed-shell">
+            <div id="native-chat-feed" class="native-chat-feed" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation messages" tabindex="0">
             <div class="native-chat-column native-chat-feed-inner">
               <div id="native-chat-empty" class="native-chat-empty">
                 <div class="native-chat-empty-icon" aria-hidden="true">
@@ -625,6 +626,10 @@
               <div id="native-chat-messages" class="native-chat-messages" hidden></div>
               <div id="native-chat-preview" class="native-chat-preview" aria-live="off" hidden></div>
             </div>
+            </div>
+            <button id="native-chat-jump-latest" class="native-chat-jump-latest" type="button" aria-label="Jump to latest message" hidden>
+              <span aria-hidden="true">↓</span> Latest messages
+            </button>
           </div>
           <div class="native-chat-column native-chat-dock">
             <p id="native-chat-notice" class="native-chat-notice" role="status" hidden></p>

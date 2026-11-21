@@ -782,6 +782,13 @@ function renderNativeChatMessage(message: NativeChatMessage) {
   return article;
 }
 
+function updateNativeChatJumpToLatest() {
+  const feed = $("native-chat-feed");
+  const gap = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
+  $("native-chat-jump-latest").hidden = gap <= 110 || feed.scrollHeight <= feed.clientHeight + 2
+    || (!chatActive && !chatNewDraft);
+}
+
 function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMessage | null) {
   const key = chatNewDraft ? null : chatConversationKey(chatActive);
   const changedConversation = key !== chatFeedConversation;
@@ -824,6 +831,7 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
   if (changedConversation || (nearBottom && (!keepsPrefix || signatures.length !== previous.length || changedPreview))) {
     feed.scrollTop = feed.scrollHeight;
   }
+  updateNativeChatJumpToLatest();
 }
 
 function closeNativeChatTaskPanel() {
@@ -4576,6 +4584,13 @@ function bindEvents() {
   $("language-select").addEventListener("change", (event) => setLanguage((event.target as UiDomControl).value));
   $("native-chat-refresh").addEventListener("click", () => {
     if ($("native-chat-refresh").getAttribute("aria-disabled") !== "true") void refreshNativeChat(true);
+  });
+  $("native-chat-feed").addEventListener("scroll", updateNativeChatJumpToLatest, { passive: true });
+  $("native-chat-jump-latest").addEventListener("click", () => {
+    const feed = $("native-chat-feed");
+    feed.scrollTop = feed.scrollHeight;
+    feed.focus({ preventScroll: true });
+    updateNativeChatJumpToLatest();
   });
   $("native-chat-task-open").addEventListener("click", () => {
     if (!$("native-chat-task-panel").hidden) closeNativeChatTaskPanel();
