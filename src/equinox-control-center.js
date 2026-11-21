@@ -470,6 +470,13 @@ function renderNativeChatState(chat) {
     $("native-chat-send").disabled = !allowed || !$("native-chat-text").value.trim();
     const thread = chatThreadList.find(item => item.conversationId === chatActive?.conversationId);
     setText("native-chat-title", thread?.title || "Choose a conversation");
+    const relatedTask = Array.isArray(state.tasks) && chatActive?.browserInstanceId
+        ? state.tasks.find((task) => task?.chatBinding?.browserContext === "user"
+            && task.chatBinding.conversationId === chatActive.conversationId
+            && task.chatBinding.browserInstanceId === chatActive.browserInstanceId)
+        : null;
+    setText("native-chat-task", relatedTask ? `Task Capsule · ${String(relatedTask.title || relatedTask.taskId).slice(0, 64)} · ${String(relatedTask.status || "unknown").slice(0, 24)}` : "");
+    $("native-chat-task").hidden = !relatedTask;
     const feed = $("native-chat-feed");
     const items = Array.isArray(chat.items) ? chat.items : [];
     const signature = JSON.stringify({ selected: chatActive?.conversationId || null, items });

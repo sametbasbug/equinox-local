@@ -67,6 +67,10 @@ The production first-party `src/equinox-control-center.html` and matching compil
 
 Native Chat's three-second status refresh was also updated to retain existing conversation buttons and transcript DOM when no list/message content changed. This avoids unnecessary re-rendering, focus loss and selected-text disruption during long chats. Existing typecheck, static checks and byte-exact TS/JS verification passed; no new repo tests were created.
 
+## Task Capsule identity in Native Chat
+
+When the selected conversation belongs to a known Task Capsule, the first-party Chat header displays its title and status **only if both the conversation ID and the exact current-user Browser instance ID match** the Task Capsule chat binding. Existing unbound ChatGPT conversations show no invented task association. This is read-only presentation from the existing bounded Tasks API; it does not impersonate agent execution, create a task or expose new task mutations.
+
 ## New conversation action (next feature gate)
 
 The first native Chat view currently **selects existing Chrome ChatGPT conversations only**. It has no fake “New Chat” button. The existing `telegramChatBridgeController.startTaskChat` already implements the guarded new-tab/first-turn creation and exact Task Capsule binding used by `eqlocal chat start`; reuse that same path for a future explicit native New Chat action, and bind a new exact Task Capsule before selecting the resulting conversation. A new-chat timeout can be ambiguous, so it must never silently create a second task/tab or replay its opening message. The initial-composer inspection used by this existing path now applies the same **exactly one visible editor** rule as Browser 1.2.4's send path, eliminating another hidden-composer mismatch. No general arbitrary Chrome execution API should be exposed to the renderer.

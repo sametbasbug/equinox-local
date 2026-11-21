@@ -644,6 +644,10 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 
 /* Native Chat: bundled UI only. Remote ChatGPT page content is never embedded. */
+.native-chat-heading-titles{display:flex;flex-direction:column;gap:4px;min-width:0}
+.native-chat-heading-titles strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#native-chat-task{font-size:11px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
 .native-chat-layout{display:grid;grid-template-columns:minmax(180px,245px) minmax(320px,1fr);gap:12px;min-height:520px;height:calc(100dvh - 205px);max-height:880px}
 .native-chat-threads,.native-chat-main{border:1px solid var(--line);border-radius:13px;background:var(--surface);min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .native-chat-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--line);padding:12px 14px;min-height:54px;font-size:13px}

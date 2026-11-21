@@ -122,7 +122,7 @@ export function createNativeChatController({browserBridge,chatBridge}:{browserBr
       else turn="disconnected";
       notice=error instanceof Error?error.message:"Browser conversation is unavailable.";
     }
-    return{selected:{conversationId:selected.conversationId,tabId:selected.tabId},items:[...history,...messages].slice(-54),
+    return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-54),
       turn,sending,blocked,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
   };
   const send=async(value:unknown)=>{
