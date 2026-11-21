@@ -218,6 +218,9 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.main-native-plan.outputs.main-update-impact == 'true' && needs.main-native-result.result == 'success' }}
     name: Publish Main Snapshot
     runs-on: ubuntu-latest
+    # Temporary Native Chat macOS QA hold. Approval is required before any
+    # public R2 object or Main snapshot tag can be published.
+    environment: native-chat-qa-gate
     timeout-minutes: 15
     permissions:
       contents: write
