@@ -45,7 +45,7 @@ type Inspection = {binding: Binding; state: BrowserState; reacquired: boolean};
 type BridgeController = {
   inspectBinding: (binding: unknown, requiredVersion?: number, options?: {allowMissingAssistantTurnKey?: boolean; allowMissingUserEpoch?: boolean}) => Promise<Inspection>;
   inspectTurnIdentity: (args?: {binding?: Binding}) => Promise<unknown>;
-  deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string}) => Promise<unknown>;
+  deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string; requireExactTab?: boolean}) => Promise<unknown>;
   readFinal: (args?: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null}) => Promise<unknown>;
   readRecent: (args?: {binding?: Binding}) => Promise<unknown>;
   startTaskChat: (args?: {taskId?: string; checkpointRevision?: number; initialMessage?: string}) => Promise<unknown>;
@@ -157,12 +157,22 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     return { binding: target, state, reacquired: target.tabId !== binding.tabId };
   };
 
-  const deliverText = async ({ binding, deliveryId, text }: {binding?: Binding; deliveryId?: string; text?: string} = {}) => {
+  const deliverText = async ({ binding, deliveryId, text, requireExactTab = false }: {
+    binding?: Binding; deliveryId?: string; text?: string; requireExactTab?: boolean
+  } = {}) => {
     const message = typeof text === "string" ? text.trim() : "";
     if (!message || message.length > 4_000 || /\0/u.test(message)) throw new Error("Telegram Chat Bridge message must contain 1–4000 safe characters.");
     if (typeof deliveryId !== "string" || !/^tgb-[a-z0-9-]{6,80}$/u.test(deliveryId)) throw new Error("Telegram Chat Bridge delivery id is invalid.");
     agentControl.assertMutationAllowed("telegram_chat_bridge_delivery");
     const { binding: target, state } = await inspectBinding(binding);
+    if (requireExactTab && target.tabId !== binding?.tabId) {
+      // Native Chat is explicitly tab-bound. Telegram can continue using
+      // documented re-acquisition, but native sends must never silently jump
+      // to another Chrome tab after the original one disappears.
+      const error = new Error("The selected Chrome tab changed. Select that conversation again before sending.") as CodedError;
+      error.code = "CHAT_BRIDGE_NOT_READY";
+      throw error;
+    }
     if (state.generationActive) {
       const error = new Error("ChatGPT is still generating in the bound conversation. Try again when it is idle.") as CodedError;
       error.code = "CHAT_BRIDGE_NOT_READY";
@@ -518,6 +528,12 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     }
   };
 
+  const validateChatRichText = (value: unknown, limit: number): string | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== "string" || [...value].length > limit) return null;
+    return value;
+  };
+
   const readFinal = async ({ binding, userEpoch, previousAssistantTurnKey }: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null} = {}) => {
     let target: Binding;
     try {
@@ -557,6 +573,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       text: result.text,
       assistantTurnKey: result.assistantTurnKey,
       truncated: result.truncated === true,
+      richText: validateChatRichText((result as BrowserResult & {richText?:unknown}).richText,14_000),
       tabId: target.tabId,
     });
   };
@@ -567,9 +584,14 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       tabId:target.tabId,conversationId:target.conversationId,
     },10_000) as (BrowserResult & {items?:unknown;partial?:unknown}) | null;
     if(!Array.isArray(value?.items)||value.items.length>24)throw new Error("Chat Bridge recent transcript is invalid.");
+    let remainingRich = 46_000;
     const items=value.items.map((item:any)=>{
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat Bridge transcript message is invalid.");
-      return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true};
+      const candidate=item.role==="assistant"?validateChatRichText(item.richText,5000):null;
+      const size=candidate?[...candidate].length:0;
+      const richText=candidate&&size<=remainingRich?candidate:null;
+      remainingRich-=richText?size:0;
+      return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true,richText};
     });
     return Object.freeze({items,partial:value.partial===true,tabId:target.tabId});
   };
@@ -586,7 +608,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     if(!result||!["drifted","idle","generating"].includes(result.status as string)||
       (result.text!==undefined&&(typeof result.text!=="string"||[...result.text].length>3200)))
       throw new Error("Chat Bridge live preview payload is invalid.");
-    return Object.freeze({status:result.status,text:typeof result.text==="string"?result.text:"",truncated:result.truncated===true});
+    return Object.freeze({status:result.status,text:typeof result.text==="string"?result.text:"",truncated:result.truncated===true,
+      richText:validateChatRichText((result as BrowserResult & {richText?:unknown}).richText,4000),tabId:target.tabId});
   };
 
   return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, readLive, startTaskChat });

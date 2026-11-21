@@ -35,7 +35,7 @@ const DOWNLOAD_LIFECYCLE_VERSION = 1;
 const RANGE_VERSION = 2;
 const AUTO_CONTINUE_VERSION = 1;
 const FRESH_CHAT_RESUME_VERSION = 1;
-const CHAT_BRIDGE_VERSION = 11;
+const CHAT_BRIDGE_VERSION = 12;
 const MAX_PDF_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const HTML5_DRAG_INTERCEPT_TIMEOUT_MS = 1_500;
 const MAX_HTML5_DRAG_ITEMS = 32;
@@ -1756,6 +1756,114 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
         scheduleDetach(tabId, CONTINUATION_MUTATION_DETACH_MS);
     }
 }
+// Optional v12 semantic projection, executed read-only in the exact selected
+// assistant subtree. No remote HTML or URL is exposed. Unexpected media and
+// complex structures fall back to the original plain v11 transcript.
+const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw `const projectChatBridgeRichText = (scope, maxChars) => {
+  const modern = scope.querySelectorAll('[class*="MarkdownRoot"]');
+  const roots = modern.length ? modern : scope.querySelectorAll('.markdown, .prose');
+  // Do not claim a complete rich answer when the provider has multiple
+  // independent render roots or a media/structured card.
+  if (roots.length !== 1) return null;
+  const root = roots[0];
+  // A sibling card or hidden media makes the partial Markdown subtree
+  // insufficient to represent the visible assistant answer.
+  if (scope.querySelector('img,video,canvas,iframe,math,table')) return null;
+  const skipTags = new Set(['SCRIPT','STYLE','BUTTON','SVG','NAV','NOSCRIPT','INPUT','TEXTAREA','CANVAS','IFRAME']);
+  const visible = (node) => node.nodeType !== 1 || (!skipTags.has(node.tagName)
+    && !node.hasAttribute('hidden') && node.getAttribute('aria-hidden') !== 'true'
+    && !node.classList.contains('sr-only'));
+  let visited=0,semantic=0,overflow=false;
+  const tick=String.fromCharCode(96);
+  const inline=(node,depth=0,literalCode=false) => {
+    if (++visited>2000 || depth>24) { overflow=true; return ''; }
+    if (node.nodeType===3) {
+      const text=node.nodeValue||'';
+      // Literal Markdown-shaped prose would be reinterpreted by the renderer.
+      // Refuse semantic projection rather than misrepresent source content.
+      if (!literalCode && (text.includes(tick) || text.includes('*')
+        || /(?:^|\n)\s*(?:#{1,6}\s|[-+*]\s|>\s|---\s*$)/m.test(text))) overflow=true;
+      return text;
+    }
+    if (node.nodeType!==1 || !visible(node)) return '';
+    const tag=node.tagName;
+    if (tag==='BR') return '\n';
+    if (tag==='UL'||tag==='OL'||tag==='PRE') return '';
+    const text=[...node.childNodes].map(child=>inline(child,depth+1,literalCode||tag==='CODE')).join('');
+    if (!text.trim()) return text;
+    if (tag==='CODE') {
+      if (text.includes(tick)||text.includes('\n')) { overflow=true; return ''; }
+      semantic++;
+      const runs=text.match(new RegExp(tick+'+','g'))||[];
+      const mark=tick.repeat(Math.max(1,...runs.map(run=>run.length+1)));
+      return mark+text+mark;
+    }
+    if (tag==='STRONG'||tag==='B') { semantic++; return '**'+text+'**'; }
+    if (tag==='EM'||tag==='I') { semantic++; return '*'+text+'*'; }
+    // Hyperlinks retain displayed labels only; never transmit href.
+    return text;
+  };
+  const blocks=[];
+  const add=text=>{if (text&&text.trim()) blocks.push(text.trim());};
+  const walk=(node,depth=0)=>{
+    if (++visited>2000 || depth>24) { overflow=true; return; }
+    let pending='';
+    const flush=()=>{add(pending);pending='';};
+    for (const child of node.childNodes) {
+      if (overflow) return;
+      if (child.nodeType===3) { pending+=child.nodeValue||''; continue; }
+      if (child.nodeType!==1||!visible(child)) continue;
+      const tag=child.tagName;
+      if (/^H[1-6]$/.test(tag)) {
+        flush();semantic++;add('#'.repeat(Number(tag[1]))+' '+inline(child));continue;
+      }
+      if (tag==='P') { flush();add(inline(child));continue; }
+      if (tag==='UL'||tag==='OL') {
+        flush();semantic++;
+        const items=[...child.children].filter(item=>item.tagName==='LI').slice(0,80);
+        const start=tag==='OL'&&Number.isSafeInteger(child.start)&&child.start>0?child.start:1;
+        add(items.map((item,index)=>(tag==='UL'?'- ':String(start+index)+'. ')+inline(item)).join('\n'));
+        continue;
+      }
+      if (tag==='PRE') {
+        flush();semantic++;
+        const code=child.querySelector('code');
+        const raw=String(code?.textContent||child.textContent||'').trimEnd();
+        const runs=raw.match(new RegExp(tick+'+','g'))||[];
+        const fence=tick.repeat(Math.max(3,...runs.map(run=>run.length+1)));
+        add(fence+'\n'+raw+'\n'+fence);continue;
+      }
+      if (tag==='BLOCKQUOTE') {
+        flush();semantic++;
+        add(String(child.innerText||'').trim().split('\n').map(line=>'> '+line).join('\n'));
+        continue;
+      }
+      if (tag==='HR') { flush();add('---');continue; }
+      if ((tag==='DIV'||tag==='SECTION'||tag==='ARTICLE')
+        && child.querySelector('p,h1,h2,h3,h4,h5,h6,ul,ol,pre,blockquote,hr')) {
+        flush();walk(child,depth+1);continue;
+      }
+      // Adjacent non-semantic widget wrappers can be visually separated
+      // even when the DOM contains no literal whitespace between them.
+      if(tag==='DIV'&&pending&&!/\s$/.test(pending))pending+=' ';
+      pending+=inline(child);
+    }
+    flush();
+  };
+  walk(root);
+  if (overflow||semantic===0) return null;
+  const formatted=blocks.join('\n\n').trim();
+  if (!formatted||[...formatted].length>maxChars) return null;
+  const normalize=value=>value.replace(/[\x60*_#>]/g,'')
+    .replace(/^\s*(?:\d+[.)]|[-+])\s+/gm,'').replace(/\s+/g,' ').trim();
+  const actual=normalize(String(root.innerText||'')), projected=normalize(formatted);
+  // The entire visible text must agree after removing only generated syntax.
+  // Prefix/length comparisons can silently swap content from hidden siblings.
+  // Compare the FULL visible character stream, ignoring styling-created
+  // whitespace only. Any missing/extra substantive character falls back.
+  if (!actual || projected.replace(/\s+/g,'') !== actual.replace(/\s+/g,'')) return null;
+  return formatted;
+};`;
 // Only exact selected conversations can disclose bounded recent text to
 // the first-party Local Chat UI. No remote page HTML or arbitrary DOM API.
 async function readChatBridgeRecent({ tabId, conversationId } = {}) {
@@ -1771,23 +1879,32 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
     await attachTab(Number(tabId));
     try {
         const result = await send(Number(tabId), "Runtime.evaluate", { expression: `(() => {
+      ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
       const turns=[...document.querySelectorAll('[data-turn-key]')],out=[];
-      let remaining=46000;
+      let remaining=46000,remainingRich=46000,ambiguousUnits=false;
       for(const turn of turns.slice(-12))for(const role of ['user','assistant']){
-        const unit=turn.querySelector('[data-chatgpt-search-unit-key$=":'+role+'"]');
+        const units=[...turn.querySelectorAll('[data-chatgpt-search-unit-key$=":'+role+'"]')];
+        if(units.length>1){ambiguousUnits=true;continue;}
+        const unit=units[0];
         if(!unit||remaining<=0)continue;
         const content=unit.querySelector('[data-chatgpt-selection-message-id]')||unit;
         const raw=String(content.innerText||content.textContent||'').trim();if(!raw)continue;
         const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const id=String(unit.getAttribute('data-chatgpt-search-message-ids')||turn.getAttribute('data-turn-key')||'').split(/\s+/u)[0].slice(0,200);
-        out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit});remaining-=limit;
+        const richText=role==='assistant'&&chars.length<=limit
+          ?projectChatBridgeRichText(content,Math.min(5000,remainingRich)):null;
+        if(richText)remainingRich-=[...richText].length;
+        out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText});remaining-=limit;
       }
       if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
         const role=unit.getAttribute('data-message-author-role');const raw=String(unit.innerText||unit.textContent||'').trim();
         if(!raw||remaining<=0)continue;const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
-        out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit});remaining-=limit;
+        const richText=role==='assistant'&&chars.length<=limit
+          ?projectChatBridgeRichText(unit,Math.min(5000,remainingRich)):null;
+        if(richText)remainingRich-=[...richText].length;
+        out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText});remaining-=limit;
       }
-      return{items:out.slice(-24),partial:turns.length>12||remaining<=0,observedTurns:turns.length};
+      return{items:out.slice(-24),partial:turns.length>12||remaining<=0||ambiguousUnits,observedTurns:turns.length};
     })()`, returnByValue: true, silent: true });
         if (result?.exceptionDetails)
             throw new Error("Chat history inspection failed.");
@@ -1797,14 +1914,19 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         const items = value.items.map((item) => {
             if (!item || !["user", "assistant"].includes(item.role) || typeof item.text !== "string" || item.text.length > 14000 || typeof item.id !== "string" || item.id.length > 220)
                 throw new Error("Chat history message is invalid.");
-            return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true };
+            const validRich = item.role === "assistant" && typeof item.richText === "string" && [...item.richText].length <= 5000;
+            return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true,
+                richText: validRich ? item.richText : null };
         });
         const after = await chooseTab(Number(tabId));
         if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
             throw new Error("Chat history tab changed during read.");
-        // The in-progress assistant text is not a final message. The native UI
-        // separately reports the real generation state until it is completed.
-        if (state.generationActive && items.at(-1)?.role === "assistant")
+        // Re-read the generation state AFTER observing the DOM. Using the old
+        // pre-read state can drop a reply that finished during this inspection.
+        const finalState = await chatGptContinuationState(Number(tabId));
+        if (finalState.conversationId !== conversationId)
+            throw new Error("Chat history turn drifted.");
+        if (finalState.generationActive && items.at(-1)?.role === "assistant")
             items.pop();
         return { chatBridgeVersion: CHAT_BRIDGE_VERSION, items, partial: value.partial === true, observedTurns: Number(value.observedTurns) || 0 };
     }
@@ -1834,15 +1956,19 @@ async function readChatBridgeLive({ tabId, conversationId, userEpoch } = {}) {
     await attachTab(selectedId);
     try {
         const result = await send(selectedId, "Runtime.evaluate", { expression: `(() => {
+      ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
       const key=${JSON.stringify(state.assistantTurnKey)};
       const modern=[...document.querySelectorAll('[data-turn-key]')].find(t=>t.getAttribute('data-turn-key')===key);
-      const modernAssistant=modern?.querySelector('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]');
+      const units=modern?[...modern.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]')]:[];
+      if(modern&&units.length!==1)return{text:"",truncated:false};
+      const modernAssistant=units[0]||null;
       const legacy=[...document.querySelectorAll('[data-message-author-role="assistant"][data-message-id]')].find(t=>t.getAttribute('data-message-id')===key);
       const root=modernAssistant||legacy;
       if(!root)return{text:"",truncated:false};
       const content=modernAssistant?(modernAssistant.querySelector('[data-chatgpt-selection-message-id]')||modernAssistant):root;
       const chars=[...String(content.innerText||content.textContent||'').trim()];
-      return{text:chars.slice(0,3200).join(''),truncated:chars.length>3200};
+      const richText=chars.length<=3200?projectChatBridgeRichText(content,4000):null;
+      return{text:chars.slice(0,3200).join(''),truncated:chars.length>3200,richText};
     })()`, returnByValue: true, silent: true });
         if (result?.exceptionDetails)
             throw new Error("Live Chat preview read failed.");
@@ -1857,7 +1983,8 @@ async function readChatBridgeLive({ tabId, conversationId, userEpoch } = {}) {
             return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted" };
         if (!updated.generationActive)
             return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "idle" };
-        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "generating", text: item.text, truncated: item.truncated === true };
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "generating", text: item.text, truncated: item.truncated === true,
+            richText: typeof item.richText === "string" && [...item.richText].length <= 4000 ? item.richText : null };
     }
     finally {
         scheduleDetach(selectedId, CONTINUATION_MUTATION_DETACH_MS);
@@ -1887,6 +2014,7 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
     try {
         const result = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
+        ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
         // Chat Bridge final response: read only the exact completed assistant turn requested by Local.
         const key = ${JSON.stringify(state.assistantTurnKey)};
         // In current ChatGPT the observer's assistantTurnKey is the parent
@@ -1894,9 +2022,13 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
         // the *same exact turn* and read only its assistant render subtree.
         const modernTurn = [...document.querySelectorAll('[data-turn-key]')]
           .find((node) => node.getAttribute('data-turn-key') === key);
-        const modernAssistant = modernTurn?.querySelector('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]');
-        const legacyRoots = [...document.querySelectorAll('section[data-turn="assistant"][data-testid], [data-message-author-role="assistant"][data-message-id]')];
-        const legacyRoot = legacyRoots.find((node) => node.getAttribute('data-testid') === key || node.getAttribute('data-message-id') === key);
+        const modernUnits = modernTurn ? [...modernTurn.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]')] : [];
+        if (modernTurn && modernUnits.length !== 1) return { found: false };
+        const modernAssistant = modernUnits[0] || null;
+        const legacyRoots = [...document.querySelectorAll('section[data-turn="assistant"][data-testid], [data-message-author-role="assistant"][data-message-id]')]
+          .filter((node) => node.getAttribute('data-testid') === key || node.getAttribute('data-message-id') === key);
+        if (!modernAssistant && legacyRoots.length !== 1) return { found: false };
+        const legacyRoot = legacyRoots[0];
         const root = modernAssistant || legacyRoot;
         if (!root) return { found: false };
         const body = modernAssistant
@@ -1907,11 +2039,15 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
         if (!raw) return { found: true, empty: true };
         const chars = [...raw];
         const maxChars = 12000;
+        const richText=chars.length<=maxChars?projectChatBridgeRichText(body,14000):null;
         return {
           found: true,
           empty: false,
           text: chars.slice(0, maxChars).join(''),
           truncated: chars.length > maxChars,
+          richText,
+          messageIdentity:modernAssistant?.getAttribute('data-chatgpt-search-message-ids')
+            ||legacyRoot?.getAttribute('data-message-id')||legacyRoot?.getAttribute('data-testid')||null,
         };
       })()`,
             returnByValue: true,
@@ -1922,12 +2058,34 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
         if (!value?.found || value.empty || typeof value.text !== "string" || !value.text.trim()) {
             return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "waiting" };
         }
+        const after = await chooseTab(tabId);
+        if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted", reason: "conversation_changed" };
+        const latest = await chatGptContinuationState(tabId);
+        if (latest.conversationId !== conversationId || latest.userEpoch !== userEpoch || latest.assistantTurnKey !== state.assistantTurnKey)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted", reason: "turn_changed" };
+        if (latest.generationActive)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "waiting" };
+        if (typeof value.messageIdentity !== "string" || !value.messageIdentity || value.messageIdentity.length > 220)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "waiting" };
+        const postRead = await send(tabId, "Runtime.evaluate", { expression: `(() => {
+      const key=${JSON.stringify(state.assistantTurnKey)};
+      const turn=[...document.querySelectorAll('[data-turn-key]')].find(node=>node.getAttribute('data-turn-key')===key);
+      const units=turn?[...turn.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"][data-chatgpt-search-message-ids]')]:[];
+      if(turn)return units.length===1?units[0].getAttribute('data-chatgpt-search-message-ids'):null;
+      const matches=[...document.querySelectorAll('section[data-turn="assistant"][data-testid], [data-message-author-role="assistant"][data-message-id]')]
+        .filter(node=>node.getAttribute('data-message-id')===key||node.getAttribute('data-testid')===key);
+      return matches.length===1?(matches[0].getAttribute('data-message-id')||matches[0].getAttribute('data-testid')):null;
+    })()`, returnByValue: true, silent: true });
+        if (postRead?.exceptionDetails || postRead?.result?.value !== value.messageIdentity)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "drifted", reason: "assistant_message_changed" };
         return {
             chatBridgeVersion: CHAT_BRIDGE_VERSION,
             status: "ready",
             assistantTurnKey: state.assistantTurnKey,
             text: value.text,
             truncated: value.truncated === true,
+            richText: typeof value.richText === "string" && [...value.richText].length <= 14000 ? value.richText : null,
         };
     }
     finally {
