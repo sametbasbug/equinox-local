@@ -707,6 +707,19 @@ function freshChatResumeReceiptResult(receipt, duplicatePrevented = false) {
 // Current ChatGPT: primary action is type=submit after typing (voice/stop stay type=button).
 // Previous ChatGPT variants: legacy send test-id or composer-submit-button.
 const CHATGPT_SEND_SELECTOR = '[data-composer-body] button.bg-composer-primary[type="submit"], button[data-testid="send-button"][type="submit"], button#composer-submit-button[type="submit"]:not([data-testid="stop-button"])';
+// ChatGPT may mount an off-screen editor before its actual visible composer.
+// Multiple visible matching editors are ambiguous: never send in that state.
+const VISIBLE_CHATGPT_COMPOSER_JS = `(() => {
+  const candidates = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]')];
+  const visible = candidates.filter(node => {
+    const rect = node.getBoundingClientRect();
+    const style = window.getComputedStyle(node);
+    return node.isConnected && node.getClientRects().length > 0
+      && rect.width > 0 && rect.height > 0
+      && style.visibility !== 'hidden' && style.display !== 'none';
+  });
+  return visible.length === 1 ? visible[0] : null;
+})()`;
 async function freshChatComposerState(tabId) {
     const tab = await workerTabs().get(tabId);
     const homeRoute = chatGptFreshHomeRoute(tab);
@@ -1461,7 +1474,7 @@ async function deliverAutoContinuation({ continuationId, tabId, conversationId, 
     try {
         const focusResult = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
-      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+      const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
       if (!composer) throw new Error('ChatGPT composer is unavailable');
       if (String(composer.textContent || '').trim()) throw new Error('ChatGPT composer is not empty');
       composer.focus();
@@ -1476,7 +1489,7 @@ async function deliverAutoContinuation({ continuationId, tabId, conversationId, 
         await send(tabId, "Input.insertText", { text: message });
         const fillResult = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
-      const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+      const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
       return composer ? String(composer.textContent || '') : null;
     })()`,
             returnByValue: true,
@@ -1617,7 +1630,7 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
         stage = "claimed";
         const focusResult = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
-        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+        const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
         if (!composer) throw new Error('ChatGPT composer is unavailable');
         if (String(composer.textContent || '').trim()) throw new Error('ChatGPT composer is not empty');
         composer.focus();
@@ -1639,7 +1652,7 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
             const submitTarget = await send(tabId, "Runtime.evaluate", {
                 expression: `(() => {
           // Chat Bridge trusted submit readiness after real Input.insertText.
-          const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+          const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
           const button = document.querySelector(${JSON.stringify(chatBridgeSendSelector)});
           if (!composer) return { ready: false, reason: "composer_missing" };
           if (!String(composer.textContent || '').trim()) return { ready: false, reason: "composer_empty" };
@@ -1675,7 +1688,7 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
         const submitFocus = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
         // Chat Bridge coordinate-free submit: focus the trusted Send button.
-        const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]');
+        const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
         const button = document.querySelector(${JSON.stringify(chatBridgeSendSelector)});
         // Input.insertText turns line breaks into sibling <p> nodes in
         // ChatGPT's contenteditable composer. textContent silently drops the

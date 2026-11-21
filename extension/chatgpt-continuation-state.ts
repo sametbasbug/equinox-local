@@ -66,8 +66,17 @@ declare const chrome: {
     const assistantTurns = [...document.querySelectorAll('section[data-turn="assistant"][data-testid]')];
     const modernTurns = [...document.querySelectorAll('[data-turn-key]')];
     const modernUserUnits = [...document.querySelectorAll('[data-chatgpt-search-unit-key$=":user"][data-chatgpt-search-message-ids]')];
-    const composer = document.querySelector('#prompt-textarea[contenteditable="true"][role="textbox"]')
-      || document.querySelector('[data-composer-markdown][contenteditable="true"][role="textbox"]');
+    // Reject hidden or ambiguous editors; only the single visible composer
+    // authorizes Chat Bridge or Auto Continue delivery.
+    const visibleComposers = [...document.querySelectorAll('#prompt-textarea[contenteditable="true"][role="textbox"], [data-composer-markdown][contenteditable="true"][role="textbox"]')]
+      .filter(node => {
+        const rect = node.getBoundingClientRect();
+        const style = window.getComputedStyle(node);
+        return node.isConnected && node.getClientRects().length > 0
+          && rect.width > 0 && rect.height > 0
+          && style.visibility !== 'hidden' && style.display !== 'none';
+      });
+    const composer = visibleComposers.length === 1 ? visibleComposers[0]! : null;
     const modernPrimaryActions = [...document.querySelectorAll('[data-composer-body] button.bg-composer-primary')];
     const modernGenerationActive = modernPrimaryActions.some(looksLikeModernStopAction);
     const modernTurn = last(modernTurns);

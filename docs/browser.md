@@ -6,6 +6,8 @@
 
 **Source candidate 1.2.2:** fixes trusted Send focus for CLI/Telegram Chat Bridge. The ZIP is prepared for maintainer-led CWS review; it is not an installed Store update until publication.
 
+**Source candidate 1.2.3 (not yet submitted):** fixes a modern ChatGPT page that renders both a hidden and a visible contenteditable composer. The previous Chat Bridge delivery receipt was correctly marked ambiguous and never replayed. The new bridge and Auto Continue composer focus select exactly one connected, nonzero-size, visible editor; no unique visible editor means no delivery. The ChatGPT continuation observer applies the same readiness rule. A CWS review/upload and live validated update are still required before calling 1.2.3 public.
+
 Equinox Browser is the only browser-automation transport exposed by Equinox Local.
 
 It is a first-party Chrome extension paired with a per-user Native Messaging host and the local Equinox Browser bridge. The transport serves two explicit product contexts: **Agent Browser** (`target=agent`) is the default isolated Equinox Local Chrome profile, while **Your Browser** (`target=user`) is the user's personal Chrome profile and must be requested explicitly. The contexts never silently fall back to each other. Equinox Local does not use a generic user-Chrome CDP fallback, does not require Chrome remote-debugging flags, and the retired loopback/CDP QA browser is not a second product capability.
