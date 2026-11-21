@@ -131,6 +131,12 @@ The native UI separately tracks uncertainty of **its own IPC mutation**, which m
 
 Two levels of disposable validation were completed: (1) transient controller checks showed one original send, delayed first-turn recovery and reply, while both a second Chrome user message and an empty history remained blocked; (2) a **real bundled Electron Chat GUI** under equinox://control with shipped preload and feature Control API showed Waiting with one user bubble, then Completed with exactly one assistant bubble and an enabled composer after delayed epoch confirmation. A second explicit New Chat creation produced a synthetic definite pre-submit failure, cancelled its temporary Task and kept the original draft editable. The isolated QA window, process and temporary files were cleaned. The Browser responses in this validation were **synthetic**; actual installed Source Factory matching the feature commit is still a separate release gate.
 
+## Installed Browser v11 final-read check (2026-11-21)
+
+The **existing installed macOS Source Factory** (released main backend) and the current user's unpacked Equinox Browser 1.2.5/v11 were exercised independently on a disposable exact Task Chat without changing the Factory install. After the first CLI readiness turn, one authenticated CLI Chat Bridge send produced receipt userEpoch 3bfbe517-39ff-42e4-8825-fb0fb46221bd and the real assistant final EQL_V11_FINAL_READ_OK with that same turn identity. The completed ChatGPT page still contained one **hidden Stop button and zero visible Stop buttons**, yet the live read-final returned ready, rather than stalling. The QA tab was closed, its Task Capsule completed/deleted, and no duplicate prompt was sent.
+
+This is meaningful **installed Browser v11 final-read** evidence despite the hidden Stop DOM artifact. The current project assistant tab remained actively generating, so its extension/page was **not reloaded** during this turn. The exact **installed feature branch Native Chat UI/backend** and a v11 worker live-preview-to-GUI stream are still separate acceptance gates.
+
 ## Risks and real acceptance
 
 - ChatGPT UI/browser extension interaction is **not an official service API**. Document account-policy risks and avoid abusive automation or workarounds to provider restrictions. Prefer supported interfaces where available; no promise that one login can power every agent backend.
