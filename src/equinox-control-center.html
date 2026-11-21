@@ -24,42 +24,42 @@
 
       <nav id="control-center-nav" class="nav-list" aria-label="Control Center sections">
         <p class="nav-group-label">Workspace</p>
-        <button class="nav-item is-active" type="button" data-section="dashboard" aria-current="page">
+        <button class="nav-item is-active" type="button" data-section="dashboard" aria-current="page" aria-label="Overview" title="Overview">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
           <span>Overview</span>
           <kbd class="nav-hotkey" aria-hidden="true">1</kbd>
         </button>
-        <button class="nav-item" type="button" data-section="projects">
+        <button class="nav-item" type="button" data-section="projects" aria-label="Projects" title="Projects">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8V6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
           <span>Projects</span>
           <kbd class="nav-hotkey" aria-hidden="true">2</kbd>
         </button>
-        <button class="nav-item" type="button" data-section="tasks">
+        <button class="nav-item" type="button" data-section="tasks" aria-label="Tasks" title="Tasks">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M8.5 10h7M8.5 14h7M8.5 18h4"/></svg>
           <span>Tasks</span>
           <kbd class="nav-hotkey" aria-hidden="true">3</kbd>
         </button>
-        <button class="nav-item" type="button" data-section="browser">
+        <button class="nav-item" type="button" data-section="browser" aria-label="Browser" title="Browser">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18Z"/></svg>
           <span>Browser</span>
           <kbd class="nav-hotkey" aria-hidden="true">4</kbd>
         </button>
-        <button class="nav-item" type="button" data-section="chat">
+        <button class="nav-item" type="button" data-section="chat" aria-label="Chat" title="Chat">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 2v-9a9 9 0 0 1 9-9 9 9 0 0 1 9 8Z"/><path d="M8 10h8M8 14h5"/></svg>
           <span>Chat</span><kbd class="nav-hotkey" aria-hidden="true">5</kbd>
         </button>
         <p class="nav-group-label">System</p>
-        <button class="nav-item" type="button" data-section="permissions">
+        <button class="nav-item" type="button" data-section="permissions" aria-label="Safety" title="Safety">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg>
           <span>Safety</span>
           <kbd class="nav-hotkey" aria-hidden="true">6</kbd>
         </button>
-        <button class="nav-item" type="button" data-section="integrations">
+        <button class="nav-item" type="button" data-section="integrations" aria-label="Services" title="Services">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v4m8-4v4M6 7h12v4a6 6 0 0 1-6 6v4m-6-10a6 6 0 0 0 6 6"/></svg>
           <span>Services</span>
           <kbd class="nav-hotkey" aria-hidden="true">7</kbd>
         </button>
-        <button class="nav-item" type="button" data-section="activity">
+        <button class="nav-item" type="button" data-section="activity" aria-label="Activity" title="Activity">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
           <span>Activity</span>
           <kbd class="nav-hotkey" aria-hidden="true">8</kbd>
@@ -577,24 +577,69 @@
         </div>
       </section>
 
-      <section id="section-chat" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro"><p>Start a new ChatGPT conversation or continue one already open in your connected Chrome. Equinox Browser keeps the session in Chrome.</p></div>
-        <div class="native-chat-layout">
-          <aside class="native-chat-threads" aria-label="ChatGPT conversations">
-            <div class="native-chat-heading"><strong>Conversations</strong><div class="native-chat-heading-actions"><button id="native-chat-new" class="button primary" type="button">New Chat</button><button id="native-chat-refresh" class="button secondary" type="button">Refresh</button></div></div>
-            <p id="native-chat-list-status" class="muted" role="status">Connect Equinox Browser in Chrome to see your conversations.</p>
-            <div id="native-chat-thread-list" class="native-chat-thread-list" role="listbox" aria-label="Open ChatGPT conversations"></div>
-          </aside>
-          <div class="native-chat-main">
-            <div class="native-chat-heading"><div class="native-chat-heading-titles"><strong id="native-chat-title">Choose a conversation</strong><span id="native-chat-task" class="muted" hidden></span></div><span id="native-chat-turn" class="muted" role="status">Not connected</span></div>
-            <div id="native-chat-feed" class="native-chat-feed" role="log" aria-live="polite" aria-relevant="additions text">
-              <p class="native-chat-empty">Choose an open Chrome conversation, or select New Chat to begin one.</p>
+      <section id="section-chat" class="page-section native-chat-layout" aria-label="Chat" hidden>
+        <aside class="native-chat-threads" aria-label="Open ChatGPT conversations">
+          <div class="native-chat-thread-controls">
+            <button id="native-chat-new" class="button primary native-chat-new" type="button" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <span>New Chat</span>
+            </button>
+            <label class="native-chat-filter">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 4 4"/></svg>
+              <input id="native-chat-filter" type="search" maxlength="120" placeholder="Filter open chats" aria-label="Filter open chats" aria-controls="native-chat-thread-list" autocomplete="off" disabled>
+            </label>
+          </div>
+          <div class="native-chat-list-heading">
+            <h2>Open in Chrome</h2>
+            <button id="native-chat-refresh" class="icon-button" type="button" aria-label="Refresh open chats" title="Refresh open chats">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5.8 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.2-2"/></svg>
+            </button>
+          </div>
+          <div id="native-chat-thread-list" class="native-chat-thread-list" role="group" aria-label="Open ChatGPT conversations"></div>
+          <div class="native-chat-connection" role="status">
+            <p id="native-chat-list-status" data-connection="checking">Checking Your Browser…</p>
+            <p id="native-chat-list-detail" hidden></p>
+          </div>
+        </aside>
+        <div class="native-chat-main">
+          <header class="native-chat-heading">
+            <div class="native-chat-heading-titles">
+              <h2 id="native-chat-title">ChatGPT</h2>
+              <span id="native-chat-task" hidden></span>
             </div>
-            <p id="native-chat-notice" class="native-chat-notice" role="status">ChatGPT conversations are controlled through Equinox Browser, not a separate API subscription.</p>
+            <div class="native-chat-heading-actions">
+              <span id="native-chat-turn" class="native-chat-turn" role="status">No chat selected</span>
+              <div id="native-chat-agent-control"></div>
+            </div>
+          </header>
+          <div id="native-chat-feed" class="native-chat-feed" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation messages" tabindex="0">
+            <div class="native-chat-column native-chat-feed-inner">
+              <div id="native-chat-empty" class="native-chat-empty">
+                <div class="native-chat-empty-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-3.5 2v-8.5a8.5 8.5 0 0 1 17-1Z"/><path d="M8 10h8M8 14h5"/></svg>
+                </div>
+                <h3 id="native-chat-empty-title">Choose a conversation</h3>
+                <p id="native-chat-empty-copy">Choose an open Chrome conversation, or select New Chat to begin one.</p>
+              </div>
+              <div id="native-chat-messages" class="native-chat-messages" hidden></div>
+              <div id="native-chat-preview" class="native-chat-preview" aria-live="off" hidden></div>
+            </div>
+          </div>
+          <div class="native-chat-column native-chat-dock">
+            <p id="native-chat-notice" class="native-chat-notice" role="status" hidden></p>
             <form id="native-chat-form" class="native-chat-compose">
-              <label for="native-chat-text" class="sr-only">Message</label>
-              <textarea id="native-chat-text" rows="3" maxlength="4000" placeholder="Write a message…" disabled></textarea>
-              <div class="native-chat-compose-actions"><span class="muted">Ctrl/Cmd + Enter to send</span><div class="native-chat-compose-buttons"><button id="native-chat-cancel-new" class="button secondary" type="button" hidden>Cancel</button><button id="native-chat-send" class="button primary" type="submit" disabled>Send</button></div></div>
+              <label for="native-chat-text" class="native-chat-sr-only">Message</label>
+              <textarea id="native-chat-text" rows="1" maxlength="4000" placeholder="Write a message…" aria-describedby="native-chat-compose-hint" disabled></textarea>
+              <div class="native-chat-compose-actions">
+                <span id="native-chat-compose-hint" class="native-chat-compose-hint">Enter to send · Shift+Enter for a new line</span>
+                <div class="native-chat-compose-buttons">
+                  <button id="native-chat-cancel-new" class="text-button" type="button" hidden>Cancel</button>
+                  <button id="native-chat-send" class="button primary" type="submit" disabled>
+                    <span>Send</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
+                  </button>
+                </div>
+              </div>
             </form>
           </div>
         </div>
