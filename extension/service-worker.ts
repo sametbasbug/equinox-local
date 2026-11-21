@@ -1959,7 +1959,11 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat history message is invalid.");
       return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true};
     });
-    const after=await chooseTab(Number(tabId));if(chatGptConversationIdentity(after)?.conversationId!==conversationId)throw new Error("Chat history tab changed during read.");
+    const after=await chooseTab(Number(tabId));
+    if(after.pendingUrl||chatGptConversationIdentity(after)?.conversationId!==conversationId)throw new Error("Chat history tab changed during read.");
+    // The in-progress assistant text is not a final message. The native UI
+    // separately reports the real generation state until it is completed.
+    if(state.generationActive&&items.at(-1)?.role==="assistant")items.pop();
     return{chatBridgeVersion:CHAT_BRIDGE_VERSION,items,partial:value.partial===true,observedTurns:Number(value.observedTurns)||0};
   }finally{scheduleDetach(Number(tabId),CONTINUATION_MUTATION_DETACH_MS);}
 }

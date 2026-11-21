@@ -1800,8 +1800,12 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
             return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true };
         });
         const after = await chooseTab(Number(tabId));
-        if (chatGptConversationIdentity(after)?.conversationId !== conversationId)
+        if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
             throw new Error("Chat history tab changed during read.");
+        // The in-progress assistant text is not a final message. The native UI
+        // separately reports the real generation state until it is completed.
+        if (state.generationActive && items.at(-1)?.role === "assistant")
+            items.pop();
         return { chatBridgeVersion: CHAT_BRIDGE_VERSION, items, partial: value.partial === true, observedTurns: Number(value.observedTurns) || 0 };
     }
     finally {
