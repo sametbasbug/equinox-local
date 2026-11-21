@@ -619,7 +619,7 @@ function appendNativeChatInline(element: HTMLElement, text: string) {
   element.append(text.slice(end));
 }
 
-async function copyNativeChatCode(code: HTMLElement, text: string) {
+async function copyNativeChatText(sourceNode: HTMLElement, text: string) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
@@ -630,7 +630,7 @@ async function copyNativeChatCode(code: HTMLElement, text: string) {
     if (!selection) return false;
     const previous = Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange());
     const range = document.createRange();
-    range.selectNodeContents(code);
+    range.selectNodeContents(sourceNode);
     selection.removeAllRanges();
     selection.addRange(range);
     try {
@@ -661,7 +661,7 @@ function renderNativeChatCode(text: string, language: string) {
   const code = document.createElement("code");
   code.textContent = text;
   copy.addEventListener("click", async () => {
-    showToast(await copyNativeChatCode(code, text) ? "Code copied." : "Could not copy code.");
+    showToast(await copyNativeChatText(code, text) ? "Code copied." : "Could not copy code.");
   });
   pre.append(code);
   block.append(bar, pre);
@@ -734,6 +734,9 @@ function renderNativeChatMessage(message: NativeChatMessage) {
   if (message.uncertain) labels.push("Delivery uncertain");
   if (message.truncated) labels.push("Truncated");
   label.textContent = labels.map(localizeUiText).join(" · ");
+  const heading = document.createElement("div");
+  heading.className = "native-chat-message-heading";
+  heading.append(label);
   const body = document.createElement("div");
   body.className = "native-chat-message-text";
   if (message.role === "user" || message.live) {
@@ -742,7 +745,19 @@ function renderNativeChatMessage(message: NativeChatMessage) {
   } else {
     renderNativeChatText(body, message.text);
   }
-  article.append(label, body);
+  if (!message.live && !message.uncertain) {
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "native-chat-message-copy";
+    copy.textContent = localizeUiText("Copy");
+    copy.setAttribute("aria-label", localizeUiText("Copy message"));
+    copy.title = localizeUiText("Copy message");
+    copy.addEventListener("click", async () => {
+      showToast(await copyNativeChatText(body, message.text) ? "Message copied." : "Could not copy message.");
+    });
+    heading.append(copy);
+  }
+  article.append(heading, body);
   return article;
 }
 
@@ -983,6 +998,9 @@ async function selectNativeChat(thread: UiRemoteData) {
     showToast("Clear the unsent message or choose Cancel before switching conversations.");
     return;
   }
+  closeNativeChatTaskPanel();
+  chatTaskRelated = null;
+  $("native-chat-task-open").hidden = true;
   chatNewDraft = false;
   chatNewCreationId = null;
   $("native-chat-cancel-new").hidden = true;
@@ -1014,6 +1032,9 @@ function beginNewNativeChat() {
     showToast("Clear the unsent message before starting a new conversation.");
     return;
   }
+  closeNativeChatTaskPanel();
+  chatTaskRelated = null;
+  $("native-chat-task-open").hidden = true;
   chatNewDraft = true;
   chatSelectionGeneration++;
   chatNewCreationId = "nch-" + crypto.randomUUID();
