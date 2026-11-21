@@ -17,6 +17,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     let awaitingNewChatIdentity = null;
     let sending = false;
     let creating = false;
+    let selecting = false;
     let blocked = false;
     let creationBlocked = false;
     let selectedRevision = 0;
@@ -69,50 +70,56 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         const object = value;
         if (Object.keys(object).length !== 2 || typeof object.conversationId !== "string" || !Number.isSafeInteger(object.tabId))
             invalid("Invalid conversation selection.");
-        if (sending || creating || pending)
+        if (selecting || sending || creating || pending)
             invalid("Cannot change conversation while a message is in flight.");
-        const available = await list();
-        const tab = available.threads.find(t => t.tabId === object.tabId && t.conversationId === object.conversationId);
-        if (!tab)
-            invalid("This ChatGPT conversation is no longer available in Your Browser.");
-        const next = { browserContext: "user", browserInstanceId: available.browserInstanceId, tabId: tab.tabId, conversationId: tab.conversationId, canonicalUrl: `https://chatgpt.com/c/${tab.conversationId}` };
-        // A project-scoped URL may be needed to follow the browser's exact conversation identity.
-        // Only the browser bridge, never the UI, supplies the canonical URL.
-        const raw = await call("tabs.list", {});
-        const source = raw.find(t => Number(t.id ?? t.tabId) === tab.tabId && chatGptConversationIdFromUrl(t.url) === tab.conversationId);
-        if (!source?.url)
-            invalid("Conversation identity changed during selection.");
-        next.canonicalUrl = source.url;
-        await chatBridge.inspectTurnIdentity({ binding: next });
-        const changed = selected?.conversationId !== next.conversationId || selected?.browserInstanceId !== next.browserInstanceId;
-        if (changed) {
-            selectedRevision++;
-            messages = [];
-            pending = null;
-            awaitingNewChatIdentity = awaitingFirstTurns.get(conversationKey(next)) ?? null;
-            blocked = uncertainConversations.has(conversationKey(next)) || Boolean(awaitingNewChatIdentity);
-            history = [];
-            historyPartial = false;
-            historyNotice = awaitingNewChatIdentity
-                ? "This New Chat is still waiting for its first response identity in Chrome."
-                : blocked ? "A previous delivery in this conversation is uncertain. Inspect it in Chrome before sending again." : null;
-        }
-        selected = next;
-        if (changed) {
-            try {
-                const value = await chatBridge.readRecent?.({ binding: next });
-                if (value && Array.isArray(value.items)) {
-                    history = value.items.slice(-24).map((item) => ({ id: String(item.id).slice(0, 220), role: item.role, text: String(item.text).slice(0, 14000), status: "complete", truncated: item.truncated === true }));
-                    historyPartial = value.partial === true;
+        selecting = true;
+        try {
+            const available = await list();
+            const tab = available.threads.find(t => t.tabId === object.tabId && t.conversationId === object.conversationId);
+            if (!tab)
+                invalid("This ChatGPT conversation is no longer available in Your Browser.");
+            const next = { browserContext: "user", browserInstanceId: available.browserInstanceId, tabId: tab.tabId, conversationId: tab.conversationId, canonicalUrl: `https://chatgpt.com/c/${tab.conversationId}` };
+            // A project-scoped URL may be needed to follow the browser's exact conversation identity.
+            // Only the browser bridge, never the UI, supplies the canonical URL.
+            const raw = await call("tabs.list", {});
+            const source = raw.find(t => Number(t.id ?? t.tabId) === tab.tabId && chatGptConversationIdFromUrl(t.url) === tab.conversationId);
+            if (!source?.url)
+                invalid("Conversation identity changed during selection.");
+            next.canonicalUrl = source.url;
+            await chatBridge.inspectTurnIdentity({ binding: next });
+            const changed = selected?.conversationId !== next.conversationId || selected?.browserInstanceId !== next.browserInstanceId;
+            if (changed) {
+                selectedRevision++;
+                messages = [];
+                pending = null;
+                awaitingNewChatIdentity = awaitingFirstTurns.get(conversationKey(next)) ?? null;
+                blocked = uncertainConversations.has(conversationKey(next)) || Boolean(awaitingNewChatIdentity);
+                history = [];
+                historyPartial = false;
+                historyNotice = awaitingNewChatIdentity
+                    ? "This New Chat is still waiting for its first response identity in Chrome."
+                    : blocked ? "A previous delivery in this conversation is uncertain. Inspect it in Chrome before sending again." : null;
+            }
+            selected = next;
+            if (changed) {
+                try {
+                    const value = await chatBridge.readRecent?.({ binding: next });
+                    if (value && Array.isArray(value.items)) {
+                        history = value.items.slice(-24).map((item) => ({ id: String(item.id).slice(0, 220), role: item.role, text: String(item.text).slice(0, 14000), status: "complete", truncated: item.truncated === true }));
+                        historyPartial = value.partial === true;
+                    }
+                    else
+                        historyNotice = "Recent conversation history is not available with this Browser version.";
                 }
-                else
-                    historyNotice = "Recent conversation history is not available with this Browser version.";
+                catch {
+                    historyNotice = "Recent history unavailable. You can still send messages in this conversation.";
+                }
             }
-            catch {
-                historyNotice = "Recent history unavailable. You can still send messages in this conversation.";
-            }
+            return await read();
         }
-        return await read();
+        finally {
+            selecting = false;
+        }
     };
     const read = async () => {
         if (!selected)
@@ -243,7 +250,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         // Refuse new sends at the bound rather than evict old IDs and risk replay.
         if (attempts.size >= MAX_DELIVERY_IDS)
             invalid("This Chat session reached its bounded delivery limit. Restart the runtime before sending again.");
-        if (sending || creating || pending || blocked || !selected)
+        if (selecting || sending || creating || pending || blocked || !selected)
             invalid("Select an idle, unblocked ChatGPT conversation before sending. Confirm any uncertain delivery in Chrome.");
         const binding = selected;
         sending = true;
@@ -301,7 +308,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             invalid("New Chat reached its request limit for this runtime.");
         if (!taskStore || !chatBridge.startTaskChat)
             invalid("New Chat is unavailable on this installation.");
-        if (creating || sending || pending || blocked)
+        if (selecting || creating || sending || pending || blocked)
             invalid("Finish the current conversation or reconcile an uncertain delivery before starting New Chat.");
         creating = true;
         const attempt = (async () => {
