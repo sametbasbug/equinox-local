@@ -38,6 +38,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let sending=false;
   let creating=false;
   let blocked=false;
+  let selectedRevision=0;
   // An ambiguous receipt belongs to the exact conversation; sidebar navigation
   // must never reset its send fence or permit a second uncertain message.
   const uncertainConversations=new Set<string>();
@@ -92,6 +93,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     await chatBridge.inspectTurnIdentity({binding:next});
     const changed=selected?.conversationId!==next.conversationId||selected?.browserInstanceId!==next.browserInstanceId;
     if(changed){
+      selectedRevision++;
       messages=[];pending=null;
       awaitingNewChatIdentity=awaitingFirstTurns.get(conversationKey(next))??null;
       blocked=uncertainConversations.has(conversationKey(next))||Boolean(awaitingNewChatIdentity);
@@ -114,10 +116,17 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   };
   const read=async()=>{
     if(!selected)return{selected:null,items:[],turn:"unbound",blocked:false,limitedHistory:true};
-    const startingConversation=conversationKey(selected);
+    const initialBinding=selected;
+    const startingRevision=selectedRevision;
+    const sameSelection=()=>selectedRevision===startingRevision;
+    const staleResult=()=>({selected:{conversationId:selected!.conversationId,tabId:selected!.tabId,browserInstanceId:selected!.browserInstanceId},
+      items:[],turn:"waiting",sending,blocked:true,preview:null,
+      notice:"Conversation changed while reading. Refresh the selected conversation.",
+      limitedHistory:true,historyCount:0});
     let turn="idle";let notice:string|null=null;let preview:{text:string;truncated:boolean}|null=null;
     try{
-      const inspected=await chatBridge.inspectTurnIdentity({binding:selected});
+      const inspected=await chatBridge.inspectTurnIdentity({binding:initialBinding});
+      if(!sameSelection())return staleResult();
       const current=inspected?.binding as Binding|undefined;
       if(current&&current.conversationId===selected.conversationId&&current.browserInstanceId===selected.browserInstanceId)selected=current;
       turn=inspected?.generationActive===true?"generating":inspected?.status==="waiting"?"waiting":"ready";
@@ -128,7 +137,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         const awaiting=awaitingNewChatIdentity;
         if(selected.conversationId===awaiting.conversationId&&chatBridge.readRecent){
           try{
-            const recent=await chatBridge.readRecent({binding:selected});
+            const recent=await chatBridge.readRecent({binding:initialBinding});
+            if(!sameSelection())return staleResult();
             const users=Array.isArray(recent?.items)?recent.items.filter((item:any)=>item?.role==="user"):[];
             if(recent?.partial!==true&&users.length===1&&users[0].text?.trim()===awaiting.text){
               pending={userEpoch:inspected.userEpoch,previousAssistantTurnKey:null,deliveryId:awaiting.deliveryId};
@@ -144,7 +154,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       if(awaitingNewChatIdentity)turn="waiting";
       if(pending){
         const receipt=pending;
-        const result=await chatBridge.readFinal({binding:selected,userEpoch:receipt.userEpoch,previousAssistantTurnKey:receipt.previousAssistantTurnKey});
+        const result=await chatBridge.readFinal({binding:initialBinding,userEpoch:receipt.userEpoch,previousAssistantTurnKey:receipt.previousAssistantTurnKey});
+        if(!sameSelection())return staleResult();
         if(result?.status==="ready"){
           if(typeof result.text!=="string"){
             throw Object.assign(new Error("The confirmed ChatGPT reply has no readable text payload."),{code:"CHAT_BRIDGE_READ_FAILED"});
@@ -165,7 +176,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       if(turn==="generating"&&inspected?.generationActive===true&&
          Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)>=11&&
          typeof inspected.userEpoch==="string"&&chatBridge.readLive){
-        const live=await chatBridge.readLive({binding:selected,userEpoch:inspected.userEpoch});
+        const live=await chatBridge.readLive({binding:initialBinding,userEpoch:inspected.userEpoch});
+        if(!sameSelection())return staleResult();
         if(live?.status==="generating"&&typeof live.text==="string"&&live.text)
           preview={text:live.text.slice(0,3200),truncated:live.truncated===true||live.text.length>3200};
         else if(live?.status==="drifted")throw Object.assign(new Error("Live Chat turn identity changed."),{code:"CHAT_BRIDGE_DRIFTED"});
@@ -173,7 +185,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     }catch(error){
       // A late error from conversation A must not mark newly selected B as
       // uncertain or disconnected. The stale-response guard below owns it.
-      if(conversationKey(selected)===startingConversation){
+      if(sameSelection()){
         const code=(error as {code?:string})?.code;
         if(code==="CHAT_BRIDGE_DRIFTED"||code==="CHAT_BRIDGE_READ_FAILED"){
           // A terminal response identity mismatch must never be replayed or
@@ -186,12 +198,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     }
     // Browser reads can finish after another sidebar selection. Never
     // attribute a previous conversation's text/preview to the new selection.
-    if(conversationKey(selected)!==startingConversation){
-      return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},
-        items:[],turn:"waiting",sending,blocked:true,preview:null,
-        notice:"Conversation changed while reading. Refresh the selected conversation.",
-        limitedHistory:true,historyCount:0};
-    }
+    if(!sameSelection())return staleResult();
     return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-54),
       turn,sending,blocked,preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
   };
@@ -286,6 +293,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         if(saved?.chatBinding?.conversationId!==source.conversationId||saved.chatBinding.browserInstanceId!==source.browserInstanceId)
           throw new Error("New Chat Task Capsule binding could not be confirmed.");
         selected={browserContext:"user",browserInstanceId:source.browserInstanceId,tabId:source.tabId,conversationId:source.conversationId,canonicalUrl:source.canonicalUrl};
+        selectedRevision++;
         history=[];messages=[];historyNotice=null;historyPartial=false;blocked=false;pending=null;awaitingNewChatIdentity=null;
         const messageId=key.replace(/^nch-/u,"tgb-");
         appendMessage({id:messageId,role:"user",text:(body.text as string).trim(),status:"sent"});
