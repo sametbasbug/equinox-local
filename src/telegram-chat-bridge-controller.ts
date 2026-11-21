@@ -258,7 +258,10 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             return {
               present: Boolean(composer),
               text: composer ? String(composer.textContent || '').trim() : '',
-              generationActive: Boolean(document.querySelector('button[data-testid="stop-button"]')),
+              generationActive: [...document.querySelectorAll('button[data-testid="stop-button"]')]
+                .some(button => button.isConnected && button.getClientRects().length > 0
+                  && button.getBoundingClientRect().height > 0 && button.getBoundingClientRect().width > 0
+                  && getComputedStyle(button).visibility !== 'hidden'),
             };
           })()`,
         }, 5_000).catch(() => null) as BrowserResult | null;
