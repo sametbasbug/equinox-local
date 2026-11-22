@@ -951,7 +951,15 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                             && documents.every(name => awaiting.fileNames.includes(name) && lines.includes(name))
                             && missing.every(name => /\.(?:png|jpe?g|webp|gif)$/iu.test(name))
                             && awaiting.fileNames.filter(name => documents.includes(name)).every((name, index) => name === documents[index]);
-                        const promptMatch = awaiting.text ? lines.includes(awaiting.text) : true;
+                        // A multi-line first prompt with attachments is rendered as
+                        // consecutive lines beside file cards. Looking for the entire
+                        // prompt in one line would leave a genuinely sent first turn
+                        // permanently unresolved. Require an exact contiguous run of
+                        // provider-observed lines, not substring/text-only guesswork.
+                        const rawLines = observedText.split(/\r?\n/u);
+                        const expectedLines = awaiting.text.split("\n");
+                        const promptMatch = !awaiting.text || rawLines.some((_, start) => start + expectedLines.length <= rawLines.length
+                            && expectedLines.every((line, index) => rawLines[start + index] === line));
                         if (recent?.partial !== true && users.length === 1
                             && (awaiting.fileNames.length ? filesMatch && promptMatch : observedText === awaiting.text)) {
                             pending = { userEpoch: inspected.userEpoch, previousAssistantTurnKey: null, deliveryId: awaiting.deliveryId };
