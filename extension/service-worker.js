@@ -2575,9 +2575,9 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
         || filePath === undefined && toolName === undefined)
         throw new Error("New Chat needs exactly one provider tool or file.");
     const id = Number(tabId);
-    const tab = await chooseTab(id);
+    const tab = await waitForTab(id, item => item.status === "complete" && !item.pendingUrl && item.url === "https://chatgpt.com/", 10_000);
     if (tab.pendingUrl || tab.url !== "https://chatgpt.com/")
-        throw new Error("Tool staging requires the exact fresh ChatGPT Home tab.");
+        throw new Error("New Chat staging requires the exact fresh ChatGPT Home tab.");
     await requireDebuggableTab(id);
     await attachTab(id);
     try {
@@ -2587,12 +2587,17 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
         if(location.origin!=='https://chatgpt.com'||location.pathname!=='/'
           ||document.querySelectorAll('[data-turn-key],[data-message-author-role]').length)
           return{staged:false,reason:'route'};
-        const composer=${VISIBLE_CHATGPT_COMPOSER_JS};
-        const form=composer?.closest('form');
+        const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+        let composer=null,form=null;
+        for(let n=0;n<30;n++){
+          composer=${VISIBLE_CHATGPT_COMPOSER_JS};
+          form=composer?.closest('form');
+          if(form)break;
+          await sleep(100);
+        }
         if(!composer||!form||String(composer.textContent||'').trim()
           ||form.querySelector('span[class*="group/composer-attachment"]'))
           return{staged:false,reason:'existing_draft'};
-        const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
         const trigger=[...document.querySelectorAll('button[data-composer-navigation-target="add-context"]')]
           .filter(x=>x.getClientRects().length);
         if(trigger.length!==1)return{staged:false,reason:'menu'};
@@ -2642,10 +2647,18 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
             // Obtain the one exact, user-visible ChatGPT composer form's generic
             // hidden file input. Do not touch camera/image-only inputs.
             const inputProbe = await send(id, "Runtime.evaluate", {
-                expression: `(() => {
-          const composer=${VISIBLE_CHATGPT_COMPOSER_JS};
-          const form=composer?.closest('form');
-          if(!form||String(composer.textContent||'').trim())
+                expression: `(async() => {
+          const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+          let composer=null,form=null;
+          for(let n=0;n<30;n++){
+            composer=${VISIBLE_CHATGPT_COMPOSER_JS};
+            form=composer?.closest('form');
+            if(form)break;
+            await pause(100);
+          }
+          if(!form||String(composer.textContent||'').trim()
+            ||location.origin!=='https://chatgpt.com'||location.pathname!=='/'
+            ||document.querySelectorAll('[data-turn-key],[data-message-author-role]').length)
             return{ready:false,reason:'composer_drifted'};
           const inputs=[...form.querySelectorAll('input[type="file"][multiple]')]
             .filter(x=>!x.getAttribute('accept'));
@@ -2654,7 +2667,7 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
           if(form.querySelector('span[class*="group/composer-attachment"],[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]'))
             return{ready:false,reason:'existing_attachment'};
           return{ready:true,id:inputs[0].id};
-        })()`, returnByValue: true, silent: true
+        })()`, returnByValue: true, awaitPromise: true, silent: true
             });
             const input = cdpObject(inputProbe?.result?.value);
             if (inputProbe?.exceptionDetails || input?.ready !== true || typeof input.id !== "string")
