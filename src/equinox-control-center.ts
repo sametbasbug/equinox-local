@@ -545,6 +545,10 @@ let chatTaskRelated: { taskId: string; identity: string } | null = null;
 let chatTaskPanelIdentity: string | null = null;
 let chatTaskPanelGeneration = 0;
 let chatTaskPanelLoading = false;
+let chatEditCandidate:{messageId:string;oldText:string;identity:string;tabId:number}|null=null;
+let chatEditBusy=false;
+let chatEditAttempted=false;
+let chatMessageEditAllowed=false;
 const chatComposer = () => document.getElementById("native-chat-text") as HTMLTextAreaElement;
 
 function setNativeChatCopy(id: string, message: string) {
@@ -1259,7 +1263,7 @@ function updateNativeChatControls() {
     : "Enter to send · Shift+Enter for a new line");
 }
 
-type NativeChatMessage = { role: "user" | "assistant"; text: string; richText?: string | null; truncated: boolean; uncertain?: boolean; live?: boolean };
+type NativeChatMessage = { id?:string; role: "user" | "assistant"; text: string; richText?: string | null; truncated: boolean; uncertain?: boolean; live?: boolean };
 
 function appendNativeChatInline(element: HTMLElement, text: string) {
   let end = 0;
@@ -1484,6 +1488,77 @@ function refreshNativeChatQuoteSelection() {
       && document.activeElement.closest(".native-chat-message-actions"))) chatQuoteSelection = null;
 }
 
+function updateNativeChatEditControls(){
+  const source=chatEditCandidate;
+  const input=document.getElementById("native-chat-edit-text") as HTMLTextAreaElement;
+  const text=input.value.trim();
+  const unchanged=source&&text===source.oldText;
+  const busy=chatEditBusy||chatEditAttempted;
+  input.disabled=busy;
+  $("native-chat-edit-confirm").disabled=!source||busy||!text||unchanged
+    ||text.length>3500||/\x00/u.test(text);
+  $("native-chat-edit-cancel").disabled=chatEditBusy;
+  $("native-chat-edit-close").disabled=chatEditBusy;
+}
+
+function openNativeChatMessageEdit(message:NativeChatMessage){
+  if(chatEditBusy||chatNewDraft||chatSending||chatSelecting||chatBlocked||!chatMessageEditAllowed
+    ||chatComposer().value.trim()||chatPickedFile||chatToolSelection
+    ||!chatActive||!["ready","complete"].includes(chatTurn)
+    ||typeof message.id!=="string"
+    ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:user$/iu.test(message.id)
+    ||message.truncated||!message.text.trim()||message.text.length>3500)return;
+  const identity=chatConversationKey(chatActive);
+  if(!identity)return;
+  chatEditCandidate={messageId:message.id,oldText:message.text.trim(),
+    identity,tabId:Number(chatActive.tabId)};
+  chatEditAttempted=false;
+  (document.getElementById("native-chat-edit-text") as HTMLTextAreaElement).value=chatEditCandidate.oldText;
+  setNativeChatCopy("native-chat-edit-status","");
+  updateNativeChatEditControls();
+  const dialog=$("native-chat-edit-dialog") as HTMLDialogElement;
+  if(!dialog.open)dialog.showModal();
+  (document.getElementById("native-chat-edit-text") as HTMLTextAreaElement).focus();
+}
+
+async function submitNativeChatMessageEdit(){
+  const candidate=chatEditCandidate;
+  const dialog=$("native-chat-edit-dialog") as HTMLDialogElement;
+  if(!candidate||!dialog.open||chatEditBusy||chatEditAttempted)return;
+  const text=(document.getElementById("native-chat-edit-text") as HTMLTextAreaElement).value.trim();
+  if(!text||text.length>3500||text===candidate.oldText
+    ||candidate.identity!==chatConversationKey(chatActive)
+    ||candidate.tabId!==chatActive?.tabId||!chatMessageEditAllowed
+    ||chatBlocked||chatSending||chatSelecting||chatComposer().value.trim()
+    ||chatPickedFile||chatToolSelection||!["ready","complete"].includes(chatTurn))
+    return;
+  chatEditBusy=true;chatEditAttempted=true;
+  updateNativeChatEditControls();
+  setNativeChatCopy("native-chat-edit-status","Editing the exact ChatGPT message…");
+  try{
+    const result=await mutationJson("/api/v1/chat/message_edit","POST",{
+      messageId:candidate.messageId,oldText:candidate.oldText,newText:text,
+      mutationId:"mde-"+crypto.randomUUID()
+    });
+    if(candidate!==chatEditCandidate||candidate.identity!==chatConversationKey(chatActive))
+      return;
+    if(result.edit?.confirmed!==true)
+      throw new Error("ChatGPT did not confirm the exact message edit.");
+    dialog.close();
+    if(result.edit.chat)renderNativeChatState(result.edit.chat);
+    chatThreadRefreshRequested=true;
+    void refreshNativeChat(true);
+    showToast("Message edit submitted. ChatGPT is updating the conversation.");
+  }catch(error){
+    if(candidate===chatEditCandidate&&dialog.open)
+      setNativeChatCopy("native-chat-edit-status",nativeChatErrorMessage(error)+
+        " Check Chrome before making another edit.");
+  }finally{
+    chatEditBusy=false;
+    updateNativeChatEditControls();
+  }
+}
+
 function renderNativeChatMessage(message: NativeChatMessage) {
   const article = document.createElement("article");
   article.className = "native-chat-message";
@@ -1522,6 +1597,19 @@ function renderNativeChatMessage(message: NativeChatMessage) {
       showToast(await copyNativeChatText(body, message.text) ? "Message copied." : "Could not copy message.");
     });
     actions.append(copy);
+    if(message.role==="user"&&typeof message.id==="string"
+      &&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:user$/iu.test(message.id)
+      &&!message.truncated&&chatMessageEditAllowed&&!chatNewDraft
+      &&!chatBlocked&&!chatSending&&!chatSelecting
+      &&!chatComposer().value.trim()&&!chatPickedFile&&!chatToolSelection
+      &&["ready","complete"].includes(chatTurn)){
+      const edit=document.createElement("button");
+      edit.type="button";edit.className="native-chat-message-copy";
+      edit.textContent=localizeUiText("Edit message");
+      edit.setAttribute("aria-label",localizeUiText("Edit message"));
+      edit.addEventListener("click",()=>openNativeChatMessageEdit(message));
+      actions.append(edit);
+    }
     if(message.role==="assistant"&&message.richText){
       const markdown=document.createElement("button");
       markdown.type="button";
@@ -1598,13 +1686,14 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
   const transcript = $("native-chat-messages");
   const live = $("native-chat-preview");
   const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 96;
-  const signatures = items.map(item => JSON.stringify([state.language, item.id, item.role, item.text, item.richText, item.status, item.truncated]));
+  const signatures = items.map(item => JSON.stringify([state.language,chatMessageEditAllowed, item.id, item.role, item.text, item.richText, item.status, item.truncated]));
   const previous = chatMessageSignatures;
   const keepsPrefix = !changedConversation && previous.every((signature, index) => signature === signatures[index]);
   if (!keepsPrefix) transcript.replaceChildren();
   for (const item of items.slice(keepsPrefix ? previous.length : 0)) {
     const text = String(item.text || "");
     transcript.append(renderNativeChatMessage({
+      id:typeof item.id==="string"?item.id:undefined,
       role: item.role === "user" ? "user" : "assistant",
       text: text.slice(0, 25_000),
       richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 14_000 ? item.richText : null,
@@ -1733,6 +1822,7 @@ function renderNativeChatState(chat: UiRemoteData) {
   chatLastRenderedState = chat;
   chatActive = chat.selected || null;
   chatTurn = typeof chat.turn === "string" ? chat.turn : "unbound";
+  chatMessageEditAllowed=chat.messageEditAllowed===true;
   chatStateAvailable = true;
   chatServerSending = chat.sending === true;
   chatCreationBlocked = chat.creationBlocked === true || chatCreationBlocked;
@@ -5490,6 +5580,20 @@ function bindEvents() {
       closeNativeChatTaskPanel();
       $("native-chat-task-open").focus();
     }
+  });
+  $("native-chat-edit-text").addEventListener("input",updateNativeChatEditControls);
+  $("native-chat-edit-confirm").addEventListener("click",()=>void submitNativeChatMessageEdit());
+  for(const name of ["native-chat-edit-close","native-chat-edit-cancel"]){
+    $(name).addEventListener("click",()=>{
+      if(!chatEditBusy)($("native-chat-edit-dialog") as HTMLDialogElement).close();
+    });
+  }
+  $("native-chat-edit-dialog").addEventListener("cancel",event=>{
+    if(chatEditBusy)event.preventDefault();
+  });
+  $("native-chat-edit-dialog").addEventListener("close",()=>{
+    chatEditCandidate=null;chatEditAttempted=false;
+    (document.getElementById("native-chat-edit-text") as HTMLTextAreaElement).value="";
   });
   $("native-chat-action-close").addEventListener("click",()=>{
     if(!chatActionMutating)nativeChatActionDialog().close();

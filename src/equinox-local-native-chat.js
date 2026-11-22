@@ -83,9 +83,33 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         }
         return associatedTasks.get(key) ?? null;
     };
+    const messageEditPermitted = async (binding, taskId) => {
+        if (!taskId)
+            return true;
+        if (!taskStore?.readInternal)
+            return false;
+        try {
+            const record = await taskStore.readInternal(taskId);
+            const native = record?.status === "active"
+                && record.title?.startsWith("Native Chat · ")
+                && record.objective === "User-initiated ChatGPT conversation through the Equinox Local native Chat window. The opening prompt stays in the user's ChatGPT conversation, not the Task Capsule."
+                && record.references?.some(ref => ref.type === "note"
+                    && ref.label === "Native Chat creation ID" && /^nch-[a-f0-9-]{36}$/u.test(ref.value));
+            const busy = ["armed", "delivering"].includes(String(record.continuation?.status || ""))
+                || ["prepared", "creating", "ambiguous"].includes(String(record.freshResume?.status || ""));
+            const same = record.chatBinding?.browserInstanceId === binding.browserInstanceId
+                && record.chatBinding?.conversationId === binding.conversationId
+                && record.chatBinding?.tabId === binding.tabId;
+            return !!native && !busy && same;
+        }
+        catch {
+            return false;
+        }
+    };
     const createAttempts = new Map();
     const attempts = new Map();
     const actionAttempts = new Map();
+    const editAttempts = new Map();
     let mutatingAction = false;
     function appendMessage(message) {
         messages.push(message);
@@ -654,10 +678,11 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (!sameSelection())
             return staleResult();
         const taskId = turn === "disconnected" ? null : await currentTaskId(initialBinding);
+        const messageEditAllowed = await messageEditPermitted(initialBinding, taskId);
         if (!sameSelection())
             return staleResult();
         return { selected: { conversationId: selected.conversationId, tabId: selected.tabId, browserInstanceId: selected.browserInstanceId }, items: [...history, ...messages].slice(-54),
-            turn, sending, blocked, creationBlocked, taskId,
+            turn, sending, blocked, creationBlocked, taskId, messageEditAllowed,
             preview, notice: notice || historyNotice, limitedHistory: historyPartial || !history.length, historyCount: history.length };
     };
     const tools = async () => {
@@ -789,6 +814,94 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     // Explicit first-message creation. Reuse the existing Task Capsule + first-party
     // Task Chat starter, and retain request identities even after a failed attempt.
     // A restart cannot silently recreate an already recorded initiation request.
+    const editMessage = async (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            invalid("Message edit requires a verified provider user turn.");
+        const body = value;
+        if (Object.keys(body).some(k => !["messageId", "oldText", "newText", "mutationId"].includes(k))
+            || typeof body.messageId !== "string"
+            || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:user$/iu.test(body.messageId)
+            || typeof body.oldText !== "string" || !body.oldText.trim()
+            || body.oldText !== body.oldText.trim() || body.oldText.length > 3500
+            || typeof body.newText !== "string" || !body.newText.trim()
+            || body.newText !== body.newText.trim() || body.newText.length > 3500
+            || body.newText === body.oldText || /[\x00]/u.test(body.newText)
+            || typeof body.mutationId !== "string" || !/^mde-[a-f0-9-]{36}$/u.test(body.mutationId))
+            invalid("Message edit requires one changed, exact provider message and mutation identity.");
+        const key = String(body.mutationId), fingerprint = JSON.stringify(body);
+        const prior = editAttempts.get(key);
+        if (prior) {
+            if (prior.fingerprint !== fingerprint || !selected
+                || prior.conversationKey !== conversationKey(selected) || prior.tabId !== selected.tabId)
+                invalid("Message edit identity cannot be reused for another conversation or edit.");
+            return prior.promise;
+        }
+        if (editAttempts.size >= 256)
+            invalid("This Chat session has reached its bounded message edit limit.");
+        if (!selected || selecting || sending || creating || pending || blocked || mutatingAction)
+            invalid("Select an idle, unblocked conversation before editing a message.");
+        const binding = selected, revision = selectedRevision;
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            invalid("Update Equinox Browser before editing messages.");
+        const taskId = await currentTaskId(binding);
+        if (!await messageEditPermitted(binding, taskId))
+            invalid("This active Task Capsule cannot safely edit its historical turn. Finish its automation before editing.");
+        if (selectedRevision !== revision || !selected
+            || selected.tabId !== binding.tabId
+            || conversationKey(selected) !== conversationKey(binding)
+            || selecting || sending || creating || pending || blocked || mutatingAction)
+            invalid("Conversation changed while authorizing the message edit. Select the message again.");
+        const source = history.find(item => item.id === body.messageId && item.role === "user"
+            && item.status === "complete" && item.truncated !== true);
+        if (!source || source.text !== body.oldText)
+            invalid("This user turn is not a complete, exact message from the selected ChatGPT history.");
+        mutatingAction = true;
+        const attempt = (async () => {
+            try {
+                const response = await call("chat_bridge.edit_message", {
+                    tabId: binding.tabId, conversationId: binding.conversationId,
+                    messageId: body.messageId, oldText: body.oldText, newText: body.newText,
+                    editId: key,
+                }, 17_000);
+                if (selectedRevision !== revision || !selected ||
+                    conversationKey(selected) !== conversationKey(binding)
+                    || selected.tabId !== binding.tabId || response?.tabId !== binding.tabId
+                    || response?.conversationId !== binding.conversationId)
+                    throw new Error("Message edit lost the exact conversation binding.");
+                if (response?.confirmed !== true) {
+                    if (response?.notSubmitted === true) {
+                        const err = new Error("ChatGPT did not submit this edit. The message or editor changed. Refresh the conversation.");
+                        err.statusCode = 409;
+                        throw err;
+                    }
+                    throw new Error("Edited message outcome is uncertain. Check this conversation in Chrome; the edit will not be resent.");
+                }
+                history = [];
+                messages = [];
+                historyPartial = true;
+                historyNotice = null;
+                historyPendingHydration = 7;
+                previousHistoryGeneration = true;
+                return { confirmed: true, messageId: body.messageId, chat: await read() };
+            }
+            catch (error) {
+                // Once the browser edit request has been issued, an unknown transport
+                // result may have crossed the provider Send boundary. A fresh request
+                // must not be auto-authorized until a human inspects Chrome.
+                if (error?.statusCode !== 409) {
+                    blocked = true;
+                    uncertainConversations.add(conversationKey(binding));
+                }
+                throw error;
+            }
+            finally {
+                mutatingAction = false;
+            }
+        })();
+        editAttempts.set(key, { fingerprint, conversationKey: conversationKey(binding),
+            tabId: binding.tabId, promise: attempt });
+        return attempt;
+    };
     const startNew = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Invalid New Chat request.");
@@ -942,5 +1055,5 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, toolKey, fileKey, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, search, project, conversationAction, tools, select, read, send, startNew, model });
+    return Object.freeze({ list, search, project, conversationAction, editMessage, tools, select, read, send, startNew, model });
 }

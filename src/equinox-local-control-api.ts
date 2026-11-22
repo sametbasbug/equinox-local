@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -310,6 +310,7 @@ export function createEquinoxLocalControlApi({
   searchChatThreads = null,
   browseChatProject = null,
   controlChatConversation = null,
+  editChatMessage = null,
   getChatTools = null,
   selectChatThread = null,
   getChatState = null,
@@ -528,6 +529,24 @@ export function createEquinoxLocalControlApi({
         const result=await controlChatConversation(body);
         if(body.action!=="inspect")state.mutationCount+=1;
         send(200,{ok:true,conversationAction:result});return;
+      }
+      if(method==="POST"&&pathname==="/api/v1/chat/message_edit"){
+        authorizeMutation();
+        if(typeof editChatMessage!=="function")
+          throw badRequest("Native Chat message editing is unavailable.");
+        const body=validateExactObject(await readBody(),
+          ["messageId","oldText","newText","mutationId"],"Native Chat message edit");
+        if(typeof body.messageId!=="string"
+          ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:user$/iu.test(body.messageId)
+          ||typeof body.oldText!=="string"||!body.oldText.trim()
+          ||body.oldText!==body.oldText.trim()||body.oldText.length>3500
+          ||typeof body.newText!=="string"||!body.newText.trim()
+          ||body.newText!==body.newText.trim()||body.newText.length>3500
+          ||body.newText===body.oldText||/[\x00]/u.test(body.newText)
+          ||typeof body.mutationId!=="string"||!/^mde-[a-f0-9-]{36}$/u.test(body.mutationId))
+          throw badRequest("An exact original user message and a changed edit are required.");
+        const edit=await editChatMessage(body);
+        state.mutationCount+=1;send(200,{ok:true,edit});return;
       }
       if (method === "GET" && pathname === "/api/v1/chat/state") {
         if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");

@@ -3551,6 +3551,163 @@ async function controlChatBridgeConversation({tabId,conversationId,canonicalUrl,
   }
 }
 
+/** Edit one exact provider user turn; the irreversible provider Send click
+ * is single-use and any post-click ambiguity must never be replayed. */
+async function editChatBridgeMessage({tabId,conversationId,messageId,oldText,newText,editId}:{
+  tabId?:unknown;conversationId?:unknown;messageId?:unknown;
+  oldText?:unknown;newText?:unknown;editId?:unknown;
+}={}) {
+  if(!Number.isSafeInteger(tabId)||Number(tabId)<1
+    ||typeof conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
+    ||typeof messageId!=="string"
+    ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:user$/iu.test(messageId)
+    ||typeof oldText!=="string"||!oldText.trim()||oldText!==oldText.trim()
+    ||oldText.length>3500
+    ||typeof newText!=="string"||!newText.trim()||newText!==newText.trim()
+    ||newText.length>3500||newText===oldText||/\x00/u.test(newText)
+    ||typeof editId!=="string"||!/^mde-[a-f0-9-]{36}$/u.test(editId))
+    throw new Error("Edit requires exact provider user message identity and changed text.");
+  const id=Number(tabId),message=String(messageId).slice(0,-5);
+  const original=await chooseTab(id);
+  if(original.pendingUrl||chatGptConversationIdentity(original)?.conversationId!==conversationId)
+    throw new Error("Selected ChatGPT conversation changed before editing.");
+  const state=await chatGptContinuationState(id);
+  if(state.generationActive||!state.composerReady||!state.composerEmpty)
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+      confirmed:false,notSubmitted:true,reason:"browser_busy_or_unsent_draft"};
+  await requireDebuggableTab(id);await attachTab(id);
+  let submitted=false,editorOpened=false;
+  const locator=String.raw`const turn=[...document.querySelectorAll('[data-turn-key]')]
+    .filter(t=>t.getAttribute('data-turn-key')===${JSON.stringify(message)});
+  const units=turn.length===1?[...turn[0].querySelectorAll(
+    '[data-chatgpt-search-unit-key$=":user"]')]:[];
+  const unit=units.length===1&&
+    String(units[0].getAttribute('data-chatgpt-search-message-ids')||'').split(/\s+/u)[0]
+      ===${JSON.stringify(message)}?units[0]:null;`;
+  const sourceText=JSON.stringify(oldText),replacement=JSON.stringify(newText);
+  try {
+    const before=await send(id,"Runtime.evaluate",{
+      expression:`(() => {
+        ${locator}
+        const edits=[...(unit?.querySelectorAll('button[aria-label]')||[])]
+          .filter(b=>b.getClientRects().length
+            &&/^(Edit message|Mesajı düzenle)$/iu.test(b.getAttribute('aria-label')||''));
+        return{ready:!!unit&&edits.length===1
+          &&String(unit.innerText||'').trim()===${sourceText}
+          &&!unit.querySelector('[contenteditable="true"]')};
+      })()`,returnByValue:true,silent:true});
+    if(before?.exceptionDetails||cdpObject(before?.result?.value)?.ready!==true)
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,confirmed:false,notSubmitted:true,
+        reason:"source_message_changed"};
+    if(!await claimChatBridgeReceipt(String(editId)))
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,confirmed:false,duplicatePrevented:true};
+    const opened=await send(id,"Runtime.evaluate",{
+      expression:`(() => {
+        ${locator}
+        const edits=[...(unit?.querySelectorAll('button[aria-label]')||[])]
+          .filter(b=>b.getClientRects().length
+            &&/^(Edit message|Mesajı düzenle)$/iu.test(b.getAttribute('aria-label')||''));
+        if(edits.length!==1||String(unit.innerText||'').trim()!==${sourceText})
+          return{opened:false};
+        edits[0].click();
+        return{opened:true};
+      })()`,returnByValue:true,silent:true});
+    if(opened?.exceptionDetails||cdpObject(opened?.result?.value)?.opened!==true)
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,confirmed:false,notSubmitted:true,
+        reason:"edit_button_unavailable"};
+    editorOpened=true;
+    const focused=await send(id,"Runtime.evaluate",{
+      expression:`(() => {
+        ${locator}
+        const editors=[...(unit?.querySelectorAll(
+          '[contenteditable="true"][role="textbox"]')||[])];
+        if(editors.length!==1
+          ||!(/^(Edit message|Mesajı düzenle)$/iu.test(editors[0].getAttribute('aria-label')||'')))
+          return{focused:false};
+        const editor=editors[0];editor.focus();
+        const selection=getSelection(),range=document.createRange();
+        range.selectNodeContents(editor);selection?.removeAllRanges();
+        selection?.addRange(range);
+        return{focused:document.activeElement===editor};
+      })()`,returnByValue:true,silent:true});
+    if(focused?.exceptionDetails||cdpObject(focused?.result?.value)?.focused!==true)
+      throw new Error("Provider user message edit field is unavailable.");
+    await send(id,"Input.insertText",{text:String(newText)});
+    const ready=await send(id,"Runtime.evaluate",{
+      expression:`(() => {
+        ${locator}
+        const editors=[...(unit?.querySelectorAll('[contenteditable="true"][role="textbox"]')||[])];
+        const form=editors[0]?.closest('form');
+        const submit=[...(form?.querySelectorAll('button[type="submit"]')||[])]
+          .filter(x=>x.getClientRects().length
+            &&/^(Send|Gönder)$/iu.test(String(x.innerText||'').trim())&&!x.disabled);
+        return{ready:editors.length===1&&submit.length===1
+          &&String(editors[0].innerText||'').trim()===${replacement}
+          &&location.origin==='https://chatgpt.com'};
+      })()`,returnByValue:true,silent:true});
+    if(ready?.exceptionDetails||cdpObject(ready?.result?.value)?.ready!==true)
+      throw new Error("Provider edit text or Send button differs from the confirmed draft.");
+    const last=await chatGptContinuationState(id);
+    if(last.generationActive||last.conversationId!==conversationId)
+      throw new Error("ChatGPT conversation changed before editing.");
+    // From here any provider execution ambiguity is permanent for this ID.
+    submitted=true;
+    const click=await send(id,"Runtime.evaluate",{
+      expression:`(() => {
+        ${locator}
+        const editors=[...(unit?.querySelectorAll('[contenteditable="true"][role="textbox"]')||[])];
+        const form=editors[0]?.closest('form');
+        const submit=[...(form?.querySelectorAll('button[type="submit"]')||[])]
+          .filter(x=>x.getClientRects().length
+            &&/^(Send|Gönder)$/iu.test(String(x.innerText||'').trim())&&!x.disabled);
+        if(editors.length!==1||submit.length!==1
+          ||String(editors[0].innerText||'').trim()!==${replacement}
+          ||location.origin!=='https://chatgpt.com'
+          ||location.pathname.split('/').at(-1)!==${JSON.stringify(conversationId)})
+          return{clicked:false};
+        submit[0].click();
+        return{clicked:true};
+      })()`,returnByValue:true,silent:true});
+    if(click?.exceptionDetails||cdpObject(click?.result?.value)?.clicked!==true)
+      throw new Error("Provider edit submission not confirmed.");
+    // Text must be corroborated in the original exact user turn. No automatic
+    // retry on history branching, streaming delays or provider DOM changes.
+    for(let n=0;n<35;n++){
+      const current=await chooseTab(id);
+      if(current.pendingUrl||chatGptConversationIdentity(current)?.conversationId!==conversationId)break;
+      const proof=await send(id,"Runtime.evaluate",{
+        expression:`(() => {
+          ${locator}
+          return{matched:!!unit
+            &&String(unit.innerText||'').trim()===${replacement}
+            &&!unit.querySelector('[contenteditable="true"]')};
+        })()`,returnByValue:true,silent:true});
+      if(!proof?.exceptionDetails&&cdpObject(proof?.result?.value)?.matched===true)
+        return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+          messageId,confirmed:true,editId};
+      await new Promise(resolve=>setTimeout(resolve,120));
+    }
+    throw new Error("Edited provider message could not be verified after Send.");
+  }catch(error){
+    if(!submitted&&editorOpened){
+      await send(id,"Runtime.evaluate",{
+        expression:`(() => {
+          ${locator}
+          const editor=unit?.querySelector('[contenteditable="true"][role="textbox"]');
+          const cancel=[...(editor?.closest('form')?.querySelectorAll('button')||[])]
+            .filter(b=>/^(Cancel|İptal et)$/iu.test(String(b.innerText||'').trim()));
+          if(cancel.length===1)cancel[0].click();
+          return{cancelled:cancel.length===1};
+        })()`,returnByValue:true,silent:true}).catch(()=>{});
+    }
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+      confirmed:false,ambiguous:submitted,notSubmitted:!submitted,
+      reason:submitted?"provider_edit_uncertain":"provider_edit_not_submitted"};
+  }finally{
+    scheduleDetach(id,CONTINUATION_MUTATION_DETACH_MS);
+  }
+}
+
 async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conversationId?:unknown}={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1||typeof conversationId!=="string"||!/^[A-Za-z0-9-]{8,160}$/u.test(conversationId))throw new Error("Chat history identity is invalid.");
   const tab=await chooseTab(Number(tabId));
@@ -10416,6 +10573,7 @@ const COMMANDS = {
   "chat_bridge.search": searchChatBridgeHistory,
   "chat_bridge.project": browseChatBridgeProject,
   "chat_bridge.conversation_action": controlChatBridgeConversation,
+  "chat_bridge.edit_message": editChatBridgeMessage,
   "chat_bridge.model": chatBridgeModelControl,
   "chat_bridge.model_catalog": discoverChatBridgeNewModel,
   "chat_bridge.tools_catalog": readChatBridgeToolsCatalog,
