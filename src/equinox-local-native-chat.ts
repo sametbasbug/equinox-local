@@ -60,6 +60,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let historyNotice:string|null=null;
   let historyPendingHydration=0;
   let pending:{userEpoch:string;previousAssistantTurnKey:string|null;deliveryId:string}|null=null;
+  // When Stop is confirmed, the provider's real user turn may be rehydrated.
+  // Reconcile only against its exact observed epoch, never matching prompt text.
+  let stoppedLocalReceipt:{userEpoch:string;deliveryId:string}|null=null;
   let awaitingNewChatIdentity:{conversationId:string;text:string;fileNames:string[];deliveryId:string}|null=null;
   let sending=false;
   let creating=false;
@@ -694,7 +697,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       ||selected?.canonicalUrl!==next.canonicalUrl;
     if(changed){
       selectedRevision++;
-      messages=[];pending=null;
+      messages=[];pending=null;stoppedLocalReceipt=null;
       awaitingNewChatIdentity=awaitingFirstTurns.get(conversationKey(next))??null;
       blocked=uncertainConversations.has(conversationKey(next))||Boolean(awaitingNewChatIdentity);
       history=[];historyPartial=false;historyPendingHydration=0;
@@ -793,7 +796,17 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
               ...providerUserAttachments(item),
             }));
             historyPartial=fresh.partial===true;
-            historyPendingHydration=0;
+            const exact=stoppedLocalReceipt;
+            if(exact&&fresh.items.some((item:any)=>item.role==='user'
+              &&item.turnKey===exact.userEpoch)
+              &&messages.some(item=>item.id===exact.deliveryId&&item.role==='user'
+                &&item.status==='sent')){
+              messages=messages.filter(item=>item.id!==exact.deliveryId);
+              stoppedLocalReceipt=null;
+            }
+            // A partially hydrated provider view might not yet show the
+            // interrupted user turn. Keep the bounded subsequent reads.
+            if(!stoppedLocalReceipt)historyPendingHydration=0;
           }
         }catch{/* A later explicit refresh can recover without replaying sends. */}
       }
@@ -931,6 +944,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       ||conversationKey(selected)!==conversationKey(binding)
       ||sending||creating||blocked||mutatingAction
       ||observed?.generationActive!==true
+      ||(pending!==null&&pending.userEpoch!==observed?.userEpoch)
       ||observed?.binding?.tabId!==binding.tabId
       ||observed?.binding?.conversationId!==binding.conversationId
       ||observed?.binding?.browserInstanceId!==binding.browserInstanceId)
@@ -955,7 +969,11 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         }
         // The interruption ends the pending reply, but it must NOT fabricate
         // assistant text or replay a send. Hydrate provider-rendered history.
+        const interrupted=pending;
         pending=null;
+        stoppedLocalReceipt=interrupted&&typeof interrupted.userEpoch==='string'
+          &&interrupted.userEpoch?{userEpoch:interrupted.userEpoch,
+            deliveryId:interrupted.deliveryId}:null;
         historyPendingHydration=5;
         previousHistoryGeneration=false;
         return{confirmed:true,stopped:true,chat:await read()};
