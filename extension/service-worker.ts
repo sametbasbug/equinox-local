@@ -2182,9 +2182,10 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
   // independent render roots or a media/structured card.
   if (roots.length !== 1) return null;
   const root = roots[0];
-  // A sibling card or hidden media makes the partial Markdown subtree
-  // insufficient to represent the visible assistant answer.
-  if (scope.querySelector('img,video,canvas,iframe,math')) return null;
+  // A substantial image/widget makes the Markdown root insufficient.
+  // Tiny visible citation favicons and hidden icons are not answer media;
+  // they must not discard otherwise verified headings, lists and code.
+  if (hasChatBridgeVisibleMedia(scope)) return null;
   const skipTags = new Set(['SCRIPT','STYLE','BUTTON','SVG','NAV','NOSCRIPT','INPUT','TEXTAREA','CANVAS','IFRAME']);
   const visible = (node) => node.nodeType !== 1 || (!skipTags.has(node.tagName)
     && !node.hasAttribute('hidden') && node.getAttribute('aria-hidden') !== 'true'
@@ -2323,10 +2324,11 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
 };
 // A small citation favicon must not be mistaken for a generated image.
 // Only genuinely displayed media is marked, never its URL or source HTML.
-const hasChatBridgeVisibleMedia = (scope) => [...scope.querySelectorAll('img,video,canvas,iframe,math')]
+const hasChatBridgeVisibleMedia = (scope) => [...scope.querySelectorAll('img,svg,video,canvas,iframe,math')]
   .some(node => {
     if (!node.getClientRects().length || node.closest('[aria-hidden="true"]')) return false;
-    if (node.tagName === 'IMG') {
+    const kind=String(node.localName||node.tagName).toLowerCase();
+    if (kind === 'img' || kind === 'svg') {
       const box=node.getBoundingClientRect();
       return box.width >= 48 && box.height >= 48;
     }
