@@ -1,9 +1,35 @@
-import { BaseWindow, WebContentsView, session } from "electron";
+import { BaseWindow, WebContentsView, dialog, session } from "electron";
 
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
-const HOSTS = new Set(["chatgpt.com", "auth.openai.com", "accounts.google.com"]);
+const HOSTS = new Set(["chatgpt.com", "auth.openai.com"]);
 let host: BaseWindow | null = null;
+let googleNoticeOpen = false;
+
+function isEmbeddedGoogleAuth(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "accounts.google.com";
+  } catch { return false; }
+}
+
+function warnGoogleRestriction(win: BaseWindow, language: "en" | "tr"): void {
+  if (googleNoticeOpen || win.isDestroyed()) return;
+  googleNoticeOpen = true;
+  void dialog.showMessageBox(win, {
+    type: "info",
+    title: language === "tr" ? "Google ile giriş burada desteklenmiyor" : "Google sign-in is unavailable here",
+    message: language === "tr"
+      ? "Google hesabıyla giriş bu gömülü pencerede desteklenmiyor."
+      : "Google sign-in is not supported inside this embedded window.",
+    detail: language === "tr"
+      ? "Google, uygulama içindeki gömülü tarayıcılarda OAuth girişine izin vermiyor. Bu önizleme Chrome'dan ayrı bir oturum kullanır. ChatGPT hesabın doğrudan e-posta girişini destekliyorsa o yöntemi deneyebilirsin."
+      : "Google disallows OAuth authorization in embedded browsers. This preview uses an isolated session, so signing in through Chrome will not sign in here automatically. If your ChatGPT account supports direct email sign-in, use that method instead.",
+    buttons: ["OK"],
+    defaultId: 0,
+    noLink: true,
+  }).catch(() => {}).finally(() => { googleNoticeOpen = false; });
+}
 
 function admitted(value: string): boolean {
   try {
@@ -18,7 +44,7 @@ const STYLE = [
   ":focus-visible { outline-color: #ff4fd8 !important; }",
 ].join("\n");
 
-export function openEmbeddedChatPilot(): void {
+export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
   if (host && !host.isDestroyed()) { host.show(); host.focus(); return; }
   const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
   isolated.setPermissionRequestHandler((_contents, _permission, done) => done(false));
@@ -44,15 +70,21 @@ export function openEmbeddedChatPilot(): void {
     view.setBounds({ x: 0, y: 0, width: width ?? 1180, height: height ?? 790 });
   };
   fit(); win.on("resize", fit);
-  // This PoC does not attempt to bypass Google OAuth embedded-login policy.
-  // Neither popup navigation nor other hosts get a privileged browsing context.
-  view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  view.webContents.on("will-navigate", (event, url) => {
-    if (!admitted(url)) event.preventDefault();
+  // The website's Google button must not send credentials through an embedded
+  // user agent. Surface the actual OAuth policy limitation instead of evading it.
+  // All other popups are denied; remote content never receives Equinox IPC.
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    if (isEmbeddedGoogleAuth(url)) warnGoogleRestriction(win, language);
+    return { action: "deny" };
   });
-  view.webContents.on("will-redirect", (event, url) => {
-    if (!admitted(url)) event.preventDefault();
-  });
+  const authorizeNavigation = (event: { preventDefault(): void }, url: string): void => {
+    if (!admitted(url)) {
+      event.preventDefault();
+      if (isEmbeddedGoogleAuth(url)) warnGoogleRestriction(win, language);
+    }
+  };
+  view.webContents.on("will-navigate", authorizeNavigation);
+  view.webContents.on("will-redirect", authorizeNavigation);
   view.webContents.on("did-finish-load", () => {
     if (view.webContents.isDestroyed()) return;
     try {

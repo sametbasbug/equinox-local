@@ -688,7 +688,7 @@ function updateMenus() {
         { type: "separator" },
         { label: text("Open Control Center", "Kontrol Merkezi'ni aç"), click: showControlCenter },
         { label: text("ChatGPT Web preview (experimental)", "ChatGPT Web önizleme (deneysel)"),
-            enabled: !quitting, click: openEmbeddedChatPilot },
+            enabled: !quitting, click: () => openEmbeddedChatPilot(language === "tr" ? "tr" : "en") },
         { label: companion?.isVisible() ? text("Hide Companion", "Companion'ı Gizle") : text("Show Companion", "Companion'ı Göster"),
             enabled: Boolean(companion) && !quitting,
             click: () => { companion?.setVisible(!companion.isVisible()); } },
