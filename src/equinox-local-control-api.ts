@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -314,6 +314,7 @@ export function createEquinoxLocalControlApi({
   retryChatAssistant = null,
   branchChatAssistant = null,
   branchWorkAssistant = null,
+  branchVersionAssistant = null,
   inspectChatResponseVersions = null,
   getChatTools = null,
   selectChatThread = null,
@@ -581,14 +582,18 @@ export function createEquinoxLocalControlApi({
         const versions=await inspectChatResponseVersions(body);
         send(200,{ok:true,versions});return;
       }
-      if(method==="POST"&&(pathname==="/api/v1/chat/branch_new"||pathname==="/api/v1/chat/branch_work")){
+      if(method==="POST"&&(pathname==="/api/v1/chat/branch_new"
+        ||pathname==="/api/v1/chat/branch_work"||pathname==="/api/v1/chat/branch_version")){
         authorizeMutation();
         const workMode=pathname==="/api/v1/chat/branch_work";
-        const branchAction=workMode?branchWorkAssistant:branchChatAssistant;
+        const versionMode=pathname==="/api/v1/chat/branch_version";
+        const branchAction=versionMode?branchVersionAssistant:
+          workMode?branchWorkAssistant:branchChatAssistant;
         if(typeof branchAction!=="function")
           throw badRequest("Native Chat branching is unavailable.");
         const body=validateExactObject(await readBody(),
-          ["messageId","expectedText","firstMessage","mutationId"],"Native Chat branch");
+          ["messageId","expectedText","firstMessage","mutationId",
+            ...(versionMode?["versionMessageId","versionText"]:[])],"Native Chat branch");
         if(typeof body.messageId!=="string"
           ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
           ||typeof body.expectedText!=="string"||!body.expectedText.trim()
@@ -596,7 +601,15 @@ export function createEquinoxLocalControlApi({
           ||typeof body.firstMessage!=="string"||!body.firstMessage.trim()
           ||body.firstMessage!==body.firstMessage.trim()||body.firstMessage.length>1500
           ||/[\r\n\x00]/u.test(body.firstMessage)
-          ||typeof body.mutationId!=="string"||!(workMode?/^mwr-[a-f0-9-]{36}$/u:/^mbr-[a-f0-9-]{36}$/u).test(body.mutationId))
+          ||(versionMode&&(
+            typeof body.versionMessageId!=="string"
+            ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(body.versionMessageId)
+            ||body.versionMessageId===String(body.messageId).slice(0,-10)
+            ||typeof body.versionText!=="string"||!body.versionText.trim()
+            ||body.versionText!==body.versionText.trim()||body.versionText.length>3500))
+          ||typeof body.mutationId!=="string"
+          ||!(versionMode?/^mbv-[a-f0-9-]{36}$/u:
+            workMode?/^mwr-[a-f0-9-]{36}$/u:/^mbr-[a-f0-9-]{36}$/u).test(body.mutationId))
           throw badRequest("A verified assistant reply and one-use Branch id are required.");
         const branch=await branchAction(body);
         state.mutationCount+=1;send(200,{ok:true,branch});return;

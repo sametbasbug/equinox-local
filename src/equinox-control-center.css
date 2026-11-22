@@ -1162,4 +1162,5 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-versions-nav > span { font-size:13px; font-weight:650; text-align:center; }
 .native-chat-versions-preview { min-height:230px; height:min(38dvh, 340px); max-height:45dvh; resize:none; overflow:auto; }
 .native-chat-versions-dialog [hidden] { display:none; }
+#native-chat-branch-mode[hidden], label[for="native-chat-branch-mode"][hidden] { display:none; }
 \n

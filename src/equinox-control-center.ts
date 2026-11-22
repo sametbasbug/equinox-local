@@ -553,12 +553,12 @@ let chatMessageEditAllowed=false;
 let chatRetryCandidate:{messageId:string;expectedText:string;identity:string;tabId:number}|null=null;
 let chatRetryBusy=false;
 let chatRetryAttempted=false;
-let chatBranchCandidate:{messageId:string;expectedText:string;identity:string;tabId:number;mode:"new"|"work"}|null=null;
+let chatBranchCandidate:{messageId:string;expectedText:string;identity:string;tabId:number;mode:"new"|"work";versionMessageId?:string;versionText?:string}|null=null;
 let chatBranchBusy=false;
 let chatBranchAttempted=false;
 let chatVersionsCandidate:{messageId:string;expectedText:string;identity:string;tabId:number}|null=null;
 let chatVersionsBusy=false;
-let chatVersionsData:Array<{index:number;text:string;current:boolean;truncated:boolean}>=[];
+let chatVersionsData:Array<{index:number;messageId:string;text:string;current:boolean;truncated:boolean}>=[];
 let chatVersionsIndex=0;
 
 const chatComposer = () => document.getElementById("native-chat-text") as HTMLTextAreaElement;
@@ -1580,9 +1580,13 @@ function renderNativeChatVersionPreview(){
     :"Loading versions…");
   (document.getElementById("native-chat-versions-preview") as HTMLTextAreaElement).value=version?.text||"";
   $("native-chat-versions-truncated").hidden=!version?.truncated;
+  $("native-chat-versions-branch").hidden=!version||version.current||version.truncated||!chatMessageEditAllowed;
+  $("native-chat-versions-branch").disabled=!version||version.current||version.truncated
+    ||chatVersionsBusy||!chatMessageEditAllowed||chatBlocked;
   if(version)setNativeChatCopy("native-chat-versions-status",
     version.current?"This is the current response.":
-      "Read-only older response. To branch from it, open its version in ChatGPT Web.");
+      chatMessageEditAllowed?"Older response preview. Branch from this version to continue it in a new conversation.":
+      "Older response preview. Open ChatGPT Web to continue from this version.");
 }
 async function openNativeChatResponseVersions(message:NativeChatMessage){
   if(chatVersionsBusy||chatVersionsCandidate||chatNewDraft||chatSending||chatSelecting||chatBlocked
@@ -1613,7 +1617,7 @@ async function openNativeChatResponseVersions(message:NativeChatMessage){
       ||data.versions.filter((item:UiRemoteData)=>item?.current===true).length!==1)
       throw new Error("The provider did not confirm the exact response versions.");
     chatVersionsData=data.versions.map((item:UiRemoteData)=>({
-      index:Number(item.index),text:String(item.text||""),
+      index:Number(item.index),messageId:String(item.messageId||""),text:String(item.text||""),
       current:item.current===true,truncated:item.truncated===true
     }));
     chatVersionsIndex=chatVersionsData.findIndex(item=>item.current);
@@ -1622,7 +1626,25 @@ async function openNativeChatResponseVersions(message:NativeChatMessage){
     if(candidate===chatVersionsCandidate&&dialog.open)
       setNativeChatCopy("native-chat-versions-status",nativeChatErrorMessage(error)+
         " Check Chrome if the provider versions dialog remains open.");
-  }finally{chatVersionsBusy=false;}
+  }finally{
+    chatVersionsBusy=false;
+    if(candidate===chatVersionsCandidate&&dialog.open&&chatVersionsData.length)
+      renderNativeChatVersionPreview();
+  }
+}
+
+function openNativeChatVersionBranch(){
+  const source=chatVersionsCandidate,version=chatVersionsData[chatVersionsIndex];
+  const dialog=$("native-chat-versions-dialog") as HTMLDialogElement;
+  if(!dialog.open||chatVersionsBusy||!source||!version||version.current||version.truncated
+    ||!chatMessageEditAllowed||chatBlocked||!chatActive||source.identity!==chatConversationKey(chatActive)
+    ||source.tabId!==chatActive.tabId||!["ready","complete"].includes(chatTurn)
+    ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(version.messageId)
+    ||version.messageId===source.messageId.slice(0,-10)||!version.text.trim()
+    ||version.text.length>3500)return;
+  dialog.close();
+  openNativeChatNewBranch({id:source.messageId,role:"assistant",text:source.expectedText,
+    truncated:false},"new",{messageId:version.messageId,text:version.text});
 }
 
 function openNativeChatAssistantRetry(message:NativeChatMessage){
@@ -1680,7 +1702,8 @@ async function submitNativeChatAssistantRetry(){
   }
 }
 
-function openNativeChatNewBranch(message:NativeChatMessage,mode:"new"|"work"="new"){
+function openNativeChatNewBranch(message:NativeChatMessage,mode:"new"|"work"="new",
+  version?:{messageId:string;text:string}){
   if(chatBranchBusy||chatNewDraft||chatSending||chatSelecting||chatBlocked
     ||!chatMessageEditAllowed||chatComposer().value.trim()||chatPickedFile
     ||chatToolSelection||!chatActive||!["ready","complete"].includes(chatTurn)
@@ -1690,10 +1713,14 @@ function openNativeChatNewBranch(message:NativeChatMessage,mode:"new"|"work"="ne
   const identity=chatConversationKey(chatActive);
   if(!identity)return;
   chatBranchCandidate={messageId:message.id,expectedText:message.text.trim(),
-    identity,tabId:Number(chatActive.tabId),mode};
+    identity,tabId:Number(chatActive.tabId),mode,
+    ...(version?{versionMessageId:version.messageId,versionText:version.text}:{})};
   chatBranchAttempted=false;
   setNativeChatCopy("native-chat-branch-status","");
-  ($("native-chat-branch-mode") as HTMLSelectElement).value=mode;
+  const modeControl=$("native-chat-branch-mode") as HTMLSelectElement;
+  modeControl.value=mode;modeControl.hidden=Boolean(version);
+  (document.querySelector('label[for="native-chat-branch-mode"]') as HTMLLabelElement).hidden=Boolean(version);
+  modeControl.disabled=Boolean(version);
   updateNativeChatBranchCopy(mode);
   const dialog=$("native-chat-branch-dialog") as HTMLDialogElement;
   if(!dialog.open)dialog.showModal();
@@ -1703,6 +1730,13 @@ function openNativeChatNewBranch(message:NativeChatMessage,mode:"new"|"work"="ne
   input.focus();
 }
 function updateNativeChatBranchCopy(mode:"new"|"work"){
+  if(chatBranchCandidate?.versionMessageId){
+    setNativeChatCopy("native-chat-branch-title","Branch from an earlier response version");
+    setNativeChatCopy("native-chat-branch-subtitle",
+      "ChatGPT will branch from this exact older answer, not the current one. Your confirmed first message saves it as a new conversation. The original stays unchanged.");
+    setNativeChatCopy("native-chat-branch-confirm","Create version branch and send");
+    return;
+  }
   setNativeChatCopy("native-chat-branch-title",mode==="work"?"Branch into Work mode":"Branch into a new chat");
   setNativeChatCopy("native-chat-branch-subtitle",mode==="work"
     ?"ChatGPT opens a Work branch. Your first prompt may start Work tools and consume Work allowance. The original conversation stays unchanged. Confirm only when you want Work to begin."
@@ -1727,12 +1761,16 @@ async function submitNativeChatNewBranch(){
   $("native-chat-branch-confirm").disabled=true;
   $("native-chat-branch-cancel").disabled=true;
   $("native-chat-branch-close").disabled=true;
-  setNativeChatCopy("native-chat-branch-status",candidate.mode==="work"
+  setNativeChatCopy("native-chat-branch-status",candidate.versionMessageId
+    ?"Creating the exact historical response branch…":candidate.mode==="work"
     ?"Creating the exact ChatGPT Work branch…":"Creating the exact ChatGPT branch…");
   try{
-    const result=await mutationJson(candidate.mode==="work"?"/api/v1/chat/branch_work":"/api/v1/chat/branch_new","POST",{
+    const result=await mutationJson(candidate.versionMessageId?"/api/v1/chat/branch_version":
+      candidate.mode==="work"?"/api/v1/chat/branch_work":"/api/v1/chat/branch_new","POST",{
       messageId:candidate.messageId,expectedText:candidate.expectedText,
-      firstMessage,mutationId:(candidate.mode==="work"?"mwr-":"mbr-")+crypto.randomUUID()
+      firstMessage,mutationId:(candidate.versionMessageId?"mbv-":candidate.mode==="work"?"mwr-":"mbr-")+crypto.randomUUID(),
+      ...(candidate.versionMessageId?{versionMessageId:candidate.versionMessageId,
+        versionText:candidate.versionText}:{})
     });
     if(candidate!==chatBranchCandidate)return;
     const branch=result.branch?.branch;
@@ -1745,7 +1783,8 @@ async function submitNativeChatNewBranch(){
     // The verified new Chrome tab is now an ordinary user-selected conversation.
     await selectNativeChat({tabId:branch.tabId,conversationId:branch.conversationId,
       title:String(branch.title||"New branch"),opened:true});
-    showToast(candidate.mode==="work"?"ChatGPT Work branch created.":"New ChatGPT branch created.");
+    showToast(candidate.versionMessageId?"ChatGPT historical response branch created.":
+      candidate.mode==="work"?"ChatGPT Work branch created.":"New ChatGPT branch created.");
   }catch(error){
     if(candidate===chatBranchCandidate&&dialog.open)
       setNativeChatCopy("native-chat-branch-status",nativeChatErrorMessage(error)+
@@ -5828,6 +5867,7 @@ function bindEvents() {
   $("native-chat-versions-prev").addEventListener("click",()=>{
     if(chatVersionsIndex>0){chatVersionsIndex--;renderNativeChatVersionPreview();}
   });
+  $("native-chat-versions-branch").addEventListener("click",openNativeChatVersionBranch);
   $("native-chat-versions-next").addEventListener("click",()=>{
     if(chatVersionsIndex<chatVersionsData.length-1){chatVersionsIndex++;renderNativeChatVersionPreview();}
   });
@@ -5840,7 +5880,8 @@ function bindEvents() {
   });
   $("native-chat-branch-mode").addEventListener("change",()=>{
     const mode=($("native-chat-branch-mode") as HTMLSelectElement).value;
-    if(!chatBranchCandidate||chatBranchBusy||chatBranchAttempted||!(mode==="new"||mode==="work"))return;
+    if(!chatBranchCandidate||chatBranchCandidate.versionMessageId||chatBranchBusy||chatBranchAttempted
+      ||!(mode==="new"||mode==="work"))return;
     chatBranchCandidate.mode=mode;
     updateNativeChatBranchCopy(mode);
   });
@@ -5862,6 +5903,9 @@ function bindEvents() {
     chatBranchCandidate=null;chatBranchAttempted=false;
     (document.getElementById("native-chat-branch-text") as HTMLTextAreaElement).value="";
     ($("native-chat-branch-mode") as HTMLSelectElement).value="new";
+    ($("native-chat-branch-mode") as HTMLSelectElement).hidden=false;
+    ($("native-chat-branch-mode") as HTMLSelectElement).disabled=false;
+    (document.querySelector('label[for="native-chat-branch-mode"]') as HTMLLabelElement).hidden=false;
     $("native-chat-branch-confirm").disabled=true;
   });
   $("native-chat-retry-confirm").addEventListener("click",()=>void submitNativeChatAssistantRetry());

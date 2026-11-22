@@ -2276,6 +2276,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         retryChatAssistant: (value) => nativeChatController.retryAssistant(value),
         branchChatAssistant: (value) => nativeChatController.branchNewChat(value),
         branchWorkAssistant: (value) => nativeChatController.branchWorkChat(value),
+        branchVersionAssistant: (value) => nativeChatController.branchVersionChat(value),
         inspectChatResponseVersions: (value) => nativeChatController.responseVersions(value),
         getChatTools: () => nativeChatController.tools(),
         selectChatThread: (value) => nativeChatController.select(value),
