@@ -87,6 +87,7 @@ const TR_UI = Object.freeze({
     "Message table": "Mesaj tablosu",
     "Copy Markdown": "Markdown kopyala",
     "This response contains media that Native Chat cannot display yet.": "Bu yanıtta Native Chat'in henüz gösteremediği görsel veya medya içeriği var.",
+    "Only part of this message is available in Native Chat.": "Bu mesajın yalnızca bir kısmı Native Chat'te görüntülenebiliyor.",
     "View in ChatGPT": "ChatGPT'de görüntüle",
     "Markdown copied.": "Markdown kopyalandı.",
     "Could not copy Markdown.": "Markdown kopyalanamadı.",

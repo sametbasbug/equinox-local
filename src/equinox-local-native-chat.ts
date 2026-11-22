@@ -719,7 +719,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         if(value&&Array.isArray(value.items)){
           history=value.items.slice(-48).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,
             text:String(item.text).slice(0,14000),status:"complete",truncated:item.truncated===true,
-            richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=5000?item.richText:null,
+            richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=14000?item.richText:null,
             versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
             hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
             ...providerUserAttachments(item)}));
@@ -773,7 +773,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
             history=fresh.items.slice(-48).map((item:any):Message=>({
               id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
               status:"complete",truncated:item.truncated===true,
-              richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=5000?item.richText:null,
+              richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=14000?item.richText:null,
               versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
               hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
               ...providerUserAttachments(item),
@@ -793,7 +793,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
               id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
               status:"complete",truncated:item.truncated===true,
               richText:typeof item.richText==="string"&&item.role==="assistant"
-                &&[...item.richText].length<=5000?item.richText:null,
+                &&[...item.richText].length<=14000?item.richText:null,
               versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
               hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
               ...providerUserAttachments(item),

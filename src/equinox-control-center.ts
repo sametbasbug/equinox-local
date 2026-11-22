@@ -2477,12 +2477,21 @@ function renderNativeChatMessage(message: NativeChatMessage) {
   const attachments=nativeChatSentAttachments(message);
   if(attachments)article.append(attachments);
   if(body.textContent?.trim()||body.hasChildNodes())article.append(body);
-  if(message.role==="assistant"&&!message.live&&message.hasRichMedia){
+  if(!message.live&&!message.uncertain
+    &&(message.truncated||(message.role==="assistant"&&message.hasRichMedia))){
     const notice=document.createElement("p");
-    notice.className="native-chat-rich-media-notice";
+    notice.className="native-chat-content-limit";
     const copy=document.createElement("span");
-    copy.textContent=localizeUiText("This response contains media that Native Chat cannot display yet.");
+    const clipped=message.truncated;
+    copy.textContent=localizeUiText(clipped
+      ?"Only part of this message is available in Native Chat."
+      :"This response contains media that Native Chat cannot display yet.");
     notice.append(copy);
+    if(clipped&&message.role==="assistant"&&message.hasRichMedia){
+      const media=document.createElement("span");
+      media.textContent=localizeUiText("This response contains media that Native Chat cannot display yet.");
+      notice.append(media);
+    }
     const webUrl=selectedNativeChatWebUrl();
     if(webUrl){
       const link=document.createElement("a");

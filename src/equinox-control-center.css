@@ -1562,8 +1562,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-model-toolbar[hidden],
 .native-chat-tool-toolbar[hidden] { display: none; }
 
-/* Provider-confirmed media is never silently presented as complete prose. */
-.native-chat-rich-media-notice {
+/* Clipped text and provider-confirmed media never masquerade as complete replies. */
+.native-chat-content-limit {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1576,10 +1576,10 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   font-size: 12px;
   line-height: 1.45;
 }
-.native-chat-rich-media-notice a {
+.native-chat-content-limit a {
   color: var(--accent);
   font-weight: 650;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.native-chat-rich-media-notice a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.native-chat-content-limit a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

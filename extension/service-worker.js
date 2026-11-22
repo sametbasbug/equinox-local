@@ -5198,7 +5198,7 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         return{attachmentFileNames:documentNames.slice(0,12),
           attachmentImageCount:Math.min(images.length,13)};
       };
-      let remaining=46000,remainingRich=46000,ambiguousUnits=false;
+      let remaining=96000,remainingRich=72000,ambiguousUnits=false;
       for(const turn of turns.slice(-24))for(const role of ['user','assistant']){
         const units=[...turn.querySelectorAll('[data-chatgpt-search-unit-key$=":'+role+'"]')];
         if(units.length>1){ambiguousUnits=true;continue;}
@@ -5210,10 +5210,10 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
           String(content.innerText||content.textContent||'').trim();
         const hasRichMedia=role==='assistant'&&hasChatBridgeVisibleMedia(content);
         if(!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount&&!hasRichMedia)continue;
-        const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
+        const chars=[...raw],limit=Math.min(12000,remaining,chars.length);
         const id=String(unit.getAttribute('data-chatgpt-search-message-ids')||turn.getAttribute('data-turn-key')||'').split(/\s+/u)[0].slice(0,200);
         const richText=role==='assistant'&&chars.length<=limit
-          ?projectChatBridgeRichText(content,Math.min(5000,remainingRich)):null;
+          ?projectChatBridgeRichText(content,Math.min(14000,remainingRich)):null;
         if(richText)remainingRich-=[...richText].length;
         const versionsAvailable=role==='assistant'&&[...turn.querySelectorAll('button[aria-label]')]
           .filter(b=>b.getClientRects().length
@@ -5232,9 +5232,9 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
           String(unit.innerText||unit.textContent||'').trim();
         const hasRichMedia=role==='assistant'&&hasChatBridgeVisibleMedia(unit);
         if((!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount&&!hasRichMedia)||remaining<=0)continue;
-        const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
+        const chars=[...raw],limit=Math.min(12000,remaining,chars.length);
         const richText=role==='assistant'&&chars.length<=limit
-          ?projectChatBridgeRichText(unit,Math.min(5000,remainingRich)):null;
+          ?projectChatBridgeRichText(unit,Math.min(14000,remainingRich)):null;
         if(richText)remainingRich-=[...richText].length;
         out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText,
           hasRichMedia,...(attachments??{})});remaining-=limit;
@@ -5256,7 +5256,7 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
             if (item.hasRichMedia !== undefined && (item.role !== "assistant" && item.hasRichMedia !== false
                 || typeof item.hasRichMedia !== "boolean"))
                 throw new Error("Chat history rich-media indicator is invalid.");
-            const validRich = item.role === "assistant" && typeof item.richText === "string" && [...item.richText].length <= 5000;
+            const validRich = item.role === "assistant" && typeof item.richText === "string" && [...item.richText].length <= 14000;
             const fileNames = item.role === 'user' ? item.attachmentFileNames : [];
             const images = item.role === 'user' ? item.attachmentImageCount : 0;
             if (!Array.isArray(fileNames) || fileNames.length > 12

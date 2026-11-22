@@ -764,12 +764,12 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       tabId:target.tabId,conversationId:target.conversationId,
     },10_000) as (BrowserResult & {items?:unknown;partial?:unknown}) | null;
     if(!Array.isArray(value?.items)||value.items.length>48)throw new Error("Chat Bridge recent transcript is invalid.");
-    let remainingRich = 46_000;
+    let remainingRich = 72_000;
     const items=value.items.map((item:any)=>{
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat Bridge transcript message is invalid.");
       if(item.hasRichMedia!==undefined&&typeof item.hasRichMedia!=="boolean")
         throw new Error("Chat Bridge rich-media indicator is invalid.");
-      const candidate=item.role==="assistant"?validateChatRichText(item.richText,5000):null;
+      const candidate=item.role==="assistant"?validateChatRichText(item.richText,14_000):null;
       const size=candidate?[...candidate].length:0;
       const richText=candidate&&size<=remainingRich?candidate:null;
       remainingRich-=richText?size:0;
