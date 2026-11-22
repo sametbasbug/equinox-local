@@ -1298,6 +1298,29 @@ async function copyNativeChatText(sourceNode: HTMLElement, text: string) {
   }
 }
 
+async function copyNativeChatMarkdown(markdown:string):Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(markdown);
+    return true;
+  }catch{
+    // The clipboard permission may be blocked in the native control scheme.
+    // Select literal Markdown in a short-lived offscreen field rather than
+    // copying the rendered HTML selection as if it were Markdown.
+    const field=document.createElement("textarea");
+    field.value=markdown;
+    field.readOnly=true;
+    field.setAttribute("aria-hidden","true");
+    field.style.cssText="position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none";
+    document.body.append(field);
+    try {
+      field.focus();
+      field.select();
+      return document.execCommand("copy");
+    }catch{return false;}
+    finally{field.remove();}
+  }
+}
+
 function renderNativeChatCode(text: string, language: string) {
   const block = document.createElement("div");
   block.className = "native-chat-code";
@@ -1322,6 +1345,17 @@ function renderNativeChatCode(text: string, language: string) {
   return block;
 }
 
+// Only table syntax already confirmed by the semantic Browser Markdown
+// projection reaches this renderer; every cell is created as text nodes.
+function nativeChatPipeCells(line: string): string[] | null {
+  const source=line.trim();
+  if(!source.includes("|"))return null;
+  const core=source.replace(/^\|/u,"").replace(/\|$/u,"");
+  const cells=core.split(/(?<!\\)\|/u).map(value=>value.replace(/\\\|/gu,"|").trim());
+  return cells.length>=2&&cells.length<=12&&cells.every(value=>value.length<=2000)
+    ?cells:null;
+}
+
 const NATIVE_CHAT_LIST_MARKER = /^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+(.+)$/u;
 
 function appendNativeChatProse(container: HTMLElement, text: string) {
@@ -1335,7 +1369,43 @@ function appendNativeChatProse(container: HTMLElement, text: string) {
   };
   let list: HTMLOListElement | HTMLUListElement | null = null;
   let quote: HTMLElement | null = null;
-  for (const line of text.split("\n")) {
+  const lines=text.split("\n");
+  for (let index=0;index<lines.length;index++) {
+    const line=lines[index]!;
+    const columns=nativeChatPipeCells(line);
+    const separator=index+1<lines.length?nativeChatPipeCells(lines[index+1]!):null;
+    if(columns&&separator&&columns.length===separator.length
+      &&separator.every(value=>/^:?-{3,}:?$/u.test(value))){
+      flushParagraph();
+      list=null;quote=null;
+      const region=document.createElement("div");
+      region.className="native-chat-table-scroll";
+      region.tabIndex=0;
+      region.setAttribute("role","region");
+      region.setAttribute("aria-label",localizeUiText("Message table"));
+      const table=document.createElement("table");
+      const head=document.createElement("thead"),headRow=document.createElement("tr");
+      for(const value of columns){
+        const cell=document.createElement("th");
+        cell.scope="col";appendNativeChatInline(cell,value);headRow.append(cell);
+      }
+      head.append(headRow);table.append(head);
+      const body=document.createElement("tbody");
+      index++;
+      let rows=0;
+      while(index+1<lines.length&&rows<80){
+        const cells=nativeChatPipeCells(lines[index+1]!);
+        if(!cells||cells.length!==columns.length)break;
+        const row=document.createElement("tr");
+        for(const value of cells){
+          const cell=document.createElement("td");
+          appendNativeChatInline(cell,value);row.append(cell);
+        }
+        body.append(row);index++;rows++;
+      }
+      table.append(body);region.append(table);container.append(region);
+      continue;
+    }
     const quoted = /^ {0,3}>[ 	]?(.*)$/u.exec(line);
     if (quoted) {
       flushParagraph();
@@ -1452,6 +1522,20 @@ function renderNativeChatMessage(message: NativeChatMessage) {
       showToast(await copyNativeChatText(body, message.text) ? "Message copied." : "Could not copy message.");
     });
     actions.append(copy);
+    if(message.role==="assistant"&&message.richText){
+      const markdown=document.createElement("button");
+      markdown.type="button";
+      markdown.className="native-chat-message-copy";
+      markdown.textContent=localizeUiText("Copy Markdown");
+      markdown.setAttribute("aria-label",localizeUiText("Copy Markdown"));
+      markdown.addEventListener("click",async()=>{
+        const source=message.richText;
+        if(!source)return;
+        showToast(await copyNativeChatMarkdown(source)
+          ?"Markdown copied.":"Could not copy Markdown.");
+      });
+      actions.append(markdown);
+    }
     if (message.role === "assistant") {
       const quote = document.createElement("button");
       quote.type = "button";

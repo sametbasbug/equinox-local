@@ -2149,7 +2149,7 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
   const root = roots[0];
   // A sibling card or hidden media makes the partial Markdown subtree
   // insufficient to represent the visible assistant answer.
-  if (scope.querySelector('img,video,canvas,iframe,math,table')) return null;
+  if (scope.querySelector('img,video,canvas,iframe,math')) return null;
   const skipTags = new Set(['SCRIPT','STYLE','BUTTON','SVG','NAV','NOSCRIPT','INPUT','TEXTAREA','CANVAS','IFRAME']);
   const visible = (node) => node.nodeType !== 1 || (!skipTags.has(node.tagName)
     && !node.hasAttribute('hidden') && node.getAttribute('aria-hidden') !== 'true'
@@ -2206,6 +2206,27 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
         add(items.map((item,index)=>(tag==='UL'?'- ':String(start+index)+'. ')+inline(item)).join('\n'));
         continue;
       }
+      if(tag==='TABLE'){
+        flush();
+        const rows=[...child.querySelectorAll('tr')];
+        if(rows.length<1||rows.length>80){overflow=true;return;}
+        const parsed=rows.map(row=>[...row.children]
+          .filter(cell=>cell.tagName==='TH'||cell.tagName==='TD')
+          .map(cell=>{
+            const text=inline(cell);
+            if(text.includes('|')||text.includes('\n')||text.length>1000)overflow=true;
+            return text.trim();
+          }));
+        const width=parsed[0]?.length||0;
+        if(overflow||width<2||width>12||parsed.some(row=>row.length!==width)){
+          overflow=true;return;
+        }
+        const tableRow=row=>'| '+row.join(' | ')+' |';
+        semantic++;
+        add(tableRow(parsed[0])+'\n'+tableRow(parsed[0].map(()=>'---'))
+          +parsed.slice(1).map(row=>'\n'+tableRow(row)).join(''));
+        continue;
+      }
       if (tag==='PRE') {
         flush();semantic++;
         const code=child.querySelector('code');
@@ -2221,7 +2242,7 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
       }
       if (tag==='HR') { flush();add('---');continue; }
       if ((tag==='DIV'||tag==='SECTION'||tag==='ARTICLE')
-        && child.querySelector('p,h1,h2,h3,h4,h5,h6,ul,ol,pre,blockquote,hr')) {
+        && child.querySelector('p,h1,h2,h3,h4,h5,h6,ul,ol,pre,blockquote,hr,table')) {
         flush();walk(child,depth+1);continue;
       }
       // Adjacent non-semantic widget wrappers can be visually separated
@@ -2235,7 +2256,8 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
   if (overflow||semantic===0) return null;
   const formatted=blocks.join('\n\n').trim();
   if (!formatted||[...formatted].length>maxChars) return null;
-  const normalize=value=>value.replace(/[\x60*_#>]/g,'')
+  const normalize=value=>value.replace(/^\s*\|(?:\s*:?-{3,}:?\s*\|){2,}\s*$/gm,'')
+    .replace(/\|/g,'').replace(/[\x60*_#>]/g,'')
     .replace(/^\s*(?:\d+[.)]|[-+])\s+/gm,'').replace(/\s+/g,' ').trim();
   const actual=normalize(String(root.innerText||'')), projected=normalize(formatted);
   // The entire visible text must agree after removing only generated syntax.
