@@ -2487,6 +2487,82 @@ async function browseChatBridgeProject({tabId,projectId}:{tabId?:unknown;project
   }
 }
 
+
+/** Read the connected account's visible provider composer tool menu without
+ * selecting a tool, uploading a file or altering any active conversation. */
+async function readChatBridgeToolsCatalog() {
+  const tabs=workerTabs();
+  if(!tabs.create||!tabs.remove)throw new Error("Temporary ChatGPT tool discovery tabs are unavailable.");
+  let tempId:number|null=null;
+  try{
+    const created=await tabs.create({url:"https://chatgpt.com/",active:false});
+    if(typeof created?.id!=="number"||!Number.isSafeInteger(created.id)||created.id<1)
+      throw new Error("Chrome did not confirm the tool discovery tab.");
+    tempId=created.id;
+    await waitForTab(tempId,t=>t.status==="complete"&&t.url?.startsWith("https://chatgpt.com/")===true,10_000);
+    await requireDebuggableTab(tempId);await attachTab(tempId);
+    const result=await send(tempId,"Runtime.evaluate",{expression:`(async()=>{
+      if(location.origin!=='https://chatgpt.com'||location.pathname!=='/')
+        return{status:'unavailable',items:[]};
+      const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      let button=null;
+      for(let n=0;n<30;n++){
+        const buttons=[...document.querySelectorAll('button[data-composer-navigation-target="add-context"]')]
+          .filter(x=>x.getClientRects().length);
+        if(buttons.length===1){button=buttons[0];break;}
+        await pause(100);
+      }
+      if(!button)return{status:'unavailable',items:[]};
+      if(button.getAttribute('aria-expanded')!=='true')button.click();
+      let sections=[];
+      for(let n=0;n<20;n++){
+        sections=[...document.querySelectorAll('[data-mention-section-id]')]
+          .filter(x=>x.getClientRects().length
+            &&['chatgpt-primary','plugins'].includes(x.getAttribute('data-mention-section-id')));
+        if(sections.some(s=>s.getAttribute('data-mention-section-id')==='chatgpt-primary'))break;
+        await pause(100);
+      }
+      if(!sections.length)return{status:'unavailable',items:[]};
+      const items=[],seen=new Set();
+      for(const section of sections){
+        const group=section.getAttribute('data-mention-section-id')==='plugins'?'app':'tool';
+        for(const row of section.querySelectorAll('button[data-list-navigation-item]')){
+          if(!row.getClientRects().length)continue;
+          const label=[...row.querySelectorAll('span')]
+            .find(x=>x.classList.contains('truncate')&&x.classList.contains('shrink-0'))
+            ?.textContent?.replace(/\\s+/gu,' ').trim().slice(0,90);
+          if(!label||seen.has(group+':'+label))continue;
+          seen.add(group+':'+label);
+          items.push({name:label,kind:group});
+          if(items.length>=60)break;
+        }
+        if(items.length>=60)break;
+      }
+      return{status:'ready',items,partial:true,source:'visible-provider-composer'};
+    })()`,returnByValue:true,awaitPromise:true,silent:true});
+    if(result?.exceptionDetails)throw new Error("ChatGPT tool catalog inspection failed.");
+    const data:any=cdpObject(result?.result?.value);
+    if(data?.status!=="ready"||!Array.isArray(data.items)||data.items.length>60)
+      throw new Error("The provider tool menu did not confirm its available choices.");
+    const unique=new Set<string>();
+    const items=data.items.map((item:any)=>{
+      if(!item||typeof item.name!=="string"||!item.name.trim()||item.name.length>90
+        ||!["tool","app"].includes(item.kind))
+        throw new Error("The provider tool catalog is malformed.");
+      const key=item.kind+":"+item.name;
+      if(unique.has(key))throw new Error("The provider tool catalog contains duplicate entries.");
+      unique.add(key);
+      return{name:item.name,kind:item.kind};
+    });
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,items,source:"visible-provider-composer",partial:true};
+  }finally{
+    if(tempId!==null){
+      await detachTab(tempId).catch(()=>{});
+      await tabs.remove(tempId).catch(()=>{});
+    }
+  }
+}
+
 async function readChatBridgeSidebar({tabId}:{tabId?:unknown}={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1)throw new Error("Chat history tab is invalid.");
   const tab=await chooseTab(Number(tabId));
@@ -9750,6 +9826,7 @@ const COMMANDS = {
   "chat_bridge.conversation_action": controlChatBridgeConversation,
   "chat_bridge.model": chatBridgeModelControl,
   "chat_bridge.model_catalog": discoverChatBridgeNewModel,
+  "chat_bridge.tools_catalog": readChatBridgeToolsCatalog,
   "chat_bridge.open_history": openChatBridgeHistory,
   "chat_bridge.recent": readChatBridgeRecent,
   "chat_bridge.live": readChatBridgeLive,

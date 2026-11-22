@@ -39,3 +39,5 @@ The maintainer rejected the old UX despite successful CI; do not call the replac
 **Checkpoint 46 project actions addition:** The source-only Native Chat conversation actions dialog offers account-verified project move and explicitly confirmed archive. A moved chat must show the requested project-scoped route; archive must show stable absence from the provider sidebar. Task-bound active chats cannot be moved/archived. Provider mutation and signed Factory UI acceptance are still pending.
 
 **Checkpoint 46 delete draft:** User-confirmed permanent deletion now has an additional provider-controlled Delete confirmation step and post-removal state check. No actual user conversation was removed in development. The feature remains source-only until authorized real installed acceptance.
+
+**Checkpoint 46 tool research:** ChatGPT composer Add Files and More exposes two dynamic sections (chatgpt-primary and plugins). A source-only provider catalog read returns account-observed tool and app labels from these sections using a temporary inactive user Chrome tab. Native tool selection and file/message delivery need implementation before publication.
