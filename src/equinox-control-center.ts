@@ -1636,17 +1636,24 @@ function openNativeChatNewBranch(message:NativeChatMessage){
   setNativeChatCopy("native-chat-branch-status","");
   const dialog=$("native-chat-branch-dialog") as HTMLDialogElement;
   if(!dialog.open)dialog.showModal();
-  $("native-chat-branch-confirm").focus();
+  const input=document.getElementById("native-chat-branch-text") as HTMLTextAreaElement;
+  input.value="";input.disabled=false;
+  $("native-chat-branch-confirm").disabled=true;
+  input.focus();
 }
 async function submitNativeChatNewBranch(){
   const candidate=chatBranchCandidate;
   const dialog=$("native-chat-branch-dialog") as HTMLDialogElement;
+  const input=document.getElementById("native-chat-branch-text") as HTMLTextAreaElement;
+  const firstMessage=input.value.trim();
   if(!candidate||!dialog.open||chatBranchBusy||chatBranchAttempted
+    ||!firstMessage||firstMessage.length>1500||/[\r\n\x00]/u.test(firstMessage)
     ||candidate.identity!==chatConversationKey(chatActive)
     ||candidate.tabId!==chatActive?.tabId||!chatMessageEditAllowed
     ||chatBlocked||chatSending||chatSelecting||chatComposer().value.trim()
     ||chatPickedFile||chatToolSelection||!["ready","complete"].includes(chatTurn))return;
   chatBranchBusy=true;chatBranchAttempted=true;
+  input.disabled=true;
   $("native-chat-branch-confirm").disabled=true;
   $("native-chat-branch-cancel").disabled=true;
   $("native-chat-branch-close").disabled=true;
@@ -1654,7 +1661,7 @@ async function submitNativeChatNewBranch(){
   try{
     const result=await mutationJson("/api/v1/chat/branch_new","POST",{
       messageId:candidate.messageId,expectedText:candidate.expectedText,
-      mutationId:"mbr-"+crypto.randomUUID()
+      firstMessage,mutationId:"mbr-"+crypto.randomUUID()
     });
     if(candidate!==chatBranchCandidate)return;
     const branch=result.branch?.branch;
@@ -1674,6 +1681,7 @@ async function submitNativeChatNewBranch(){
         " Inspect Chrome before creating another branch.");
   }finally{
     chatBranchBusy=false;
+    input.disabled=false;
     $("native-chat-branch-cancel").disabled=false;
     $("native-chat-branch-close").disabled=false;
   }
@@ -5727,6 +5735,11 @@ function bindEvents() {
       $("native-chat-task-open").focus();
     }
   });
+  $("native-chat-branch-text").addEventListener("input",()=>{
+    const input=document.getElementById("native-chat-branch-text") as HTMLTextAreaElement;
+    $("native-chat-branch-confirm").disabled=chatBranchBusy||chatBranchAttempted
+      ||!input.value.trim()||input.value.trim().length>1500||/[\r\n\x00]/u.test(input.value);
+  });
   $("native-chat-branch-confirm").addEventListener("click",()=>void submitNativeChatNewBranch());
   for(const name of ["native-chat-branch-close","native-chat-branch-cancel"]){
     $(name).addEventListener("click",()=>{
@@ -5738,7 +5751,8 @@ function bindEvents() {
   });
   $("native-chat-branch-dialog").addEventListener("close",()=>{
     chatBranchCandidate=null;chatBranchAttempted=false;
-    $("native-chat-branch-confirm").disabled=false;
+    (document.getElementById("native-chat-branch-text") as HTMLTextAreaElement).value="";
+    $("native-chat-branch-confirm").disabled=true;
   });
   $("native-chat-retry-confirm").addEventListener("click",()=>void submitNativeChatAssistantRetry());
   for(const name of ["native-chat-retry-close","native-chat-retry-cancel"]){

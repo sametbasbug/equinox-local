@@ -454,11 +454,14 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 authorizeMutation();
                 if (typeof branchChatAssistant !== "function")
                     throw badRequest("Native Chat branching is unavailable.");
-                const body = validateExactObject(await readBody(), ["messageId", "expectedText", "mutationId"], "Native Chat new branch");
+                const body = validateExactObject(await readBody(), ["messageId", "expectedText", "firstMessage", "mutationId"], "Native Chat new branch");
                 if (typeof body.messageId !== "string"
                     || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
                     || typeof body.expectedText !== "string" || !body.expectedText.trim()
                     || body.expectedText !== body.expectedText.trim() || body.expectedText.length > 3500
+                    || typeof body.firstMessage !== "string" || !body.firstMessage.trim()
+                    || body.firstMessage !== body.firstMessage.trim() || body.firstMessage.length > 1500
+                    || /[\r\n\x00]/u.test(body.firstMessage)
                     || typeof body.mutationId !== "string" || !/^mbr-[a-f0-9-]{36}$/u.test(body.mutationId))
                     throw badRequest("A verified assistant reply and one-use Branch id are required.");
                 const branch = await branchChatAssistant(body);

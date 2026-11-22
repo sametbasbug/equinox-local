@@ -1702,12 +1702,19 @@ function openNativeChatNewBranch(message) {
     const dialog = $("native-chat-branch-dialog");
     if (!dialog.open)
         dialog.showModal();
-    $("native-chat-branch-confirm").focus();
+    const input = document.getElementById("native-chat-branch-text");
+    input.value = "";
+    input.disabled = false;
+    $("native-chat-branch-confirm").disabled = true;
+    input.focus();
 }
 async function submitNativeChatNewBranch() {
     const candidate = chatBranchCandidate;
     const dialog = $("native-chat-branch-dialog");
+    const input = document.getElementById("native-chat-branch-text");
+    const firstMessage = input.value.trim();
     if (!candidate || !dialog.open || chatBranchBusy || chatBranchAttempted
+        || !firstMessage || firstMessage.length > 1500 || /[\r\n\x00]/u.test(firstMessage)
         || candidate.identity !== chatConversationKey(chatActive)
         || candidate.tabId !== chatActive?.tabId || !chatMessageEditAllowed
         || chatBlocked || chatSending || chatSelecting || chatComposer().value.trim()
@@ -1715,6 +1722,7 @@ async function submitNativeChatNewBranch() {
         return;
     chatBranchBusy = true;
     chatBranchAttempted = true;
+    input.disabled = true;
     $("native-chat-branch-confirm").disabled = true;
     $("native-chat-branch-cancel").disabled = true;
     $("native-chat-branch-close").disabled = true;
@@ -1722,7 +1730,7 @@ async function submitNativeChatNewBranch() {
     try {
         const result = await mutationJson("/api/v1/chat/branch_new", "POST", {
             messageId: candidate.messageId, expectedText: candidate.expectedText,
-            mutationId: "mbr-" + crypto.randomUUID()
+            firstMessage, mutationId: "mbr-" + crypto.randomUUID()
         });
         if (candidate !== chatBranchCandidate)
             return;
@@ -1745,6 +1753,7 @@ async function submitNativeChatNewBranch() {
     }
     finally {
         chatBranchBusy = false;
+        input.disabled = false;
         $("native-chat-branch-cancel").disabled = false;
         $("native-chat-branch-close").disabled = false;
     }
@@ -5956,6 +5965,11 @@ function bindEvents() {
             $("native-chat-task-open").focus();
         }
     });
+    $("native-chat-branch-text").addEventListener("input", () => {
+        const input = document.getElementById("native-chat-branch-text");
+        $("native-chat-branch-confirm").disabled = chatBranchBusy || chatBranchAttempted
+            || !input.value.trim() || input.value.trim().length > 1500 || /[\r\n\x00]/u.test(input.value);
+    });
     $("native-chat-branch-confirm").addEventListener("click", () => void submitNativeChatNewBranch());
     for (const name of ["native-chat-branch-close", "native-chat-branch-cancel"]) {
         $(name).addEventListener("click", () => {
@@ -5970,7 +5984,8 @@ function bindEvents() {
     $("native-chat-branch-dialog").addEventListener("close", () => {
         chatBranchCandidate = null;
         chatBranchAttempted = false;
-        $("native-chat-branch-confirm").disabled = false;
+        document.getElementById("native-chat-branch-text").value = "";
+        $("native-chat-branch-confirm").disabled = true;
     });
     $("native-chat-retry-confirm").addEventListener("click", () => void submitNativeChatAssistantRetry());
     for (const name of ["native-chat-retry-close", "native-chat-retry-cancel"]) {

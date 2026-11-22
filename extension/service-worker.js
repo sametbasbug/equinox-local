@@ -3453,23 +3453,30 @@ async function editChatBridgeMessage({ tabId, conversationId, messageId, oldText
     const sourceText = JSON.stringify(oldText), replacement = JSON.stringify(newText);
     try {
         const before = await send(id, "Runtime.evaluate", {
-            expression: `(() => {
+            expression: String.raw `(() => {
         ${locator}
         const edits=[...(unit?.querySelectorAll('button[aria-label]')||[])]
           .filter(b=>b.getClientRects().length
             &&/^(Edit message|Mesajı düzenle)$/iu.test(b.getAttribute('aria-label')||''));
-        return{ready:!!unit&&edits.length===1
+        const turns=[...document.querySelectorAll('[data-turn-key]')];
+        const index=turn.length===1?turns.indexOf(turn[0]):-1;
+        return{ready:!!unit&&edits.length===1&&index>=0
           &&String(unit.innerText||'').trim()===${sourceText}
-          &&!unit.querySelector('[contenteditable="true"]')};
+          &&!unit.querySelector('[contenteditable="true"]'),
+          index,preceding:index>0?String(turns[index-1]?.getAttribute('data-turn-key')||''):null};
       })()`, returnByValue: true, silent: true
         });
-        if (before?.exceptionDetails || cdpObject(before?.result?.value)?.ready !== true)
+        const original = cdpObject(before?.result?.value);
+        if (before?.exceptionDetails || original?.ready !== true
+            || !Number.isSafeInteger(original.index) || Number(original.index) < 0
+            || (Number(original.index) > 0 && !/^[a-f0-9-]{36}$/iu.test(String(original.preceding || ""))))
             return { chatBridgeVersion: CHAT_BRIDGE_VERSION, confirmed: false, notSubmitted: true,
                 reason: "source_message_changed" };
+        const originalIndex = Number(original.index), preceding = original.preceding;
         if (!await claimChatBridgeReceipt(String(editId)))
             return { chatBridgeVersion: CHAT_BRIDGE_VERSION, confirmed: false, duplicatePrevented: true };
         const opened = await send(id, "Runtime.evaluate", {
-            expression: `(() => {
+            expression: String.raw `(() => {
         ${locator}
         const edits=[...(unit?.querySelectorAll('button[aria-label]')||[])]
           .filter(b=>b.getClientRects().length
@@ -3485,7 +3492,7 @@ async function editChatBridgeMessage({ tabId, conversationId, messageId, oldText
                 reason: "edit_button_unavailable" };
         editorOpened = true;
         const focused = await send(id, "Runtime.evaluate", {
-            expression: `(() => {
+            expression: String.raw `(() => {
         ${locator}
         const editors=[...(unit?.querySelectorAll(
           '[contenteditable="true"][role="textbox"]')||[])];
@@ -3503,7 +3510,7 @@ async function editChatBridgeMessage({ tabId, conversationId, messageId, oldText
             throw new Error("Provider user message edit field is unavailable.");
         await send(id, "Input.insertText", { text: String(newText) });
         const ready = await send(id, "Runtime.evaluate", {
-            expression: `(() => {
+            expression: String.raw `(() => {
         ${locator}
         const editors=[...(unit?.querySelectorAll('[contenteditable="true"][role="textbox"]')||[])];
         const form=editors[0]?.closest('form');
@@ -3523,7 +3530,7 @@ async function editChatBridgeMessage({ tabId, conversationId, messageId, oldText
         // From here any provider execution ambiguity is permanent for this ID.
         submitted = true;
         const click = await send(id, "Runtime.evaluate", {
-            expression: `(() => {
+            expression: String.raw `(() => {
         ${locator}
         const editors=[...(unit?.querySelectorAll('[contenteditable="true"][role="textbox"]')||[])];
         const form=editors[0]?.closest('form');
@@ -3548,11 +3555,21 @@ async function editChatBridgeMessage({ tabId, conversationId, messageId, oldText
             if (current.pendingUrl || chatGptConversationIdentity(current)?.conversationId !== conversationId)
                 break;
             const proof = await send(id, "Runtime.evaluate", {
-                expression: `(() => {
-          ${locator}
-          return{matched:!!unit
-            &&String(unit.innerText||'').trim()===${replacement}
-            &&!unit.querySelector('[contenteditable="true"]')};
+                expression: String.raw `(() => {
+          const turns=[...document.querySelectorAll('[data-turn-key]')];
+          const candidate=turns[${originalIndex}];
+          const newId=String(candidate?.getAttribute('data-turn-key')||'');
+          const user=candidate?.querySelector('[data-chatgpt-search-unit-key$=":user"]');
+          const originalPresent=turns.some(t=>t.getAttribute('data-turn-key')===${JSON.stringify(message)});
+          return{matched:!originalPresent&&candidate&&user
+            &&newId!==${JSON.stringify(message)}
+            &&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(newId)
+            &&String(user.getAttribute('data-chatgpt-search-message-ids')||'').split(/\s+/u)[0]===newId
+            &&String(user.innerText||'').trim()===${replacement}
+            &&(${originalIndex}===0
+              ||String(turns[${originalIndex - 1}]?.getAttribute('data-turn-key')||'')
+                ===${JSON.stringify(preceding)})
+            &&!user.querySelector('[contenteditable="true"]'),newId};
         })()`, returnByValue: true, silent: true
             });
             if (!proof?.exceptionDetails && cdpObject(proof?.result?.value)?.matched === true)
@@ -3565,7 +3582,7 @@ async function editChatBridgeMessage({ tabId, conversationId, messageId, oldText
     catch (error) {
         if (!submitted && editorOpened) {
             await send(id, "Runtime.evaluate", {
-                expression: `(() => {
+                expression: String.raw `(() => {
           ${locator}
           const editor=unit?.querySelector('[contenteditable="true"][role="textbox"]');
           const cancel=[...(editor?.closest('form')?.querySelectorAll('button')||[])]
@@ -3617,7 +3634,7 @@ async function retryChatBridgeAssistant({ tabId, conversationId, messageId, expe
           String(b.getAttribute('aria-label')||'').trim()));`;
     try {
         const preflight = await send(id, "Runtime.evaluate", {
-            expression: `(()=>{
+            expression: String.raw `(()=>{
         ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
         ${selector}
         return{ready:location.origin==='https://chatgpt.com'
@@ -3639,7 +3656,7 @@ async function retryChatBridgeAssistant({ tabId, conversationId, messageId, expe
         // This call may cross an irreversible Retry click. Never replay it.
         submitted = true;
         const clicked = await send(id, "Runtime.evaluate", {
-            expression: `(async()=>{
+            expression: String.raw `(async()=>{
         ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
         ${selector}
         if(matches.length!==1||more.length!==1
@@ -3680,7 +3697,7 @@ async function retryChatBridgeAssistant({ tabId, conversationId, messageId, expe
                 return { chatBridgeVersion: CHAT_BRIDGE_VERSION,
                     tabId: id, conversationId, messageId, confirmed: true, retryStarted: true };
             const proof = await send(id, "Runtime.evaluate", {
-                expression: `(()=>{
+                expression: String.raw `(()=>{
           ${selector}
           return{replaced:!unit||
             String(unit.getAttribute('data-chatgpt-search-message-ids')||'')
@@ -3704,13 +3721,16 @@ async function retryChatBridgeAssistant({ tabId, conversationId, messageId, expe
     }
 }
 /** Open the provider's actual new-chat branch, never a simulated copy. */
-async function branchChatBridgeAssistant({ tabId, conversationId, messageId, expectedText, mutationId } = {}) {
+async function branchChatBridgeAssistant({ tabId, conversationId, messageId, expectedText, firstMessage, mutationId } = {}) {
     if (!Number.isSafeInteger(tabId) || Number(tabId) < 1
         || typeof conversationId !== "string" || !/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
         || typeof messageId !== "string"
         || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(messageId)
         || typeof expectedText !== "string" || !expectedText.trim()
         || expectedText !== expectedText.trim() || expectedText.length > 3500
+        || typeof firstMessage !== "string" || !firstMessage.trim()
+        || firstMessage !== firstMessage.trim() || firstMessage.length > 1500
+        || /[\r\n\x00]/u.test(firstMessage)
         || typeof mutationId !== "string" || !/^mbr-[a-f0-9-]{36}$/u.test(mutationId))
         throw new Error("Branch requires one exact completed assistant reply.");
     const id = Number(tabId), uuid = String(messageId).slice(0, -10), tabs = workerTabs();
@@ -3739,7 +3759,7 @@ async function branchChatBridgeAssistant({ tabId, conversationId, messageId, exp
           String(b.getAttribute('aria-label')||'').trim()));`;
     try {
         const preflight = await send(id, "Runtime.evaluate", {
-            expression: `(()=>{
+            expression: String.raw `(()=>{
         ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
         ${selector}
         return{ready:location.origin==='https://chatgpt.com'
@@ -3761,7 +3781,7 @@ async function branchChatBridgeAssistant({ tabId, conversationId, messageId, exp
                 confirmed: false, notSubmitted: true, reason: "provider_turn_changed" };
         submitted = true;
         const click = await send(id, "Runtime.evaluate", {
-            expression: `(async()=>{
+            expression: String.raw `(async()=>{
         ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
         ${selector}
         if(matches.length!==1||more.length!==1
@@ -3804,27 +3824,127 @@ async function branchChatBridgeAssistant({ tabId, conversationId, messageId, exp
         if (click?.exceptionDetails || cdpObject(click?.result?.value)?.clicked !== true)
             return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, conversationId,
                 confirmed: false, ambiguous: true, reason: "provider_branch_click_unconfirmed" };
+        // ChatGPT opens a LOCAL (unpersisted) branch in the original tab first.
+        // It becomes a real server conversation only after the first new message.
+        let branchTab = null;
+        const isLocalBranch = (candidate) => {
+            if (typeof candidate.url !== "string" || candidate.pendingUrl)
+                return false;
+            try {
+                const route = new URL(candidate.url);
+                return route.origin === "https://chatgpt.com"
+                    && /^\/c\/local-chatgpt%3A[a-f0-9-]{36}$/iu.test(route.pathname);
+            }
+            catch {
+                return false;
+            }
+        };
+        for (let n = 0; n < 65; n++) {
+            const available = await tabs.query({});
+            const local = available.filter(candidate => isLocalBranch(candidate)
+                && (candidate.id === id
+                    || (typeof candidate.id === "number" && !knownIds.has(candidate.id)
+                        && candidate.windowId === initial.windowId
+                        && (!candidate.openerTabId || candidate.openerTabId === id))));
+            if (local.length > 1)
+                throw new Error("Ambiguous local branch tabs.");
+            if (local.length === 1) {
+                branchTab = local[0];
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 95));
+        }
+        if (!branchTab || !Number.isSafeInteger(branchTab.id))
+            throw new Error("ChatGPT did not open a local branch in a verified tab.");
+        const branchTabId = Number(branchTab.id);
+        if (branchTabId !== id) {
+            await requireDebuggableTab(branchTabId);
+            await attachTab(branchTabId);
+        }
+        const localUrl = String(branchTab.url);
+        const checked = await send(branchTabId, "Runtime.evaluate", {
+            expression: String.raw `(()=>{
+        ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
+        const route=location.pathname;
+        const inputs=[...document.querySelectorAll(
+          '[contenteditable="true"][role="textbox"][data-composer-markdown]')]
+          .filter(e=>e.getClientRects().length);
+        const sent=[...document.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"]')]
+          .some(unit=>readChatBridgeVisibleText(
+            unit.querySelector('[data-chatgpt-selection-message-id]')||unit
+          )===${JSON.stringify(expectedText)});
+        return{ready:location.origin==="https://chatgpt.com"
+          &&/^\/c\/local-chatgpt%3A[a-f0-9-]{36}$/iu.test(route)
+          &&location.href===${JSON.stringify(localUrl)}
+          &&sent&&inputs.length===1&&String(inputs[0].innerText||'').trim()===""
+          &&![...document.querySelectorAll('button[aria-label]')].some(b=>
+            /^(?:Stop|Durdur)$/iu.test(b.getAttribute('aria-label')||'')
+              &&b.getClientRects().length),
+          focused:inputs.length===1&&(inputs[0].focus(),document.activeElement===inputs[0])};
+      })()`, returnByValue: true, silent: true
+        });
+        if (checked?.exceptionDetails || cdpObject(checked?.result?.value)?.ready !== true
+            || cdpObject(checked?.result?.value)?.focused !== true)
+            throw new Error("ChatGPT local branch composer could not be verified.");
+        await send(branchTabId, "Input.insertText", { text: String(firstMessage) });
+        const staged = await send(branchTabId, "Runtime.evaluate", {
+            expression: String.raw `(()=>{
+        const input=[...document.querySelectorAll(
+          '[contenteditable="true"][role="textbox"][data-composer-markdown]')]
+          .filter(e=>e.getClientRects().length);
+        const submits=[...document.querySelectorAll('button[aria-label]')]
+          .filter(b=>b.getClientRects().length
+            &&/^(Send|Gönder)$/iu.test(String(b.getAttribute('aria-label')||''))
+            &&!b.disabled);
+        return{ready:location.href===${JSON.stringify(localUrl)}
+          &&input.length===1&&String(input[0].innerText||'').trim()
+            ===${JSON.stringify(firstMessage)}
+          &&submits.length===1};
+      })()`, returnByValue: true, silent: true
+        });
+        if (staged?.exceptionDetails || cdpObject(staged?.result?.value)?.ready !== true)
+            throw new Error("ChatGPT did not confirm the first branch message draft.");
+        // The branch's first message is ANOTHER irreversible user-confirmed
+        // action. It is never replayed if the provider replies ambiguously.
+        const delivered = await send(branchTabId, "Runtime.evaluate", {
+            expression: String.raw `(()=>{
+        const input=[...document.querySelectorAll(
+          '[contenteditable="true"][role="textbox"][data-composer-markdown]')]
+          .filter(e=>e.getClientRects().length);
+        const submits=[...document.querySelectorAll('button[aria-label]')]
+          .filter(b=>b.getClientRects().length
+            &&/^(Send|Gönder)$/iu.test(String(b.getAttribute('aria-label')||''))
+            &&!b.disabled);
+        if(location.href!==${JSON.stringify(localUrl)}||input.length!==1
+          ||String(input[0].innerText||'').trim()!==${JSON.stringify(firstMessage)}
+          ||submits.length!==1)return{clicked:false};
+        submits[0].click();return{clicked:true};
+      })()`, returnByValue: true, silent: true
+        });
+        if (delivered?.exceptionDetails || cdpObject(delivered?.result?.value)?.clicked !== true)
+            throw new Error("ChatGPT first branch message delivery was not confirmed.");
         for (let n = 0; n < 75; n++) {
-            const current = await tabs.query({});
-            const changed = current.filter(tab => tab.id === id
-                && !tab.pendingUrl && chatGptConversationIdentity(tab)
-                && chatGptConversationIdentity(tab)?.conversationId !== conversationId);
-            const created = current.filter(tab => typeof tab.id === "number" && !knownIds.has(tab.id)
-                && tab.windowId === initial.windowId && !tab.pendingUrl
-                && (!tab.openerTabId || tab.openerTabId === id)
-                && chatGptConversationIdentity(tab)
-                && chatGptConversationIdentity(tab)?.conversationId !== conversationId);
-            const eligible = [...changed, ...created];
-            if (eligible.length === 1) {
-                const dest = eligible[0], destId = chatGptConversationIdentity(dest);
-                if (destId && typeof dest.id === "number")
+            const committed = await chooseTab(branchTabId);
+            const destination = chatGptConversationIdentity(committed);
+            if (!committed.pendingUrl && destination
+                && destination.conversationId !== conversationId) {
+                const confirmed = await send(branchTabId, "Runtime.evaluate", {
+                    expression: String.raw `(()=>{
+            const users=[...document.querySelectorAll(
+              '[data-chatgpt-search-unit-key$=":user"]')];
+            const last=users.at(-1);
+            return{confirmed:location.origin==="https://chatgpt.com"
+              &&location.pathname.split('/').at(-1)===${JSON.stringify(destination.conversationId)}
+              &&!!last&&String(last.innerText||'').trim()
+                ===${JSON.stringify(firstMessage)}};
+          })()`, returnByValue: true, silent: true
+                });
+                if (!confirmed?.exceptionDetails && cdpObject(confirmed?.result?.value)?.confirmed === true)
                     return { chatBridgeVersion: CHAT_BRIDGE_VERSION, confirmed: true,
                         tabId: id, conversationId, messageId, mutationId,
-                        branch: { tabId: dest.id, conversationId: destId.conversationId,
-                            canonicalUrl: destId.canonicalUrl, title: destId.title } };
+                        branch: { tabId: branchTabId, conversationId: destination.conversationId,
+                            canonicalUrl: destination.canonicalUrl, title: destination.title } };
             }
-            if (eligible.length > 1)
-                break;
             await new Promise(resolve => setTimeout(resolve, 120));
         }
         throw new Error("New-chat branch did not yield an exact Chrome conversation identity.");

@@ -683,10 +683,12 @@
             </div>
             <button id="native-chat-branch-close" class="icon-button" type="button" aria-label="Close Branch confirmation">×</button>
           </div>
-          <p class="native-chat-action-subtitle">ChatGPT will create a separate conversation from this reply. The original conversation remains. Your Browser may open the new chat in another tab.</p>
+          <p class="native-chat-action-subtitle">ChatGPT opens a temporary branch. Write its first message to save it as a new conversation. The original remains unchanged.</p>
+          <label class="native-chat-action-label" for="native-chat-branch-text">First message in the new branch</label>
+          <textarea id="native-chat-branch-text" rows="4" maxlength="1500" class="native-chat-edit-input" placeholder="Continue this conversation…"></textarea>
           <div class="native-chat-action-footer">
             <button id="native-chat-branch-cancel" type="button" class="button secondary">Cancel</button>
-            <button id="native-chat-branch-confirm" type="button" class="button primary">Create new chat branch</button>
+            <button id="native-chat-branch-confirm" type="button" class="button primary" disabled>Branch and send message</button>
           </div>
           <p id="native-chat-branch-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
         </dialog>

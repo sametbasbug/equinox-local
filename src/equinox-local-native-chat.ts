@@ -907,11 +907,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(!value||typeof value!=="object"||Array.isArray(value))
       invalid("Branch requires an exact provider assistant reply.");
     const body=value as Record<string,unknown>;
-    if(Object.keys(body).some(k=>!["messageId","expectedText","mutationId"].includes(k))
+    if(Object.keys(body).some(k=>!["messageId","expectedText","firstMessage","mutationId"].includes(k))
       ||typeof body.messageId!=="string"
       ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
       ||typeof body.expectedText!=="string"||!body.expectedText.trim()
       ||body.expectedText!==body.expectedText.trim()||body.expectedText.length>3500
+      ||typeof body.firstMessage!=="string"||!body.firstMessage.trim()
+      ||body.firstMessage!==body.firstMessage.trim()||body.firstMessage.length>1500
+      ||/[\r\n\x00]/u.test(body.firstMessage)
       ||typeof body.mutationId!=="string"||!/^mbr-[a-f0-9-]{36}$/u.test(body.mutationId))
       invalid("Branch needs one exact complete assistant reply and a one-use identity.");
     const key=String(body.mutationId),fingerprint=JSON.stringify(body);
@@ -945,8 +948,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         const result=await call("chat_bridge.branch_new_chat",{
           tabId:binding.tabId,conversationId:binding.conversationId,
           messageId:body.messageId,expectedText:body.expectedText,
-          mutationId:key
-        },25_000) as any;
+          firstMessage:body.firstMessage,mutationId:key
+        },30_000) as any;
         const next=result?.branch;
         if(selectedRevision!==revision||!selected
           ||selected.tabId!==binding.tabId||conversationKey(selected)!==conversationKey(binding)
