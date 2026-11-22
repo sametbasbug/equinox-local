@@ -1699,11 +1699,8 @@ function openNativeChatNewBranch(message, mode = "new") {
         identity, tabId: Number(chatActive.tabId), mode };
     chatBranchAttempted = false;
     setNativeChatCopy("native-chat-branch-status", "");
-    setNativeChatCopy("native-chat-branch-title", mode === "work" ? "Branch into Work mode" : "Branch into a new chat");
-    setNativeChatCopy("native-chat-branch-subtitle", mode === "work"
-        ? "ChatGPT opens a Work branch. Your first prompt may start Work tools and consume Work allowance. The original conversation stays unchanged. Confirm only when you want Work to begin."
-        : "ChatGPT opens a temporary branch. Write its first message to save it as a new conversation. The original remains unchanged.");
-    setNativeChatCopy("native-chat-branch-confirm", mode === "work" ? "Create Work branch and send" : "Branch and send message");
+    $("native-chat-branch-mode").value = mode;
+    updateNativeChatBranchCopy(mode);
     const dialog = $("native-chat-branch-dialog");
     if (!dialog.open)
         dialog.showModal();
@@ -1713,12 +1710,20 @@ function openNativeChatNewBranch(message, mode = "new") {
     $("native-chat-branch-confirm").disabled = true;
     input.focus();
 }
+function updateNativeChatBranchCopy(mode) {
+    setNativeChatCopy("native-chat-branch-title", mode === "work" ? "Branch into Work mode" : "Branch into a new chat");
+    setNativeChatCopy("native-chat-branch-subtitle", mode === "work"
+        ? "ChatGPT opens a Work branch. Your first prompt may start Work tools and consume Work allowance. The original conversation stays unchanged. Confirm only when you want Work to begin."
+        : "ChatGPT opens a temporary branch. Write its first message to save it as a new conversation. The original remains unchanged.");
+    setNativeChatCopy("native-chat-branch-confirm", mode === "work" ? "Create Work branch and send" : "Branch and send message");
+}
 async function submitNativeChatNewBranch() {
     const candidate = chatBranchCandidate;
     const dialog = $("native-chat-branch-dialog");
     const input = document.getElementById("native-chat-branch-text");
     const firstMessage = input.value.trim();
     if (!candidate || !dialog.open || chatBranchBusy || chatBranchAttempted
+        || candidate.mode !== $("native-chat-branch-mode").value
         || !firstMessage || firstMessage.length > 1500 || /[\r\n\x00]/u.test(firstMessage)
         || candidate.identity !== chatConversationKey(chatActive)
         || candidate.tabId !== chatActive?.tabId || !chatMessageEditAllowed
@@ -1727,6 +1732,7 @@ async function submitNativeChatNewBranch() {
         return;
     chatBranchBusy = true;
     chatBranchAttempted = true;
+    $("native-chat-branch-mode").disabled = true;
     input.disabled = true;
     $("native-chat-branch-confirm").disabled = true;
     $("native-chat-branch-cancel").disabled = true;
@@ -1759,6 +1765,7 @@ async function submitNativeChatNewBranch() {
     }
     finally {
         chatBranchBusy = false;
+        $("native-chat-branch-mode").disabled = false;
         input.disabled = false;
         $("native-chat-branch-cancel").disabled = false;
         $("native-chat-branch-close").disabled = false;
@@ -1857,17 +1864,10 @@ function renderNativeChatMessage(message) {
             const branch = document.createElement("button");
             branch.type = "button";
             branch.className = "native-chat-message-copy";
-            branch.textContent = localizeUiText("Branch in new chat");
-            branch.setAttribute("aria-label", localizeUiText("Branch into a new chat"));
+            branch.textContent = localizeUiText("Branch…");
+            branch.setAttribute("aria-label", localizeUiText("Choose branch mode"));
             branch.addEventListener("click", () => openNativeChatNewBranch(message));
             actions.append(branch);
-            const workBranch = document.createElement("button");
-            workBranch.type = "button";
-            workBranch.className = "native-chat-message-copy";
-            workBranch.textContent = localizeUiText("Branch in Work mode");
-            workBranch.setAttribute("aria-label", localizeUiText("Branch into Work mode"));
-            workBranch.addEventListener("click", () => openNativeChatNewBranch(message, "work"));
-            actions.append(workBranch);
         }
         if (message.role === "assistant") {
             const quote = document.createElement("button");
@@ -5978,6 +5978,13 @@ function bindEvents() {
             $("native-chat-task-open").focus();
         }
     });
+    $("native-chat-branch-mode").addEventListener("change", () => {
+        const mode = $("native-chat-branch-mode").value;
+        if (!chatBranchCandidate || chatBranchBusy || chatBranchAttempted || !(mode === "new" || mode === "work"))
+            return;
+        chatBranchCandidate.mode = mode;
+        updateNativeChatBranchCopy(mode);
+    });
     $("native-chat-branch-text").addEventListener("input", () => {
         const input = document.getElementById("native-chat-branch-text");
         $("native-chat-branch-confirm").disabled = chatBranchBusy || chatBranchAttempted
@@ -5998,6 +6005,7 @@ function bindEvents() {
         chatBranchCandidate = null;
         chatBranchAttempted = false;
         document.getElementById("native-chat-branch-text").value = "";
+        $("native-chat-branch-mode").value = "new";
         $("native-chat-branch-confirm").disabled = true;
     });
     $("native-chat-retry-confirm").addEventListener("click", () => void submitNativeChatAssistantRetry());
