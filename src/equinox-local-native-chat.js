@@ -149,8 +149,12 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         // The provider's rendered navigation is the only source of historical
         // chats. It is a bounded, possibly incomplete view, not an account API.
         // Prefer the selected tab so a task-bound session stays the read authority.
+        const homeObserver = raw.find(item => item?.url === "https://chatgpt.com/"
+            && Number.isSafeInteger(Number(item.id ?? item.tabId))
+            && Number(item.id ?? item.tabId) > 0);
         const observer = ([...open.values()].find(t => t.tabId === selected?.tabId)
-            || [...open.values()][0])?.tabId;
+            || [...open.values()][0])?.tabId
+            ?? (homeObserver ? Number(homeObserver.id ?? homeObserver.tabId) : undefined);
         const ordered = new Map();
         let sidebarPartial = true;
         let projects = [];
@@ -188,6 +192,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             if (!duplicated.has(thread.conversationId) && !ordered.has(thread.conversationId))
                 ordered.set(thread.conversationId, thread);
         return { browserInstanceId, duplicateCount: duplicated.size,
+            observerTabId: observer ?? null,
             source: "visible-sidebar", partial: sidebarPartial, projects,
             threads: [...ordered.values()].slice(0, 100).map(t => ({ ...t,
                 selected: selected?.conversationId === t.conversationId && selected?.tabId === t.tabId })) };
@@ -204,7 +209,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
             invalid("Update Equinox Browser to use full conversation search.");
         const current = selected;
-        const observer = current?.tabId ?? (await list()).threads.find(thread => thread.opened)?.tabId;
+        const observer = current?.tabId ?? (await list()).observerTabId;
         if (!observer)
             invalid("Open ChatGPT in Chrome before searching your conversations.");
         const revision = selectedRevision;
@@ -243,7 +248,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (!choice)
             invalid("The selected project is not present in the current ChatGPT sidebar.");
         const browserInstanceId = available.browserInstanceId;
-        const observer = selected?.tabId ?? available.threads.find(thread => thread.opened)?.tabId;
+        const observer = selected?.tabId ?? available.observerTabId;
         if (!observer)
             invalid("A connected ChatGPT conversation is required to browse projects.");
         const revision = selectedRevision;

@@ -2503,7 +2503,7 @@ async function searchChatBridgeHistory({tabId,query}:{tabId?:unknown;query?:unkn
     throw new Error("Chat search requires 2–120 printable characters.");
   const term=query.trim();
   const source=await chooseTab(Number(tabId));
-  if(source.pendingUrl||!chatGptConversationIdentity(source))
+  if(source.pendingUrl||(!chatGptConversationIdentity(source)&&source.url!=="https://chatgpt.com/"))
     throw new Error("Search must begin from an exact open ChatGPT conversation.");
   const tabs=workerTabs();
   if(!tabs.create||!tabs.remove)throw new Error("Temporary Chrome search tabs are unavailable.");
@@ -2631,7 +2631,7 @@ async function browseChatBridgeProject({tabId,projectId}:{tabId?:unknown;project
     ||typeof projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(projectId))
     throw new Error("ChatGPT project identity is invalid.");
   const source=await chooseTab(Number(tabId));
-  if(source.pendingUrl||!chatGptConversationIdentity(source))
+  if(source.pendingUrl||(!chatGptConversationIdentity(source)&&source.url!=="https://chatgpt.com/"))
     throw new Error("Project browsing requires an exact open ChatGPT conversation.");
   const tabs=workerTabs();
   if(!tabs.create||!tabs.remove)throw new Error("Temporary Chrome project tabs are unavailable.");
@@ -3048,7 +3048,9 @@ async function readChatBridgeToolsCatalog() {
 async function readChatBridgeSidebar({tabId}:{tabId?:unknown}={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1)throw new Error("Chat history tab is invalid.");
   const tab=await chooseTab(Number(tabId));
-  if(!chatGptConversationIdentity(tab))throw new Error("Chat history requires an open ChatGPT conversation.");
+  if(tab.pendingUrl
+    ||(!chatGptConversationIdentity(tab)&&tab.url!=="https://chatgpt.com/"))
+    throw new Error("Chat history requires an exact ChatGPT conversation or Home tab.");
   await requireDebuggableTab(Number(tabId));await attachTab(Number(tabId));
   try{
     const result=await send(Number(tabId),"Runtime.evaluate",{expression:`(() => {
@@ -3129,9 +3131,14 @@ async function openChatBridgeHistory({tabId,conversationId,canonicalUrl,searchTi
     ||!canonicalUrl.startsWith("https://chatgpt.com/"))
     throw new Error("Chat history navigation identity is invalid.");
   const tab=await chooseTab(Number(tabId));
-  if(!chatGptConversationIdentity(tab))throw new Error("The selected browser tab is no longer a ChatGPT conversation.");
-  const state=await readChatBridgeAttachedState(Number(tabId));
-  if(state.generationActive)throw new Error("Wait until ChatGPT finishes generating before changing conversations.");
+  const home=tab.url==="https://chatgpt.com/"&&!tab.pendingUrl;
+  if(!home&&!chatGptConversationIdentity(tab))
+    throw new Error("The selected tab is no longer a ChatGPT conversation or Home.");
+  if(!home){
+    const state=await readChatBridgeAttachedState(Number(tabId));
+    if(state.generationActive)
+      throw new Error("Wait until ChatGPT finishes generating before changing conversations.");
+  }
   const proof=typeof searchTicket==="string"?chatBridgeSearchTickets.get(searchTicket):null;
   const provenBySearch=!!proof&&proof.tabId===Number(tabId)
     &&proof.sourceUrl===tab.url&&Date.now()-proof.createdAt<CHAT_BRIDGE_SEARCH_TTL_MS
@@ -3159,8 +3166,11 @@ async function openChatBridgeHistory({tabId,conversationId,canonicalUrl,searchTi
     if(value?.ready!==true)throw new Error("ChatGPT is busy, has a draft/attachment, or the selected conversation is no longer in its sidebar.");
     const before=await chooseTab(Number(tabId));
     if(before.url!==tab.url||before.pendingUrl)throw new Error("ChatGPT tab changed before navigation.");
-    const latest=await readChatBridgeAttachedState(Number(tabId));
-    if(latest.generationActive)throw new Error("ChatGPT started generating before navigation. The conversation was not changed.");
+    if(!home){
+      const latest=await readChatBridgeAttachedState(Number(tabId));
+      if(latest.generationActive)
+        throw new Error("ChatGPT started generating before navigation. The conversation was not changed.");
+    }
     // Only the already verified user Chrome tab is navigated; never mutate a
     // different browser instance or silently create another tab.
     const navigated=await browserNavigate({tabId:Number(tabId),url:canonicalUrl});
