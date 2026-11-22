@@ -13,6 +13,7 @@ import { openLifecycleControl } from "./lifecycle-control.js";
 import { prepareWindowsUninstallHandoff, UninstallCleanupError } from "./uninstall-handoff.js";
 import { createCompanionController } from "./companion.js";
 import { openShellPreferences } from "./shell-preferences.js";
+import { openEmbeddedChatPilot, closeEmbeddedChatPilot } from "./embedded-chat.js";
 registerControlScheme();
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(directory);
@@ -617,6 +618,7 @@ function cleanupPresentation() {
         companion?.dispose();
     }
     catch { /* Optional companion cannot obstruct shutdown. */ }
+    closeEmbeddedChatPilot();
     companion = null;
     restartPending = false;
     if (timer) {
@@ -685,6 +687,8 @@ function updateMenus() {
         { label: `Equinox Local · ${label}`, enabled: false },
         { type: "separator" },
         { label: text("Open Control Center", "Kontrol Merkezi'ni aç"), click: showControlCenter },
+        { label: text("ChatGPT Web preview (experimental)", "ChatGPT Web önizleme (deneysel)"),
+            enabled: !quitting, click: openEmbeddedChatPilot },
         { label: companion?.isVisible() ? text("Hide Companion", "Companion'ı Gizle") : text("Show Companion", "Companion'ı Göster"),
             enabled: Boolean(companion) && !quitting,
             click: () => { companion?.setVisible(!companion.isVisible()); } },
