@@ -160,12 +160,17 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     return { binding: target, state, reacquired: target.tabId !== binding.tabId };
   };
 
-  const deliverText = async ({ binding, deliveryId, text, tool, file, requireExactTab = false }: {
+  const deliverText = async ({ binding, deliveryId, text, tool, file, files, requireExactTab = false }: {
     binding?: Binding; deliveryId?: string; text?: string;
-    tool?:{name:string;kind:"tool"|"app"};file?:{path:string;name:string;size:number};requireExactTab?: boolean
+    tool?:{name:string;kind:"tool"|"app"};file?:{path:string;name:string;size:number};
+    files?:Array<{path:string;name:string;size:number}>;requireExactTab?: boolean
   } = {}) => {
     const message = typeof text === "string" ? text.trim() : "";
-    if ((!message&&!file)||message.length>4_000||/\0/u.test(message))
+    if ((!message&&!file&&!files)||message.length>4_000||/\0/u.test(message)
+      ||(files&&(!Array.isArray(files)||files.length<2||files.length>4
+        ||new Set(files.map(item=>item.name)).size!==files.length
+        ||files.reduce((sum,item)=>sum+item.size,0)>100*1024*1024))
+      ||(file&&files)||(tool&&(file||files)))
       throw new Error("Chat Bridge delivery requires text or an explicitly selected file.");
     if (typeof deliveryId !== "string" || !/^tgb-[a-z0-9-]{6,80}$/u.test(deliveryId)) throw new Error("Telegram Chat Bridge delivery id is invalid.");
     agentControl.assertMutationAllowed("telegram_chat_bridge_delivery");
@@ -198,7 +203,9 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         text: message,
         ...(tool?{toolName:tool.name,toolKind:tool.kind}:{}),
         ...(file?{filePath:file.path,fileName:file.name,fileSize:file.size}:{}),
-      }, file?75_000:tool?16_000:10_000) as (BrowserResult & {
+        ...(files?{filePaths:files.map(item=>item.path),fileNames:files.map(item=>item.name),
+          fileSizes:files.map(item=>item.size)}:{}),
+      }, (file||files)?75_000:tool?16_000:10_000) as (BrowserResult & {
         notSubmitted?:boolean;ambiguous?:boolean;stage?:string}) | null;
       if (result?.confirmed === true) {
         if (typeof result.userEpoch !== "string" || typeof result.previousAssistantTurnKey !== "string") {

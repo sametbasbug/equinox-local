@@ -867,6 +867,15 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-file-stage { display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:5px 8px; }
 .native-chat-file-name { min-width:0;flex:1;overflow-wrap:anywhere;color:var(--muted);font-size:11px; }
 .native-chat-file-stage .text-button { flex:none; }
+.native-chat-file-name { display:flex;align-items:center;flex-wrap:wrap;gap:6px; }
+.native-chat-file-chip { display:inline-flex;max-width:100%;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere;background:var(--surface-2);color:var(--text); }
+.native-chat-file-thumb { width:36px;height:36px;object-fit:cover;border-radius:6px;flex:none; }
+.native-chat-file-kind { width:24px;text-align:center;font-size:18px;flex:none; }
+.native-chat-file-chip-remove { border:0;border-radius:6px;background:transparent;color:var(--muted);font:inherit;font-size:18px;cursor:pointer;line-height:1;flex:none;padding:2px 5px; }
+.native-chat-file-chip-remove:hover { color:var(--danger);background:var(--danger-soft); }
+.native-chat-file-chip-remove:focus-visible { outline:2px solid var(--focus-ring,currentColor);outline-offset:2px; }
+
+
 .native-chat-tool-toolbar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
   padding: 9px 10px; margin-top: 4px;

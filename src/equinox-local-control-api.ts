@@ -675,8 +675,8 @@ export function createEquinoxLocalControlApi({
       if (method === "POST" && pathname === "/api/v1/chat/send") {
         authorizeMutation();
         if (typeof sendChatText !== "function") throw badRequest("Native chat is unavailable.");
-        const body=validateExactObject(await readBody(),["deliveryId","text","tool","file"],"Native chat delivery");
-        if (typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||(!body.text.trim()&&!body.file)||body.text.length>4000
+        const body=validateExactObject(await readBody(),["deliveryId","text","tool","file","files"],"Native chat delivery");
+        if (typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||(!body.text.trim()&&!body.file&&!body.files)||body.text.length>4000
           ||(body.tool!==undefined&&(!body.tool||typeof body.tool!=="object"||Array.isArray(body.tool)
             ||Object.keys(body.tool).some(k=>!["name","kind"].includes(k))
             ||typeof body.tool.name!=="string"||!body.tool.name.trim()||body.tool.name.length>90
@@ -689,7 +689,16 @@ export function createEquinoxLocalControlApi({
             ||typeof body.file.name!=="string"||!body.file.name.trim()||body.file.name.length>255
             ||!Number.isSafeInteger(body.file.size)||body.file.size<1
             ||body.file.size>100*1024*1024))
-          ||(body.tool!==undefined&&body.file!==undefined))
+          ||(body.files!==undefined&&(!Array.isArray(body.files)||body.files.length<2||body.files.length>4
+            ||body.files.some((file:any)=>!file||typeof file!=="object"||Array.isArray(file)
+              ||Object.keys(file).some(k=>!["path","name","size"].includes(k))
+              ||typeof file.path!=="string"||file.path.length>4096
+              ||typeof file.name!=="string"||!file.name.trim()||file.name.length>255
+              ||!Number.isSafeInteger(file.size)||file.size<1||file.size>100*1024*1024)
+            ||new Set(body.files.map((file:any)=>file.name)).size!==body.files.length
+            ||body.files.reduce((sum:number,file:any)=>sum+file.size,0)>100*1024*1024))
+          ||(body.file!==undefined&&body.files!==undefined)
+          ||(body.tool!==undefined&&(body.file!==undefined||body.files!==undefined)))
           throw badRequest("Invalid Chat message, account tool or delivery id.");
         const delivery=await sendChatText(body);
         state.mutationCount+=1;send(200,{ok:true,delivery});return;

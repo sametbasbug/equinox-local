@@ -718,8 +718,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Invalid chat delivery request.");
         const body = value;
-        if (Object.keys(body).some(k => !["deliveryId", "text", "tool", "file"].includes(k))
-            || typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || (!body.text.trim() && !body.file) || body.text.length > 4000 || /[\0]/u.test(body.text)
+        if (Object.keys(body).some(k => !["deliveryId", "text", "tool", "file", "files"].includes(k))
+            || typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || (!body.text.trim() && !body.file && !body.files) || body.text.length > 4000 || /[\0]/u.test(body.text)
             || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
                 || Object.keys(body.tool).some(k => !["name", "kind"].includes(k))
                 || typeof body.tool.name !== "string"
@@ -736,14 +736,26 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 || !Number.isSafeInteger(body.file.size) || body.file.size < 1
                 || body.file.size > 100 * 1024 * 1024
                 || path.basename(body.file.path) !== body.file.name))
-            || (body.tool !== undefined && body.file !== undefined))
+            || (body.files !== undefined && (!Array.isArray(body.files) || body.files.length < 2
+                || body.files.length > 4 || body.files.some((file) => !file
+                || typeof file !== "object" || Array.isArray(file)
+                || Object.keys(file).some(k => !["path", "name", "size"].includes(k))
+                || typeof file.path !== "string" || file.path.length > 4096 || !path.isAbsolute(file.path)
+                || typeof file.name !== "string" || !file.name.trim() || file.name.length > 255
+                || path.basename(file.path) !== file.name
+                || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 100 * 1024 * 1024)
+                || new Set(body.files.map((file) => file.name)).size !== body.files.length
+                || body.files.reduce((total, file) => total + file.size, 0) > 100 * 1024 * 1024))
+            || (body.file !== undefined && body.files !== undefined)
+            || (body.tool !== undefined && (body.file !== undefined || body.files !== undefined)))
             invalid("Chat delivery requires a user-selected regular file or verified tool and 1–4000 safe characters.");
         const key = body.deliveryId;
         const message = body.text.trim();
         const selectedTool = body.tool;
         const toolKey = selectedTool ? selectedTool.kind + ":" + selectedTool.name : "";
         const selectedFile = body.file;
-        const fileKey = selectedFile ? JSON.stringify(selectedFile) : "";
+        const selectedFiles = body.files;
+        const fileKey = selectedFiles ? JSON.stringify(selectedFiles) : selectedFile ? JSON.stringify(selectedFile) : "";
         const prior = attempts.get(key);
         if (prior) {
             if (prior.text !== message || prior.toolKey !== toolKey || prior.fileKey !== fileKey
@@ -774,16 +786,18 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                         throw unavailable;
                     }
                 }
-                if (selectedFile) {
+                if (selectedFile || selectedFiles) {
                     try {
-                        const stat = await fs.lstat(selectedFile.path);
-                        const canonical = await fs.realpath(selectedFile.path);
-                        if (!stat.isFile() || canonical !== selectedFile.path || stat.size !== selectedFile.size
-                            || stat.size > 100 * 1024 * 1024)
-                            throw new Error("Selected file moved, changed, or is no longer a regular file.");
+                        for (const file of selectedFiles || [selectedFile]) {
+                            const stat = await fs.lstat(file.path);
+                            const canonical = await fs.realpath(file.path);
+                            if (!stat.isFile() || canonical !== file.path || stat.size !== file.size
+                                || stat.size > 100 * 1024 * 1024)
+                                throw new Error("Selected file moved, changed, or is no longer a regular file.");
+                        }
                     }
                     catch (error) {
-                        const unavailable = new Error("Selected file is not ready: " +
+                        const unavailable = new Error("Selected attachments are not ready: " +
                             (error instanceof Error ? error.message : "File unavailable."));
                         unavailable.code = "CHAT_BRIDGE_NOT_READY";
                         throw unavailable;
@@ -791,7 +805,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 }
                 const result = await chatBridge.deliverText({ binding, deliveryId: key, text: body.text.trim(),
                     ...(selectedTool ? { tool: selectedTool } : {}), ...(selectedFile ? { file: selectedFile } : {}),
-                    requireExactTab: true });
+                    ...(selectedFiles ? { files: selectedFiles } : {}), requireExactTab: true });
                 if (result?.confirmed !== true) {
                     blocked = true;
                     uncertainConversations.add(conversationKey(binding));

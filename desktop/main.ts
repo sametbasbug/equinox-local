@@ -46,7 +46,7 @@ let refreshInFlight = false;
 let refreshRequested = false;
 let mutationPending = false;
 let pickerPending = false;
-let pickedChatFile: {path:string;name:string;size:number;expiresAt:number}|null=null;
+let pickedChatFiles: Array<{path:string;name:string;size:number;expiresAt:number}>=[];
 let timer: ReturnType<typeof setTimeout> | null = null;
 let language = "en";
 let shellPreferences: ShellPreferenceStore | null = null;
@@ -705,18 +705,20 @@ ipcMain.handle("equinox-shell:control-request", async (event, value: unknown) =>
       &&request.method==="POST"&&typeof request.body==="string"){
       let parsed:unknown;
       try{parsed=JSON.parse(request.body);}catch{/* Backend will reject malformed JSON. */}
-      if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&"file" in parsed){
-        const file=(parsed as Record<string,unknown>).file;
-        const picked=pickedChatFile;
-        if(!picked||Date.now()>picked.expiresAt
-          ||!file||typeof file!=="object"||Array.isArray(file)
-          ||(file as Record<string,unknown>).path!==picked.path
-          ||(file as Record<string,unknown>).name!==picked.name
-          ||(file as Record<string,unknown>).size!==picked.size)
-          throw new Error("Chat was not submitted: file was not approved by the current native file picker.");
-        // Consume the one-time authorization at the transport boundary.
-        // A failed/uncertain send must not automatically replay this file.
-        pickedChatFile=null;
+      if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)
+        &&("file" in parsed||"files" in parsed)){
+        const body=parsed as Record<string,unknown>;
+        const submitted="files" in body?body.files:body.file?[body.file]:null;
+        const valid=Array.isArray(submitted)&&submitted.length>=1&&submitted.length<=4
+          &&submitted.length===pickedChatFiles.length
+          &&pickedChatFiles.every((picked,i)=>Date.now()<=picked.expiresAt
+            &&submitted[i]&&typeof submitted[i]==="object"&&!Array.isArray(submitted[i])
+            &&submitted[i].path===picked.path&&submitted[i].name===picked.name
+            &&submitted[i].size===picked.size);
+        if(!valid||("file" in body&&"files" in body))
+          throw new Error("Chat was not submitted: exact attachments were not approved by the native file picker.");
+        // Consume the full selection once, even if the provider rejects staging.
+        pickedChatFiles=[];
       }
     }
   }
@@ -739,26 +741,62 @@ ipcMain.handle("equinox-shell:pick-folder", async (event) => {
 });
 ipcMain.handle("equinox-shell:clear-chat-file", (event) => {
   if(!trustedSender(event))throw new Error("Untrusted file selection cancellation.");
-  pickedChatFile=null;
+  pickedChatFiles=[];
   return{cleared:true};
 });
-ipcMain.handle("equinox-shell:pick-chat-file", async (event) => {
+ipcMain.handle("equinox-shell:remove-chat-file", (event,name:unknown) => {
+  if(!trustedSender(event)||typeof name!=="string"||!name||name.length>255)
+    throw new Error("Untrusted chat attachment removal.");
+  const matches=pickedChatFiles.filter(file=>file.name===name);
+  if(matches.length!==1)throw new Error("Selected attachment changed before removal.");
+  pickedChatFiles=pickedChatFiles.filter(file=>file.name!==name);
+  return{removed:true};
+});
+ipcMain.handle("equinox-shell:pick-chat-file", async (event,options?:unknown) => {
   if(!trustedSender(event))throw new Error("Untrusted chat file picker request.");
   if(pickerPending||quitting||!window)throw new Error("File picker is unavailable.");
+  if(options!==undefined&&(!options||typeof options!=="object"||Array.isArray(options)
+    ||Object.keys(options).some(key=>key!=="multiple")
+    ||typeof (options as {multiple?:unknown}).multiple!=="boolean"))
+    throw new Error("File picker options are invalid.");
+  const multiple=(options as {multiple?:boolean}|undefined)?.multiple===true;
   pickerPending=true;
-  pickedChatFile=null;
   try{
-    const result=await dialog.showOpenDialog(window,{properties:["openFile"]});
+    const result=await dialog.showOpenDialog(window,{
+      properties:multiple?["openFile","multiSelections"]:["openFile"]});
     if(!trustedSender(event))throw new Error("File picker document changed.");
-    if(result.canceled||result.filePaths.length!==1)
-      return{cancelled:true,path:null,name:null,size:0};
-    const selected=await fs.promises.realpath(result.filePaths[0]!);
-    const stat=await fs.promises.stat(selected);
-    if(!stat.isFile()||stat.size<1||stat.size>100*1024*1024)
-      throw new Error("Choose a regular file between 1 byte and 100 MiB.");
-    pickedChatFile={path:selected,name:path.basename(selected),size:stat.size,
-      expiresAt:Date.now()+10*60_000};
-    return{cancelled:false,path:selected,name:path.basename(selected),size:stat.size};
+    if(result.canceled||!result.filePaths.length)
+      return{cancelled:true,path:null,name:null,size:0,files:[]};
+    if(result.filePaths.length>(multiple?4:1))
+      throw new Error("Choose no more than four files in one message.");
+    const selected=[];
+    let total=0;
+    const names=new Set<string>();
+    for(const file of result.filePaths){
+      const canonical=await fs.promises.realpath(file);
+      const stat=await fs.promises.lstat(canonical);
+      const name=path.basename(canonical);
+      if(!stat.isFile()||stat.size<1||stat.size>100*1024*1024
+        ||names.has(name)||total+stat.size>100*1024*1024)
+        throw new Error("Choose distinct regular files totaling no more than 100 MiB.");
+      names.add(name);total+=stat.size;
+      let preview:string|null=null;
+      if(stat.size<=8*1024*1024&&/\.(?:png|jpe?g|webp|gif)$/iu.test(name)){
+        try{
+          const image=nativeImage.createFromPath(canonical);
+          if(!image.isEmpty()&&image.getSize().width<=6000&&image.getSize().height<=6000){
+            const png=image.resize({width:56,height:56,quality:"good"}).toDataURL();
+            if(png.length<=90_000&&png.startsWith("data:image/png;base64,"))preview=png;
+          }
+        }catch{/* Non-decodable images still upload as regular chosen files. */}
+      }
+      selected.push({path:canonical,name,size:stat.size,preview});
+    }
+    const expiresAt=Date.now()+10*60_000;
+    pickedChatFiles=selected.map(({path:target,name,size})=>({path:target,name,size,expiresAt}));
+    return{cancelled:false,files:selected,
+      ...(selected.length===1?{path:selected[0]!.path,name:selected[0]!.name,size:selected[0]!.size}:
+        {path:null,name:null,size:0})};
   }finally{pickerPending=false;}
 });
 ipcMain.handle("equinox-shell:language", (event, value: unknown) => {
