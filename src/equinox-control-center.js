@@ -478,6 +478,8 @@ let chatProjectName = "";
 let chatProjectSettings = null;
 let chatProjectThreads = [];
 let chatProjectBusy = false;
+let chatProjectCreateBusy = false;
+let chatProjectCreateAttempted = false;
 let chatProjectError = "";
 let chatProjectGeneration = 0;
 let chatSearchQuery = "";
@@ -747,6 +749,78 @@ function renderNativeChatThreads() {
     const detail = details.map(localizeUiText).join(" ");
     setNativeChatCopy("native-chat-list-detail", detail);
     $("native-chat-list-detail").hidden = !detail;
+}
+function nativeChatProjectCreateDialog() {
+    return $("native-chat-project-create-dialog");
+}
+function updateNativeChatProjectCreator() {
+    const name = $("native-chat-project-create-name").value.trim();
+    const memory = $("native-chat-project-create-memory").value;
+    setNativeChatCopy("native-chat-project-create-note", memory === "project"
+        ? "Project-only memory isolates the project from outside memories and disables Cloud Work."
+        : "Default memory can reference conversations outside this project.");
+    $("native-chat-project-create-confirm").disabled = chatProjectCreateBusy || chatProjectCreateAttempted
+        || !name || name.length > 80 || /[\r\n\x00-\x1f\x7f]/u.test(name)
+        || !["default", "project"].includes(memory)
+        || chatProjectCatalog.some(p => p.name === name);
+    $("native-chat-project-create-close").setAttribute("aria-disabled", String(chatProjectCreateBusy));
+    $("native-chat-project-create-cancel").setAttribute("aria-disabled", String(chatProjectCreateBusy));
+}
+function openNativeChatProjectCreator() {
+    if ($("native-chat-project-create").hasAttribute("disabled"))
+        return;
+    const dialog = nativeChatProjectCreateDialog();
+    $("native-chat-project-create-name").value = "";
+    $("native-chat-project-create-memory").value = "default";
+    chatProjectCreateAttempted = false;
+    setNativeChatCopy("native-chat-project-create-status", "");
+    updateNativeChatProjectCreator();
+    if (!dialog.open)
+        dialog.showModal();
+    $("native-chat-project-create-name").focus();
+}
+async function submitNativeChatProjectCreation() {
+    if (chatProjectCreateBusy || chatProjectCreateAttempted)
+        return;
+    const dialog = nativeChatProjectCreateDialog();
+    if (!dialog.open)
+        return;
+    const name = $("native-chat-project-create-name").value.trim();
+    const memoryMode = $("native-chat-project-create-memory").value;
+    if (!name || name.length > 80 || /[\r\n\x00-\x1f\x7f]/u.test(name)
+        || !["default", "project"].includes(memoryMode)
+        || chatProjectCatalog.some(p => p.name === name))
+        return;
+    chatProjectCreateAttempted = true;
+    chatProjectCreateBusy = true;
+    updateNativeChatProjectCreator();
+    setNativeChatCopy("native-chat-project-create-status", "Creating project in ChatGPT…");
+    try {
+        const data = await mutationJson("/api/v1/chat/project_create", "POST", {
+            name, memoryMode, mutationId: "npc-" + crypto.randomUUID()
+        });
+        const confirmed = data.project;
+        if (confirmed?.confirmed !== true || confirmed.name !== name
+            || confirmed.memoryMode !== memoryMode
+            || typeof confirmed.projectId !== "string"
+            || confirmed.canonicalUrl !== "https://chatgpt.com/g/" + confirmed.projectId + "/project")
+            throw new Error("The provider did not confirm the requested project.");
+        if (!chatProjectCatalog.some(p => p.id === confirmed.projectId))
+            chatProjectCatalog = [...chatProjectCatalog, { id: confirmed.projectId, name }];
+        dialog.close();
+        renderNativeChatThreads();
+        void browseNativeChatProject(confirmed.projectId);
+        chatThreadRefreshRequested = true;
+        showToast(localizeUiText("Project created in ChatGPT."));
+    }
+    catch (error) {
+        setNativeChatCopy("native-chat-project-create-status", nativeChatErrorMessage(error));
+    }
+    finally {
+        chatProjectCreateBusy = false;
+        updateNativeChatProjectCreator();
+        updateNativeChatControls();
+    }
 }
 async function browseNativeChatProject(projectId) {
     if (chatProjectBusy)
@@ -1390,6 +1464,8 @@ function updateNativeChatControls() {
         || (chatNewDraft && /[\r\n]/u.test(composer.value));
     $("native-chat-new").disabled = busy || chatNewDraft || !chatStateAvailable || chatConnection !== "ready" || chatCreationBlocked
         || chatBlocked || ["waiting", "generating"].includes(chatTurn);
+    $("native-chat-project-create").disabled = busy || chatProjectCreateBusy || chatProjectBusy
+        || chatConnection !== "ready" || chatCreationBlocked || chatBlocked;
     $("native-chat-cancel-new").disabled = chatSending;
     $("native-chat-refresh").setAttribute("aria-disabled", String(chatRefreshingThreads || chatNewDraft || busy));
     paintNativeChatModelControls();
@@ -6504,6 +6580,27 @@ function bindEvents() {
     $("native-chat-action-pin").addEventListener("click", () => void applyNativeChatAction("pin"));
     $("native-chat-action-rename").addEventListener("click", () => void applyNativeChatAction("rename"));
     $("native-chat-filter").addEventListener("input", scheduleNativeChatSearch);
+    $("native-chat-project-create").addEventListener("click", openNativeChatProjectCreator);
+    $("native-chat-project-create-name").addEventListener("input", updateNativeChatProjectCreator);
+    $("native-chat-project-create-memory").addEventListener("change", updateNativeChatProjectCreator);
+    $("native-chat-project-create-confirm").addEventListener("click", () => void submitNativeChatProjectCreation());
+    for (const name of ["native-chat-project-create-close", "native-chat-project-create-cancel"]) {
+        $(name).addEventListener("click", () => {
+            if (!chatProjectCreateBusy)
+                nativeChatProjectCreateDialog().close();
+        });
+    }
+    $("native-chat-project-create-dialog").addEventListener("cancel", event => {
+        if (chatProjectCreateBusy)
+            event.preventDefault();
+    });
+    $("native-chat-project-create-dialog").addEventListener("close", () => {
+        if (chatProjectCreateBusy)
+            return;
+        chatProjectCreateAttempted = false;
+        $("native-chat-project-create-name").value = "";
+        updateNativeChatProjectCreator();
+    });
     $("native-chat-new").addEventListener("click", beginNewNativeChat);
     $("native-chat-cancel-new").addEventListener("click", cancelNewNativeChat);
     $("native-chat-form").addEventListener("submit", event => {

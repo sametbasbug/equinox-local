@@ -2665,7 +2665,7 @@ async function browseChatBridgeProject({ tabId, projectId } = {}) {
           ||typeof instructions.value!=='string')
           return{status:'unavailable'};
         const memory=[...dialog.querySelectorAll('button')].filter(b=>
-          b.getClientRects().length&&/^(?:Varsayılan|Default|Yalnızca proje belleği|Project-only memory)$/iu.test(
+          b.getClientRects().length&&/^(?:Varsayılan|Default|Yalnızca proje|Yalnızca proje belleği|Project only|Project-only memory)$/iu.test(
             String(b.innerText||'').trim()));
         const raw=String(instructions.value);
         return{status:'ready',title:title.value,
@@ -2691,6 +2691,221 @@ async function browseChatBridgeProject({ tabId, projectId } = {}) {
             throw new Error("The source conversation changed while reading project settings.");
         return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: Number(tabId), projectId,
             name: data.name, items, ticket, settings, partial: true, source: "visible-project" };
+    }
+    finally {
+        if (tempId !== null) {
+            await detachTab(tempId).catch(() => { });
+            await tabs.remove(tempId).catch(() => { });
+        }
+    }
+}
+/** Create one explicit project through real, user-visible ChatGPT controls.
+ * A consumed receipt never submits twice, even after an ambiguous response. */
+const chatBridgeProjectCreateReceipts = new Set();
+async function createChatBridgeProject({ tabId, name, memoryMode, mutationId } = {}) {
+    if (!Number.isSafeInteger(tabId) || Number(tabId) < 1 || typeof name !== "string"
+        || name !== name.trim() || name.length < 1 || name.length > 80
+        || /[\r\n\x00-\x1f\x7f]/u.test(name)
+        || !["default", "project"].includes(String(memoryMode))
+        || typeof mutationId !== "string" || !/^npc-[a-f0-9-]{36}$/u.test(mutationId))
+        throw new Error("Project creation needs an exact title, memory choice and unique receipt.");
+    if (chatBridgeProjectCreateReceipts.has(mutationId))
+        throw new Error("This project creation receipt was already consumed; check ChatGPT.");
+    if (chatBridgeProjectCreateReceipts.size >= 32)
+        throw new Error("Project creation receipts exhausted for this browser session.");
+    const source = await chooseTab(Number(tabId));
+    if (source.pendingUrl || (!chatGptConversationIdentity(source) && source.url !== "https://chatgpt.com/"))
+        throw new Error("Project creation requires an exact ChatGPT source tab.");
+    // Claim before opening the temporary tab; no backend or browser replay.
+    chatBridgeProjectCreateReceipts.add(mutationId);
+    const tabs = workerTabs();
+    if (!tabs.create || !tabs.remove || !tabs.get)
+        throw new Error("Temporary project tab is unavailable.");
+    let tempId = null, submitted = false;
+    try {
+        const created = await tabs.create({ url: "https://chatgpt.com/", active: false });
+        if (!Number.isSafeInteger(created?.id) || Number(created.id) < 1)
+            throw new Error("No exact Chrome tab was returned for project creation.");
+        tempId = Number(created.id);
+        await waitForTab(tempId, tab => tab.status === "complete" && tab.url === "https://chatgpt.com/", 10_000);
+        await requireDebuggableTab(tempId);
+        await attachTab(tempId);
+        const stage = await send(tempId, "Runtime.evaluate", { expression: `(async()=>{
+      if(location.origin!=="https://chatgpt.com"||location.pathname!=="/")
+        return{ready:false};
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      let create=null;
+      for(let i=0;i<35;i++){
+        const matches=[...document.querySelectorAll('button[data-app-action-sidebar-project-create]')]
+          .filter(b=>b.getClientRects().length);
+        if(matches.length===1){create=matches[0];break}
+        await sleep(100);
+      }
+      if(!create)return{ready:false};
+      create.click();
+      let dialog=null;
+      for(let i=0;i<35;i++){
+        const found=[...document.querySelectorAll('[role=dialog]')].filter(d=>
+          d.getClientRects().length&&d.querySelector('input[name="project-name"]')
+          &&[...d.querySelectorAll('h2')].some(h=>
+            /^(?:Proje oluştur|Create project)$/iu.test(String(h.innerText||"").trim())));
+        if(found.length===1){dialog=found[0];break}
+        await sleep(100);
+      }
+      if(!dialog)return{ready:false};
+      const input=dialog.querySelector('input[name="project-name"]');
+      if(!input||input.value)return{ready:false};
+      const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")?.set;
+      if(!setter)return{ready:false};
+      setter.call(input,${JSON.stringify(name)});
+      input.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",
+        data:${JSON.stringify(name)}}));
+      await sleep(80);
+      const memory=[...dialog.querySelectorAll('button')].filter(b=>
+        b.getClientRects().length&&/^(?:Varsayılan bellek|Default memory)$/iu.test(
+          String(b.innerText||"").trim()));
+      const submit=[...dialog.querySelectorAll('button[type=submit]')].filter(b=>b.getClientRects().length);
+      if(input.value!==${JSON.stringify(name)}||memory.length!==1||submit.length!==1
+        ||submit[0].disabled)return{ready:false};
+      const rect=memory[0].getBoundingClientRect();
+      return{ready:true,center:{x:rect.x+rect.width/2,y:rect.y+rect.height/2}};
+    })()`, returnByValue: true, awaitPromise: true, silent: true });
+        if (stage?.exceptionDetails)
+            throw new Error("ChatGPT project form could not be staged.");
+        const staged = cdpObject(stage?.result?.value);
+        if (staged?.ready !== true)
+            throw new Error("Project form was not confirmed by ChatGPT.");
+        if (memoryMode === "project") {
+            const center = staged.center;
+            if (!Number.isFinite(center?.x) || !Number.isFinite(center?.y))
+                throw new Error("The project memory control was not located.");
+            await send(tempId, "Input.dispatchMouseEvent", {
+                type: "mousePressed", x: center.x, y: center.y, button: "left", clickCount: 1
+            });
+            await send(tempId, "Input.dispatchMouseEvent", {
+                type: "mouseReleased", x: center.x, y: center.y, button: "left", clickCount: 1
+            });
+            const option = await send(tempId, "Runtime.evaluate", { expression: `(async()=>{
+        const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+        let items=[];
+        for(let i=0;i<25;i++){
+          items=[...document.querySelectorAll('[role=menuitemradio]')].filter(x=>x.getClientRects().length);
+          if(items.length===2)break;
+          await sleep(100);
+        }
+        if(items.length!==2)return{ready:false};
+        const target=items.filter(x=>
+          /^(?:Yalnızca proje belleği|Project-only memory)$/iu.test(
+            String(x.querySelector("span")?.textContent||"").trim())
+          &&x.getAttribute("aria-checked")==="false");
+        if(target.length!==1)return{ready:false};
+        const r=target[0].getBoundingClientRect();
+        const x=r.x+r.width/2,y=r.y+r.height/2;
+        if(x<0||y<0||x>=innerWidth||y>=innerHeight
+          ||!target[0].contains(document.elementFromPoint(x,y)))return{ready:false};
+        return{ready:true,x,y};
+      })()`, returnByValue: true, awaitPromise: true, silent: true });
+            if (option?.exceptionDetails)
+                throw new Error("Project-only memory option unavailable.");
+            const point = cdpObject(option?.result?.value);
+            if (point?.ready !== true || !Number.isFinite(point.x) || !Number.isFinite(point.y))
+                throw new Error("Project-only memory was not offered by ChatGPT.");
+            await send(tempId, "Input.dispatchMouseEvent", {
+                type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1
+            });
+            await send(tempId, "Input.dispatchMouseEvent", {
+                type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1
+            });
+        }
+        const final = await send(tempId, "Runtime.evaluate", { expression: `(async()=>{
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      let dialog=null;
+      for(let i=0;i<25;i++){
+        const found=[...document.querySelectorAll('[role=dialog]')].filter(d=>
+          d.getClientRects().length&&d.querySelector('input[name="project-name"]'));
+        if(found.length===1){dialog=found[0];break}
+        await sleep(100);
+      }
+      if(!dialog)return{ready:false};
+      const nameInput=dialog.querySelector('input[name="project-name"]');
+      const submit=[...dialog.querySelectorAll('button[type=submit]')]
+        .filter(b=>b.getClientRects().length);
+      const memory=[...dialog.querySelectorAll('button')].filter(b=>
+        b.getClientRects().length&&/^(?:Varsayılan bellek|Default memory|Yalnızca proje belleği|Project-only memory)$/iu.test(
+          String(b.innerText||"").trim()));
+      const expectedMemory=${JSON.stringify(memoryMode)};
+      if(nameInput?.value!==${JSON.stringify(name)}
+        ||submit.length!==1||submit[0].disabled||memory.length!==1
+        ||!(expectedMemory==="project"
+          ?/^(?:Yalnızca proje belleği|Project-only memory)$/iu.test(
+            String(memory[0].innerText||"").trim())
+          :/^(?:Varsayılan bellek|Default memory)$/iu.test(
+            String(memory[0].innerText||"").trim())))return{ready:false};
+      const r=submit[0].getBoundingClientRect();
+      const x=r.x+r.width/2,y=r.y+r.height/2;
+      if(r.width<8||r.height<8||x<0||y<0||x>=innerWidth||y>=innerHeight
+        ||document.elementFromPoint(x,y)?.closest("button")!==submit[0])
+        return{ready:false};
+      return{ready:true,x,y};
+    })()`, returnByValue: true, awaitPromise: true, silent: true });
+        if (final?.exceptionDetails)
+            throw new Error("Project submission scope is uncertain.");
+        const button = cdpObject(final?.result?.value);
+        if (button?.ready !== true || !Number.isFinite(button.x) || !Number.isFinite(button.y))
+            throw new Error("ChatGPT did not confirm the project name and memory choice.");
+        const current = await chooseTab(Number(tabId));
+        if (current.pendingUrl || current.url !== source.url)
+            throw new Error("The source conversation changed before creating the project.");
+        submitted = true; // Do not send again even if the Chrome transport times out.
+        await send(tempId, "Input.dispatchMouseEvent", {
+            type: "mousePressed", x: button.x, y: button.y, button: "left", clickCount: 1
+        });
+        await send(tempId, "Input.dispatchMouseEvent", {
+            type: "mouseReleased", x: button.x, y: button.y, button: "left", clickCount: 1
+        });
+        let destinationId = null;
+        for (let i = 0; i < 45; i++) {
+            const tab = await tabs.get(tempId);
+            const route = String(tab?.url || "").match(/^https:\/\/chatgpt\.com\/g\/(g-p-[a-zA-Z0-9-]{8,100})\/project(?:[?#].*)?$/u);
+            if (route) {
+                destinationId = route[1];
+                break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        if (!destinationId)
+            throw new Error("Project submission was sent, but no durable project URL was confirmed.");
+        const check = await send(tempId, "Runtime.evaluate", { expression: `(async()=>{
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      if(location.origin!=="https://chatgpt.com"
+        ||location.pathname!==${JSON.stringify("/g/" + destinationId + "/project")})
+        return{confirmed:false};
+      for(let i=0;i<35;i++){
+        const title=[...document.querySelectorAll('main button')].filter(b=>
+          b.getClientRects().length&&String(b.innerText||"").trim()===${JSON.stringify(name)});
+        const sidebar=[...document.querySelectorAll(
+          '[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]')].filter(x=>
+          x.getClientRects().length&&x.getAttribute('data-app-action-sidebar-project-id')
+            ===${JSON.stringify(destinationId)}
+          &&x.getAttribute('data-app-action-sidebar-project-label')===${JSON.stringify(name)});
+        if(title.length>=1&&sidebar.length===1)return{confirmed:true};
+        await sleep(100);
+      }
+      return{confirmed:false};
+    })()`, returnByValue: true, awaitPromise: true, silent: true });
+        if (check?.exceptionDetails || cdpObject(check?.result?.value)?.confirmed !== true)
+            throw new Error("The provider did not corroborate the new project title and sidebar identity.");
+        const after = await chooseTab(Number(tabId));
+        if (after.pendingUrl || after.url !== source.url)
+            throw new Error("Source conversation changed after project submission.");
+        return { confirmed: true, projectId: destinationId, name, memoryMode,
+            canonicalUrl: "https://chatgpt.com/g/" + destinationId + "/project" };
+    }
+    catch (error) {
+        if (submitted)
+            throw new Error("Project submission may have succeeded. Check ChatGPT before trying again. " +
+                (error instanceof Error ? error.message : "Unable to confirm the new project."));
+        throw error;
     }
     finally {
         if (tempId !== null) {
@@ -10893,6 +11108,7 @@ const COMMANDS = {
     "chat_bridge.sidebar": readChatBridgeSidebar,
     "chat_bridge.search": searchChatBridgeHistory,
     "chat_bridge.project": browseChatBridgeProject,
+    "chat_bridge.project_create": createChatBridgeProject,
     "chat_bridge.conversation_action": controlChatBridgeConversation,
     "chat_bridge.edit_message": editChatBridgeMessage,
     "chat_bridge.retry_assistant": retryChatBridgeAssistant,

@@ -21,7 +21,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;createChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -310,6 +310,7 @@ export function createEquinoxLocalControlApi({
   getChatThreads = null,
   searchChatThreads = null,
   browseChatProject = null,
+  createChatProject = null,
   controlChatConversation = null,
   editChatMessage = null,
   retryChatAssistant = null,
@@ -505,6 +506,20 @@ export function createEquinoxLocalControlApi({
         if(typeof body.projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId))
           throw badRequest("Invalid ChatGPT project identity.");
         send(200,{ok:true,project:await browseChatProject(body)});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/project_create") {
+        authorizeMutation();
+        if(typeof createChatProject!=="function")
+          throw badRequest("ChatGPT project creation is unavailable.");
+        const body=validateExactObject(await readBody(),["name","memoryMode","mutationId"],
+          "ChatGPT project creation");
+        if(typeof body.name!=="string"||body.name.trim()!==body.name
+          ||!body.name||body.name.length>80||/[\x00-\x1f\x7f]/u.test(body.name)
+          ||!["default","project"].includes(String(body.memoryMode))
+          ||typeof body.mutationId!=="string"||!/^npc-[a-f0-9-]{36}$/u.test(body.mutationId))
+          throw badRequest("Project creation needs an exact name, memory mode and receipt.");
+        const project=await createChatProject(body);
+        state.mutationCount+=1;send(200,{ok:true,project});return;
       }
       if (method === "POST" && pathname === "/api/v1/chat/conversation_action") {
         authorizeMutation();
@@ -1219,7 +1234,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/conversation_action",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/conversation_action",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

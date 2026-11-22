@@ -137,6 +137,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   };
   const createAttempts=new Map<string,{text:string;modelChoice:string|null;
     effortLevel:number|null;toolKey:string;fileKey:string;promise:Promise<unknown>}>();
+  const projectCreateAttempts=new Map<string,{name:string;memoryMode:string;promise:Promise<unknown>}>();
+  let projectCreateBlocked=false;
+  let projectCreating=false;
   const attempts=new Map<string,{text:string;conversationKey:string;toolKey:string;fileKey:string;promise:Promise<unknown>}>();
   const actionAttempts=new Map<string,{fingerprint:string;promise:Promise<unknown>}>();
   const branchAttempts=new Map<string,{fingerprint:string;conversationKey:string;
@@ -257,6 +260,68 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     searched={query:body.query.trim(),ticket:report.ticket,tabId:observer,
       browserInstanceId,checkedAt:Date.now(),threads};
     return{query:searched.query,threads,partial:true,source:"provider-search-dialog"};
+  };
+  const createProject=async(value:unknown)=>{
+    if(!value||typeof value!=="object"||Array.isArray(value))
+      invalid("Invalid ChatGPT project creation request.");
+    const body=value as Record<string,unknown>;
+    if(Object.keys(body).some(key=>!["name","memoryMode","mutationId"].includes(key))
+      ||typeof body.name!=="string"||!body.name.trim()
+      ||body.name!==body.name.trim()||body.name.length>80
+      ||/[\r\n\x00-\x1f\x7f]/u.test(body.name)
+      ||!["default","project"].includes(String(body.memoryMode))
+      ||typeof body.mutationId!=="string"
+      ||!/^npc-[a-f0-9-]{36}$/u.test(body.mutationId))
+      invalid("Project creation requires a valid name, memory choice and one-use identity.");
+    const name=body.name,memoryMode=body.memoryMode as string,id=body.mutationId;
+    const prior=projectCreateAttempts.get(id);
+    if(prior){
+      if(prior.name!==name||prior.memoryMode!==memoryMode)
+        invalid("Project creation id cannot be reused for a different project.");
+      return prior.promise;
+    }
+    if(projectCreateBlocked)
+      invalid("A previous project creation may have succeeded. Check ChatGPT before creating another project.");
+    if(projectCreating||mutatingAction||selecting||creating||sending||pending||blocked)
+      invalid("Finish the current ChatGPT action before creating a project.");
+    if(projectCreateAttempts.size>=20)
+      invalid("Project creation request limit reached for this runtime.");
+    const browserInstanceId=context();
+    if(Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)<13)
+      invalid("Project creation requires Equinox Browser Chat Bridge 13.");
+    const current=await list();
+    if(current.browserInstanceId!==browserInstanceId)
+      invalid("Chrome changed during project creation.");
+    const existing=current.projects as Array<{id:string;name:string}>;
+    if(existing.some(item=>item.name===name))
+      invalid("A project with this exact name is already visible in ChatGPT.");
+    const observer=selected?.tabId??current.observerTabId;
+    if(!Number.isSafeInteger(observer)||Number(observer)<1)
+      invalid("Open ChatGPT in your connected Chrome before creating a project.");
+    const revision=selectedRevision;
+    projectCreating=true;
+    const promise=(async()=>{
+      try{
+        const result=await call("chat_bridge.project_create",{
+          tabId:observer,name,memoryMode,mutationId:id},36_000) as any;
+        if(result?.confirmed!==true||typeof result.projectId!=="string"
+          ||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(result.projectId)
+          ||result.name!==name||result.memoryMode!==memoryMode
+          ||result.canonicalUrl!=="https://chatgpt.com/g/"+result.projectId+"/project")
+          invalid("Chrome did not confirm a durable project with the requested memory choice.");
+        if(context()!==browserInstanceId||selectedRevision!==revision)
+          invalid("The source Chrome session changed while creating the project.");
+        return {confirmed:true,projectId:result.projectId,name,
+          memoryMode,canonicalUrl:result.canonicalUrl};
+      }catch(error){
+        // The browser may have submitted just before disconnect/timeout.
+        // No subsequent project receipt is admitted in this runtime.
+        projectCreateBlocked=true;
+        throw error;
+      }finally{projectCreating=false;}
+    })();
+    projectCreateAttempts.set(id,{name,memoryMode,promise});
+    return promise;
   };
   const project=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid ChatGPT project request.");
@@ -1264,7 +1329,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     return attempt;
   };
 
-  return Object.freeze({list,search,project,conversationAction,editMessage,retryAssistant,responseVersions,branchNewChat,
+  return Object.freeze({list,search,project,createProject,conversationAction,editMessage,retryAssistant,responseVersions,branchNewChat,
     branchWorkChat:(value:unknown)=>branchNewChat(value,"work"),
     branchVersionChat:(value:unknown)=>branchNewChat(value,"history"),tools,select,read,send,startNew,model});
 }

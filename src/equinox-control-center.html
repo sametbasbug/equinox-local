@@ -584,6 +584,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               <span>New Chat</span>
             </button>
+            <button id="native-chat-project-create" class="button secondary native-chat-create-project" type="button" disabled>New project</button>
             <label class="native-chat-filter">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 4 4"/></svg>
               <input id="native-chat-filter" type="search" maxlength="120" placeholder="Search all chats" aria-label="Search all chats" aria-controls="native-chat-thread-list" autocomplete="off" disabled>
@@ -751,6 +752,29 @@
             <button id="native-chat-edit-confirm" type="button" class="button primary" disabled>Save and regenerate</button>
           </div>
           <p id="native-chat-edit-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
+        </dialog>
+        <dialog id="native-chat-project-create-dialog" class="native-chat-action-dialog" aria-labelledby="native-chat-project-create-title">
+          <div class="native-chat-action-head">
+            <div>
+              <p class="native-chat-action-eyebrow">ChatGPT</p>
+              <h3 id="native-chat-project-create-title">Create project</h3>
+            </div>
+            <button id="native-chat-project-create-close" class="icon-button" type="button" aria-label="Close project creator">×</button>
+          </div>
+          <p class="native-chat-action-subtitle">Creates a real ChatGPT project with the memory policy you choose. This cannot be changed after creation.</p>
+          <label class="native-chat-action-label" for="native-chat-project-create-name">Project name</label>
+          <input id="native-chat-project-create-name" class="native-chat-edit-input" type="text" maxlength="80" autocomplete="off">
+          <label class="native-chat-action-label" for="native-chat-project-create-memory">Memory</label>
+          <select id="native-chat-project-create-memory" class="native-chat-edit-input">
+            <option value="default">Default memory</option>
+            <option value="project">Project-only memory</option>
+          </select>
+          <p id="native-chat-project-create-note" class="native-chat-action-subtitle">Default memory can reference conversations outside this project.</p>
+          <div class="native-chat-action-footer">
+            <button id="native-chat-project-create-cancel" class="button secondary" type="button">Cancel</button>
+            <button id="native-chat-project-create-confirm" class="button primary" type="button" disabled>Create in ChatGPT</button>
+          </div>
+          <p id="native-chat-project-create-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
         </dialog>
         <dialog id="native-chat-action-dialog" class="native-chat-action-dialog" aria-labelledby="native-chat-action-title">
           <div class="native-chat-action-head">

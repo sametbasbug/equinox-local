@@ -810,6 +810,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-thread:hover { background: var(--surface-hover); color: var(--text); }
 .native-chat-thread:focus-visible { outline-offset: -3px; }
 .native-chat-thread.is-selected { background: var(--accent-soft); color: var(--text); font-weight: 630; }
+.native-chat-create-project { width:100%; min-height:34px; justify-content:center; font-size:12px; }
 .native-chat-project-index { margin: 2px 3px 10px; border-bottom: 1px solid var(--line); }
 .native-chat-project-index > summary {
   cursor: pointer; padding: 7px 10px; color: var(--muted);
