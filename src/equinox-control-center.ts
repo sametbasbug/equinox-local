@@ -2336,6 +2336,12 @@ async function refreshNativeChat(withThreads = false) {
       if(nextInstance!==chatThreadBrowserInstanceId){
         chatToolCatalog=[];chatToolSelection=null;chatToolCatalogBrowserInstance=null;
       }
+      if(chatProjectId&&(nextInstance!==chatThreadBrowserInstanceId
+        ||!chatProjectCatalog.some(project=>project.id===chatProjectId
+          &&project.name===chatProjectName))){
+        chatProjectId=null;chatProjectName="";chatProjectSettings=null;
+        chatProjectThreads=[];chatProjectError="";chatProjectGeneration++;
+      }
       chatThreadBrowserInstanceId=nextInstance;
       chatDuplicateCount = Number.isSafeInteger(result.chat?.duplicateCount) ? Math.max(0, result.chat.duplicateCount) : 0;
       chatHistoryPartial = result.chat?.partial === true;
@@ -2361,6 +2367,8 @@ async function refreshNativeChat(withThreads = false) {
     if (chatRefreshingThreads) {
       chatThreadList = [];
       chatProjectCatalog = [];
+      chatProjectId=null;chatProjectName="";chatProjectSettings=null;
+      chatProjectThreads=[];chatProjectError="";chatProjectGeneration++;
       chatThreadBrowserInstanceId = null;
       chatDuplicateCount = 0;
       chatHistoryPartial = false;
