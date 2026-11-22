@@ -700,6 +700,29 @@
             <button id="native-chat-action-pin" class="button secondary" type="button" disabled>Pin chat</button>
             <button id="native-chat-action-done" class="button secondary" type="button">Close</button>
           </div>
+          <div class="native-chat-action-share">
+            <button id="native-chat-action-share" class="text-button" type="button" disabled>Create public share link</button>
+            <div id="native-chat-action-share-confirm" class="native-chat-action-confirm" hidden>
+              <p id="native-chat-action-share-question">Anyone with this link can read the shared conversation. Create a public link?</p>
+              <div class="native-chat-action-confirm-actions">
+                <button id="native-chat-action-share-yes" class="button secondary" type="button">Create share link</button>
+                <button id="native-chat-action-share-no" class="button secondary" type="button">Cancel</button>
+              </div>
+            </div>
+            <div id="native-chat-action-share-result" class="native-chat-action-confirm" hidden>
+              <p>Share link created. Anyone with it can view the shared conversation.</p>
+              <code id="native-chat-action-share-url" class="native-chat-action-share-url"></code>
+              <button id="native-chat-action-share-copy" class="button secondary" type="button">Copy link</button>
+              <button id="native-chat-action-unshare" class="text-button" type="button">Revoke public link</button>
+              <div id="native-chat-action-unshare-confirm" class="native-chat-action-confirm" hidden>
+                <p>Revoke this public link? The original conversation will remain.</p>
+                <div class="native-chat-action-confirm-actions">
+                  <button id="native-chat-action-unshare-yes" class="button danger" type="button">Revoke link</button>
+                  <button id="native-chat-action-unshare-no" class="button secondary" type="button">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="native-chat-action-archive">
             <button id="native-chat-action-archive" class="text-button" type="button" disabled>Archive conversation</button>
             <div id="native-chat-action-archive-confirm" class="native-chat-action-confirm" hidden>

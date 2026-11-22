@@ -3021,18 +3021,21 @@ async function openChatBridgeHistory({ tabId, conversationId, canonicalUrl, sear
 }
 /** A native conversation action always targets an exact provider conversation,
  * rendered in a disposable Your Browser tab. Never mutate the task tab. */
-async function controlChatBridgeConversation({ tabId, conversationId, canonicalUrl, searchTicket, action = "inspect", expectedTitle, title, targetProjectId, targetProjectName } = {}) {
+async function controlChatBridgeConversation({ tabId, conversationId, canonicalUrl, searchTicket, action = "inspect", expectedTitle, title, targetProjectId, targetProjectName, sharedUrl } = {}) {
     if (!Number.isSafeInteger(tabId) || Number(tabId) < 1
         || typeof conversationId !== "string" || !/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
         || typeof canonicalUrl !== "string" || canonicalUrl.length > 400
         || chatGptConversationIdentity(canonicalUrl)?.conversationId !== conversationId
         || !canonicalUrl.startsWith("https://chatgpt.com/")
-        || !["inspect", "pin", "rename", "move", "archive", "delete"].includes(action)
+        || !["inspect", "pin", "rename", "move", "archive", "delete", "share", "unshare"].includes(action)
         || (action === "move" && (typeof targetProjectId !== "string"
             || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(targetProjectId)
             || typeof targetProjectName !== "string" || !targetProjectName.trim()
             || targetProjectName.length > 120))
         || (action !== "move" && (targetProjectId !== undefined || targetProjectName !== undefined))
+        || (action === "unshare" && (typeof sharedUrl !== "string" ||
+            !/^https:\/\/chatgpt\.com\/share\/[a-zA-Z0-9-]{10,120}$/u.test(sharedUrl)))
+        || (action !== "unshare" && sharedUrl !== undefined)
         || (action !== "inspect" && (typeof expectedTitle !== "string" || !expectedTitle.trim()
             || expectedTitle.length > 120))
         || (action === "rename" && (typeof title !== "string" || !title.trim()
@@ -3121,6 +3124,105 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
         }
         return{status:'unconfirmed',title:label(),pinned:pinned()};
       }
+      // Provider opens a public shared link as soon as Share is clicked.
+      // This path is ONLY reachable after the Native UI's separate human
+      // confirmation and single-use mutation ID; never inspect by clicking.
+      if(mode==='share'){
+        const shares=[...document.querySelectorAll('button[aria-label]')]
+          .filter(x=>x.getClientRects().length
+            &&/^(Share|Paylaş)$/iu.test(String(x.getAttribute('aria-label')||'').trim())
+            &&!x.closest('[data-turn-key]'));
+        if(shares.length!==1)return{status:'share-control-ambiguous'};
+        if(!location.pathname.endsWith('/c/'+conversation))
+          return{status:'share-route-changed'};
+        shares[0].click();
+        let link=null,dialog=null;
+        for(let n=0;n<50;n++){
+          await pause(100);
+          dialog=[...document.querySelectorAll('[role="dialog"]')]
+            .find(x=>x.getClientRects().length
+              &&x.querySelector('input[readonly][aria-label="Paylaşım bağlantısı"],input[readonly][aria-label="Share link"]'));
+          link=dialog?.querySelector('input[readonly][aria-label="Paylaşım bağlantısı"],input[readonly][aria-label="Share link"]')?.value;
+          if(link)break;
+        }
+        // Share can already be public even when copy/readback fails.
+        // Never report a definitive failure safe to automatically retry.
+        if(!link||!/^https:\/\/chatgpt\.com\/share\/[a-zA-Z0-9-]{10,120}$/u.test(link))
+          return{status:'share-created-unconfirmed'};
+        if(!getRow()||label()!==before)
+          return{status:'share-source-changed'};
+        return{status:'confirmed',title:before,pinned:pinned(),
+          pin:!!pinButton(),rename:true,share:true,sharedUrl:link};
+      }
+      // A link can be revoked only if the account's Shared Links manager
+      // independently exposes the exact URL created and shown by Native Chat.
+      if(mode==='unshare'){
+        const profile=[...document.querySelectorAll('button[aria-label]')]
+          .filter(x=>x.getClientRects().length
+            &&/^(Open profile menu|Profil menüsünü aç)$/iu.test(
+              String(x.getAttribute('aria-label')||'').trim()));
+        if(profile.length!==1)return{status:'profile-unavailable'};
+        profile[0].click();
+        let settings=null;
+        for(let n=0;n<30;n++){
+          settings=[...document.querySelectorAll('[role="menuitem"]')]
+            .filter(x=>x.getClientRects().length
+              &&/^(Settings|Ayarlar)$/iu.test(String(x.innerText||'').trim()));
+          if(settings.length)break;
+          await pause(100);
+        }
+        if(settings?.length!==1)return{status:'settings-unavailable'};
+        settings[0].click();
+        let dialog=null;
+        for(let n=0;n<30;n++){
+          dialog=[...document.querySelectorAll('[role="dialog"]')]
+            .find(x=>x.getClientRects().length
+              &&x.querySelector('button[aria-label="Veri kontrolleri"],button[aria-label="Data controls"]'));
+          if(dialog)break;await pause(100);
+        }
+        if(!dialog)return{status:'privacy-settings-unavailable'};
+        const data=[...dialog.querySelectorAll('button[aria-label]')]
+          .filter(x=>/^(Veri kontrolleri|Data controls)$/iu.test(
+            String(x.getAttribute('aria-label')||'')));
+        if(data.length!==1)return{status:'privacy-data-ambiguous'};
+        data[0].click();
+        let manage=null;
+        for(let n=0;n<30;n++){
+          manage=[...dialog.querySelectorAll('button[aria-label]')]
+            .filter(x=>/^(Paylaşılan bağlantıları yönet|Manage shared links)$/iu.test(
+              String(x.getAttribute('aria-label')||''))&&x.getClientRects().length);
+          if(manage.length)break;await pause(100);
+        }
+        if(manage?.length!==1)return{status:'share-manager-unavailable'};
+        manage[0].click();
+        let manager=null;
+        for(let n=0;n<30;n++){
+          manager=[...document.querySelectorAll('[role="dialog"]')]
+            .find(x=>x!==dialog&&x.getClientRects().length&&
+              /paylaşılan bağlantılar|shared links/iu.test(String(x.innerText||'').slice(0,350)));
+          if(manager)break;await pause(100);
+        }
+        if(!manager)return{status:'shared-links-unavailable'};
+        const matching=()=>[...manager.querySelectorAll('tr,[role="row"]')]
+          .filter(x=>x.getClientRects().length
+            &&String(x.innerText||'').includes(expected)
+            &&[...x.querySelectorAll('a[href]')].some(link=>link.href===${JSON.stringify(sharedUrl ?? "")}));
+        const rows=matching();
+        if(rows.length!==1)return{status:'exact-shared-link-unavailable'};
+        const remove=[...rows[0].querySelectorAll('button[aria-label]')]
+          .filter(x=>/^(Delete shared link|Paylaşılan bağlantıyı sil)$/iu.test(
+            String(x.getAttribute('aria-label')||''))&&x.getClientRects().length);
+        if(remove.length!==1)return{status:'shared-link-delete-unavailable'};
+        remove[0].click();
+        let absence=0;
+        for(let n=0;n<45;n++){
+          await pause(100);
+          if(matching().length===0&&manager.isConnected)absence++;
+          else absence=0;
+          if(absence>=6)return{status:'confirmed',title:before,revoked:true,share:true};
+        }
+        return{status:'revoke-not-confirmed'};
+      }
       button.click();
       for(let n=0;n<15&&!menu();n++)await pause(80);
       const currentMenu=menu();
@@ -3135,8 +3237,12 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
         .filter(x=>x.getClientRects().length
           &&/^(Delete|Sil)$/iu.test(String(x.innerText||'').trim())
           &&String(x.className||'').includes('text-danger'));
+      const shareControls=[...document.querySelectorAll('button[aria-label]')]
+        .filter(x=>x.getClientRects().length
+          &&/^(Share|Paylaş)$/iu.test(String(x.getAttribute('aria-label')||'').trim())
+          &&!x.closest('[data-turn-key]'));
       const capabilities={pin:!!pinButton(),rename:rename.length===1,move:moveButton.length===1,
-        archive:archiveButton.length===1,delete:deleteButton.length===1};
+        archive:archiveButton.length===1,delete:deleteButton.length===1,share:shareControls.length===1};
       if(mode==='inspect'){
         await dismiss();
         return{status:'ready',title:before,pinned:pinned(),...capabilities};
@@ -3278,7 +3384,11 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
             pinned: value.pinned === true, pin: value.pin === true, rename: value.rename === true,
             move: value.move === true, archive: value.archive === true, delete: value.delete === true,
             archived: value.archived === true, deleted: value.deleted === true,
-            projectId: typeof value.projectId === "string" ? value.projectId : null };
+            projectId: typeof value.projectId === "string" ? value.projectId : null,
+            share: value.share === true, revoked: value.revoked === true,
+            ...(action === "share" && typeof value.sharedUrl === "string"
+                && /^https:\/\/chatgpt\.com\/share\/[a-zA-Z0-9-]{10,120}$/u.test(value.sharedUrl)
+                ? { sharedUrl: value.sharedUrl } : {}) };
     }
     finally {
         if (tempId !== null) {

@@ -1153,3 +1153,6 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   .native-chat-feed-inner { padding-block: 18px; }
   .native-chat-dock { padding-bottom: 9px; }
 }
+
+/* A public share link is private until the person explicitly copies it. */
+.native-chat-action-share-url { display:block; overflow-wrap:anywhere; word-break:break-word; font-size:.78rem; padding:.55rem; border:1px solid var(--border, currentColor); border-radius:.45rem; user-select:all; }

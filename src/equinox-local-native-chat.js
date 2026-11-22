@@ -247,13 +247,16 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             invalid("Invalid ChatGPT conversation action request.");
         const body = value;
         if (Object.keys(body).some(k => !["tabId", "conversationId", "action", "expectedTitle", "title", "mutationId",
-            "targetProjectId"].includes(k))
+            "targetProjectId", "sharedUrl"].includes(k))
             || !Number.isSafeInteger(body.tabId) || Number(body.tabId) < 1
             || typeof body.conversationId !== "string" || !/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
-            || !["inspect", "pin", "rename", "move", "archive", "delete"].includes(String(body.action))
+            || !["inspect", "pin", "rename", "move", "archive", "delete", "share", "unshare"].includes(String(body.action))
             || (body.action === "move" && (typeof body.targetProjectId !== "string"
                 || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.targetProjectId)))
             || (body.action !== "move" && body.targetProjectId !== undefined)
+            || (body.action === "unshare" && (typeof body.sharedUrl !== "string"
+                || !/^https:\/\/chatgpt\.com\/share\/[a-zA-Z0-9-]{10,120}$/u.test(body.sharedUrl)))
+            || (body.action !== "unshare" && body.sharedUrl !== undefined)
             || (body.action !== "inspect" && (typeof body.expectedTitle !== "string"
                 || !body.expectedTitle.trim() || body.expectedTitle.length > 120))
             || (body.action === "rename" && (typeof body.title !== "string"
@@ -314,7 +317,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     ...(key ? { expectedTitle: thread.title } : {}),
                     ...(body.action === "rename" ? { title: String(body.title).trim() } : {}),
                     ...(destination ? { targetProjectId: destination.id, targetProjectName: destination.name } : {}),
-                }, 20_000);
+                    ...(body.action === "unshare" ? { sharedUrl: body.sharedUrl } : {}),
+                }, body.action === "unshare" ? 35_000 : 20_000);
                 if (context() !== available.browserInstanceId || selectedRevision !== revision
                     || response?.tabId !== tabId || response?.conversationId !== id
                     || response?.action !== body.action || response?.available !== true
@@ -322,6 +326,13 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     throw new Error("The ChatGPT conversation action lost its exact identity.");
                 if (key && response.confirmed !== true)
                     throw new Error("ChatGPT did not confirm this change. Check the provider before retrying.");
+                if (body.action === "unshare" && response.revoked !== true)
+                    throw new Error("ChatGPT could not verify that the public link was revoked.");
+                if (body.action === "share") {
+                    if (typeof response.sharedUrl !== "string"
+                        || !/^https:\/\/chatgpt\.com\/share\/[a-zA-Z0-9-]{10,120}$/u.test(response.sharedUrl))
+                        throw new Error("The provider created a share link but did not confirm its URL. Check existing shared links before retrying.");
+                }
                 return response;
             }
             finally {

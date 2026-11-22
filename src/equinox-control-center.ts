@@ -487,6 +487,14 @@ let chatActionBusy = false;
 let chatActionMutating = false;
 let chatActionArchivePending = false;
 let chatActionDeletePending = false;
+let chatActionSharePending = false;
+let chatActionRevokePending = false;
+let chatActionShareUrl = "";
+// Only session-scoped link receipts confirmed from the account's provider UI.
+// Never persist public links in logs, config files or Task Capsules.
+const chatActionShareReceipts=new Map<string,string>();
+const chatActionShareKey=(thread:UiRemoteData)=>chatThreadBrowserInstanceId&&thread?.conversationId
+  ?chatThreadBrowserInstanceId+":"+thread.conversationId:null;
 let chatProjectCatalog: UiRemoteData[] = [];
 let chatProjectId: string | null = null;
 let chatProjectName = "";
@@ -766,6 +774,8 @@ function updateNativeChatActionControls() {
     ||chatProjectCatalog.length===0;
   $("native-chat-action-archive").disabled=!canEdit||chatActionProvider.archive!==true||taskBound;
   $("native-chat-action-delete").disabled=!canEdit||chatActionProvider.delete!==true||taskBound;
+  $("native-chat-action-share").disabled=!canEdit||chatActionProvider.share!==true
+    ||!!chatActionShareUrl;
   $("native-chat-action-move").disabled=projectSelect.disabled||!selectedProject
     ||selectedProject.id===chatActionThread?.projectId
     ||chatProjectCatalog.filter(p=>p.name===selectedProject.name).length!==1;
@@ -781,6 +791,13 @@ async function openNativeChatActions(thread: UiRemoteData) {
   chatActionProvider = null;
   chatActionArchivePending=false;
   chatActionDeletePending=false;
+  chatActionSharePending=false;chatActionRevokePending=false;
+  const shareKey=chatActionShareKey(thread);
+  chatActionShareUrl=shareKey?chatActionShareReceipts.get(shareKey)||"":"";
+  $("native-chat-action-unshare-confirm").hidden=true;
+  $("native-chat-action-share-confirm").hidden=true;
+  $("native-chat-action-share-result").hidden=!chatActionShareUrl;
+  $("native-chat-action-share-url").textContent=chatActionShareUrl;
   $("native-chat-action-archive-confirm").hidden=true;
   $("native-chat-action-delete-confirm").hidden=true;
   chatActionBusy = true;
@@ -818,7 +835,7 @@ async function openNativeChatActions(thread: UiRemoteData) {
   }
 }
 
-async function applyNativeChatAction(action: "pin"|"rename"|"move"|"archive"|"delete") {
+async function applyNativeChatAction(action: "pin"|"rename"|"move"|"archive"|"delete"|"share"|"unshare") {
   const thread=chatActionThread;
   if(!thread || chatActionBusy || !chatActionProvider)return;
   const dialog=nativeChatActionDialog();
@@ -831,7 +848,12 @@ async function applyNativeChatAction(action: "pin"|"rename"|"move"|"archive"|"de
     ||chatProjectCatalog.filter(p=>p.name===targetProject.name).length!==1))return;
   if(action==="archive"&&!chatActionArchivePending)return;
   if(action==="delete"&&!chatActionDeletePending)return;
+  if(action==="share"&&!chatActionSharePending)return;
+  if(action==="unshare"&&(!chatActionRevokePending||!chatActionShareUrl))return;
+  chatActionSharePending=false;chatActionRevokePending=false;
+  $("native-chat-action-unshare-confirm").hidden=true;
   chatActionArchivePending=false;chatActionDeletePending=false;
+  $("native-chat-action-share-confirm").hidden=true;
   $("native-chat-action-archive-confirm").hidden=true;
   $("native-chat-action-delete-confirm").hidden=true;
   chatActionBusy=true;
@@ -846,11 +868,36 @@ async function applyNativeChatAction(action: "pin"|"rename"|"move"|"archive"|"de
       expectedTitle:String(thread.title),mutationId:"cma-"+crypto.randomUUID(),
       ...(action==="rename"?{title}:{}),
       ...(targetProject?{targetProjectId:targetProject.id}:{}),
+      ...(action==="unshare"?{sharedUrl:chatActionShareUrl}:{}),
     });
     const confirmed=result.conversationAction;
     if(confirmed?.confirmed!==true||confirmed?.conversationId!==thread.conversationId)
       throw new Error("ChatGPT did not confirm the conversation change.");
     const actual=String(confirmed.title||thread.title);
+    if(action==="unshare"){
+      if(confirmed.revoked!==true)
+        throw new Error("ChatGPT did not confirm revocation of the exact shared link.");
+      chatActionShareUrl="";
+      const shareKey=chatActionShareKey(thread);
+      if(shareKey)chatActionShareReceipts.delete(shareKey);
+      $("native-chat-action-share-url").textContent="";
+      $("native-chat-action-share-result").hidden=true;
+      setNativeChatCopy("native-chat-action-status","Public share link revoked in ChatGPT.");
+    }
+    if(action==="share"){
+      const url=confirmed.sharedUrl;
+      if(typeof url!=="string"||!/^https:\/\/chatgpt\.com\/share\/[a-zA-Z0-9-]{10,120}$/u.test(url))
+        throw new Error("ChatGPT created a link but did not confirm its address. Check shared links before trying again.");
+      chatActionShareUrl=url;
+      const shareKey=chatActionShareKey(thread);
+      if(shareKey){
+        if(chatActionShareReceipts.size>=100)chatActionShareReceipts.clear();
+        chatActionShareReceipts.set(shareKey,url);
+      }
+      $("native-chat-action-share-url").textContent=url;
+      $("native-chat-action-share-result").hidden=false;
+      setNativeChatCopy("native-chat-action-status","Public share link created by ChatGPT after your confirmation.");
+    }
     if(action==="archive"||action==="delete"){
       for(const threads of [chatThreadList,chatSearchResults,chatProjectThreads]){
         const index=threads.findIndex(item=>item.conversationId===thread.conversationId);
@@ -879,6 +926,8 @@ async function applyNativeChatAction(action: "pin"|"rename"|"move"|"archive"|"de
       setNativeChatCopy("native-chat-action-status",
         action==="rename" ? "Conversation renamed in ChatGPT."
           :action==="move" ? "Conversation moved to project in ChatGPT."
+          :action==="share" ? "Public share link created by ChatGPT after your confirmation."
+          :action==="unshare" ? "Public share link revoked in ChatGPT."
           :"Pin preference updated in ChatGPT.");
     }
     chatThreadRenderSignature="";
@@ -5369,13 +5418,48 @@ function bindEvents() {
   });
   $("native-chat-action-dialog").addEventListener("close",()=>{
     chatActionGeneration++;
-    chatActionArchivePending=false;chatActionDeletePending=false;
+    chatActionArchivePending=false;chatActionDeletePending=false;chatActionSharePending=false;chatActionRevokePending=false;
+    chatActionShareUrl="";
     chatActionThread=null;
     chatActionProvider=null;
   });
   $("native-chat-action-name").addEventListener("input",updateNativeChatActionControls);
   $("native-chat-action-project").addEventListener("change",updateNativeChatActionControls);
   $("native-chat-action-move").addEventListener("click",()=>void applyNativeChatAction("move"));
+  $("native-chat-action-share").addEventListener("click",()=>{
+    if($("native-chat-action-share").disabled||chatActionSharePending)return;
+    chatActionSharePending=true;
+    const title=String(chatActionThread?.title||"ChatGPT conversation");
+    setNativeChatCopy("native-chat-action-share-question",
+      "Anyone with this link can read the shared conversation. Create a public link? "+title);
+    $("native-chat-action-share-confirm").hidden=false;
+    $("native-chat-action-share-yes").focus();
+  });
+  $("native-chat-action-share-no").addEventListener("click",()=>{
+    chatActionSharePending=false;
+    $("native-chat-action-share-confirm").hidden=true;
+    $("native-chat-action-share").focus();
+  });
+  $("native-chat-action-share-yes").addEventListener("click",()=>void applyNativeChatAction("share"));
+  $("native-chat-action-share-copy").addEventListener("click",async()=>{
+    if(!chatActionShareUrl)return;
+    const target=$("native-chat-action-share-url");
+    const copied=await copyNativeChatText(target,chatActionShareUrl);
+    setNativeChatCopy("native-chat-action-status",
+      copied?"Share link copied.":"Select and copy the displayed link.");
+  });
+  $("native-chat-action-unshare").addEventListener("click",()=>{
+    if(chatActionBusy||!chatActionShareUrl||chatActionRevokePending)return;
+    chatActionRevokePending=true;
+    $("native-chat-action-unshare-confirm").hidden=false;
+    $("native-chat-action-unshare-yes").focus();
+  });
+  $("native-chat-action-unshare-no").addEventListener("click",()=>{
+    chatActionRevokePending=false;
+    $("native-chat-action-unshare-confirm").hidden=true;
+    $("native-chat-action-unshare").focus();
+  });
+  $("native-chat-action-unshare-yes").addEventListener("click",()=>void applyNativeChatAction("unshare"));
   $("native-chat-action-archive").addEventListener("click",()=>{
     if($("native-chat-action-archive").disabled)return;
     chatActionArchivePending=true;
