@@ -41,3 +41,5 @@ Browser 1.2.6's earlier CWS ZIP is superseded as a Native Chat candidate; Browse
 2. Implement the remaining product features needed for parity, especially uploads, tools, conversation actions, project mutations and account settings; obtain explicit maintainer UX acceptance.
 3. Real installed Windows x64 physical acceptance, macOS signed validation; no new repo tests or fixtures.
 4. Only afterward approve native publication, verify four signed targets and supply the final CWS ZIP in Downloads for maintainer submission.
+
+**Checkpoint 47 follow-up hardening (2026-11-22):** The v13 browser content-script continuation observer and Fresh Home observer now treat modern ChatGPT attachment cards as unsent user content even when the ProseMirror text is empty. Provider history navigation and model controls also use the real attachment-card selector, preventing accidental loss or cross-message submission of files. The global search empty-result script escaping was corrected, and an actual unmatched query in disposable Chrome returned an authoritative empty result (ready, 0 items, partial false).

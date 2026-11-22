@@ -739,7 +739,9 @@ async function freshChatComposerState(tabId) {
         // supposedly new/empty destination must fail closed before any send.
         return {
           composerReady: Boolean(composer),
-          composerEmpty: Boolean(composer) && !String(composer.textContent || '').trim(),
+          composerEmpty: Boolean(composer) && !String(composer.textContent || '').trim()
+            && !composer.closest('form')?.querySelector(
+              'span[class*="group/composer-attachment"],[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]'),
           userTurnCount: userTurns.length + modernTurns.length,
           assistantTurnCount: assistantTurns.length,
         };
@@ -2124,7 +2126,7 @@ async function chatBridgeModelControl({ tabId, conversationId, action = "read", 
       const composer=document.querySelector('#prompt-textarea,[contenteditable="true"][data-testid*="composer"],[contenteditable="true"][role="textbox"]');
       const draft=String(composer?.innerText||composer?.textContent||'').trim();
       const composerSurface=composer?.closest('form')||composer?.closest('[data-chatgpt-composer]')||composer?.parentElement?.parentElement;
-      const attachments=!!composerSurface?.querySelector('[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]');
+      const attachments=!!composerSurface?.querySelector('span[class*="group/composer-attachment"],[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]');
       const stop=[...document.querySelectorAll('button')].some(b=>
         /^(Stop|Durdur|Stop generating|Stop streaming)$/iu.test(
           String(b.getAttribute('aria-label')||b.textContent||'').trim())&&b.getClientRects().length);
@@ -2331,7 +2333,7 @@ async function searchChatBridgeHistory({ tabId, query } = {}) {
         if(input.value!==${JSON.stringify(term)})return{status:'changed',items:[]};
         rows=read();
         const dialog=input.closest('[role="dialog"]');
-        const lines=String(dialog?.innerText||'').split('\n').map(x=>x.trim());
+        const lines=String(dialog?.innerText||'').split('\\n').map(x=>x.trim());
         // A genuine provider empty state is not a transport failure.
         // Require the explicit standalone no-results label, not a generic
         // "no conversations" phrase embedded in a result excerpt.
@@ -2682,7 +2684,7 @@ async function openChatBridgeHistory({ tabId, conversationId, canonicalUrl, sear
       const composer=document.querySelector('#prompt-textarea,[contenteditable="true"][data-testid*="composer"],[contenteditable="true"][role="textbox"]');
       const draft=String(composer?.innerText||composer?.textContent||'').trim();
       const composerSurface=composer?.closest('form')||composer?.closest('[data-chatgpt-composer]')||composer?.parentElement?.parentElement;
-      const attachments=!!composerSurface?.querySelector('[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]');
+      const attachments=!!composerSurface?.querySelector('span[class*="group/composer-attachment"],[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]');
       const stop=[...document.querySelectorAll('button')].some(b=>{
         const label=(b.getAttribute('aria-label')||b.textContent||'').trim();
         return /^(Stop|Durdur|Stop generating|Stop streaming)$/iu.test(label)&&!!b.getClientRects().length;

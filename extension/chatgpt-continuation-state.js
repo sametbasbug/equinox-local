@@ -86,7 +86,10 @@
                 || modernAssistantTurnKey
                 || null,
             composerReady: Boolean(composer),
-            composerEmpty: composer !== null && !String(composer.textContent || '').trim(),
+            // A selected file is unsent human input even if ProseMirror text is empty.
+            // The modern provider uses attachment cards without data-testid.
+            composerEmpty: composer !== null && !String(composer.textContent || '').trim()
+                && !composer.closest('form')?.querySelector('span[class*="group/composer-attachment"],[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]'),
         };
         const key = result.userEpoch || result.assistantTurnKey;
         if (!result.generationActive || !key)
