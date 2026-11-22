@@ -431,6 +431,7 @@ function setConfigEditingEnabled(enabled) {
 let chatRefreshing = false;
 let chatRefreshingThreads = false;
 let chatThreadRefreshRequested = false;
+let chatHistoryRefreshQueuedAt = null;
 let chatThreadsCheckedAt = 0;
 let chatSending = false;
 let chatStopBusy = false;
@@ -2926,18 +2927,25 @@ function renderNativeChatState(chat) {
         setNativeChatNotice("Keep this conversation open in Chrome while ChatGPT responds.");
     else if (chatActive)
         setNativeChatNotice(chat.historyCount
-            ? "Recent messages from Chrome · Earlier turns may be missing"
+            ? chat.limitedHistory
+                ? "Some messages are not loaded. Scroll through ChatGPT, then refresh here to collect more."
+                : "Messages loaded from Chrome."
             : "Earlier turns may not be loaded from Chrome.");
     else
         setNativeChatNotice("");
     updateNativeChatControls();
 }
-async function refreshNativeChat(withThreads = false) {
+async function refreshNativeChat(withThreads = false, reloadVisibleHistory = false) {
     if (state.activeSection !== "chat" || state.setupMode)
         return;
     if (withThreads)
         chatThreadRefreshRequested = true;
-    if (chatRefreshing || chatSelecting || chatSending)
+    if (chatRefreshing) {
+        if (reloadVisibleHistory)
+            chatHistoryRefreshQueuedAt = chatSelectionGeneration;
+        return;
+    }
+    if (chatSelecting || chatSending)
         return;
     chatRefreshing = true;
     const selectionGeneration = chatSelectionGeneration;
@@ -2987,7 +2995,9 @@ async function refreshNativeChat(withThreads = false) {
         // first-message composer with a provider read of another conversation.
         if (chatNewDraft)
             return;
-        const result = await requestJson("/api/v1/chat/state", { backgroundRefresh: true });
+        const path = reloadVisibleHistory && nativeChatAdvancedBridgeReady() && chatActive
+            ? "/api/v1/chat/history" : "/api/v1/chat/state";
+        const result = await requestJson(path, { backgroundRefresh: !reloadVisibleHistory });
         if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
             return;
         renderNativeChatState(result.chat);
@@ -3038,7 +3048,11 @@ async function refreshNativeChat(withThreads = false) {
         chatRefreshingThreads = false;
         renderNativeChatThreads();
         updateNativeChatControls();
-        if (chatThreadRefreshRequested)
+        const resumeHistory = chatHistoryRefreshQueuedAt === chatSelectionGeneration;
+        chatHistoryRefreshQueuedAt = null;
+        if (resumeHistory)
+            void refreshNativeChat(true, true);
+        else if (chatThreadRefreshRequested)
             void refreshNativeChat();
     }
 }
@@ -6928,7 +6942,7 @@ function bindEvents() {
     $("language-select").addEventListener("change", (event) => setLanguage(event.target.value));
     $("native-chat-refresh").addEventListener("click", () => {
         if ($("native-chat-refresh").getAttribute("aria-disabled") !== "true")
-            void refreshNativeChat(true);
+            void refreshNativeChat(true, true);
     });
     $("native-chat-file-pick").addEventListener("click", () => {
         void pickNativeChatFile().catch(error => showToast(nativeChatErrorMessage(error)));

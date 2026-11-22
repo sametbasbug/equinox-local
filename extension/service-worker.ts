@@ -5264,6 +5264,18 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
         return{attachmentFileNames:documentNames.slice(0,12),
           attachmentImageCount:Math.min(images.length,13)};
       };
+      // ChatGPT virtualizes older turns. A large inline top spacer above the
+      // first rendered turn proves prior turns are NOT present in this DOM,
+      // even when fewer than 24 currently rendered turns are observed.
+      const first=turns[0],scroller=first?.closest('.thread-scroll-container');
+      let virtualizedBefore=false;
+      for(let node=first?.parentElement,depth=0;node&&node!==scroller&&depth<6;
+        node=node.parentElement,depth++){
+        const offset=Number.parseFloat(node.style.marginTop||'0');
+        if(Number.isFinite(offset)&&offset>64&&scroller?.contains(node)){
+          virtualizedBefore=true;break;
+        }
+      }
       let remaining=96000,remainingRich=72000,ambiguousUnits=false;
       for(const turn of turns.slice(-24))for(const role of ['user','assistant']){
         const units=[...turn.querySelectorAll('[data-chatgpt-search-unit-key$=":'+role+'"]')];
@@ -5305,7 +5317,8 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
         out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText,
           hasRichMedia,...(attachments??{})});remaining-=limit;
       }
-      return{items:out.slice(-48),partial:turns.length>24||remaining<=0||ambiguousUnits,observedTurns:turns.length};
+      return{items:out.slice(-48),partial:turns.length>24||remaining<=0||ambiguousUnits||virtualizedBefore,
+        observedTurns:turns.length};
     })()`,returnByValue:true,silent:true});
     if(result?.exceptionDetails)throw new Error("Chat history inspection failed.");
     const value=cdpObject(result?.result?.value);

@@ -51,6 +51,54 @@ function providerUserAttachments(item:any):Pick<Message,"attachmentFileNames"|"a
   return{attachmentFileNames:names.slice(),attachmentImageCount:images};
 }
 
+/** Read-only, bounded projection of provider-observed history. */
+function observedNativeHistory(items:any[]):Message[]{
+  return items.slice(-48).map((item:any):Message=>({
+    id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
+    status:"complete",truncated:item.truncated===true,
+    richText:typeof item.richText==="string"&&item.role==="assistant"
+      &&[...item.richText].length<=14000?item.richText:null,
+    versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
+    hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
+    ...providerUserAttachments(item),
+  }));
+}
+
+/** Join only overlapping, unchanged provider message IDs in the same bound tab.
+ * Disjoint windows and edits are not proof of a stable shared transcript. */
+function reconcileVisibleHistory(previous:Message[],fresh:Message[]):Message[]{
+  if(!previous.length||!fresh.length)return fresh;
+  const oldPositions=new Map(previous.map((item,index)=>[item.id,index]));
+  if(oldPositions.size!==previous.length||new Set(fresh.map(item=>item.id)).size!==fresh.length)
+    return fresh;
+  const matched=fresh.flatMap((item,index)=>{
+    const old=oldPositions.get(item.id);
+    return old===undefined?[]:[{old,index}];
+  });
+  if(!matched.length)return fresh;
+  const first=matched[0]!,last=matched.at(-1)!;
+  // An unanchored prefix or suffix on BOTH windows could reflect a changed
+  // provider branch. Never splice those windows together.
+  if((first.old>0&&first.index>0)
+    ||(last.old<previous.length-1&&last.index<fresh.length-1))return fresh;
+  const oldOverlap=previous.slice(first.old,last.old+1);
+  const newOverlap=fresh.slice(first.index,last.index+1);
+  if(oldOverlap.length!==newOverlap.length
+    ||oldOverlap.some((item,i)=>{
+      const next=newOverlap[i]!;
+      return item.id!==next.id||item.role!==next.role
+        ||item.text!==next.text||item.truncated!==next.truncated
+        ||item.richText!==next.richText||item.hasRichMedia!==next.hasRichMedia;
+    }))return fresh;
+  const combined=[...previous.slice(0,first.old),...fresh,...previous.slice(last.old+1)];
+  // Retain the latest bounded context, not an unbounded local archive.
+  while(combined.length>48
+    ||combined.reduce((count,item)=>count+item.text.length,0)>96_000
+    ||combined.reduce((count,item)=>count+(item.richText?.length||0),0)>72_000)
+    combined.shift();
+  return combined;
+}
+
 /** Current-user native Chat transport. The browser remains the ChatGPT session authority. */
 export function createNativeChatController({browserBridge,chatBridge,taskStore}:{browserBridge:BrowserBridge;chatBridge:ChatBridge;taskStore?:TaskStore}) {
   let selected:Binding|null=null;
@@ -59,6 +107,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let historyPartial=false;
   let historyNotice:string|null=null;
   let historyPendingHydration=0;
+  // Exact confirmed send receipts permit deduplication after a manual Chrome
+  // DOM history reload; text equality is never used as message identity.
+  const confirmedLocalEpochs=new Map<string,string>();
+  const recordConfirmedEpoch=(deliveryId:string,userEpoch:string)=>{
+    confirmedLocalEpochs.set(deliveryId,userEpoch);
+    while(confirmedLocalEpochs.size>MAX_MESSAGES)
+      confirmedLocalEpochs.delete(confirmedLocalEpochs.keys().next().value!);
+  };
   let pending:{userEpoch:string;previousAssistantTurnKey:string|null;deliveryId:string}|null=null;
   // After Stop, the provider may hydrate the user turn before the partial
   // assistant reply. Reconcile only by the shared, confirmed provider epoch.
@@ -697,7 +753,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       ||selected?.canonicalUrl!==next.canonicalUrl;
     if(changed){
       selectedRevision++;
-      messages=[];pending=null;stoppedTurn=null;
+      messages=[];pending=null;stoppedTurn=null;confirmedLocalEpochs.clear();
       awaitingNewChatIdentity=awaitingFirstTurns.get(conversationKey(next))??null;
       blocked=uncertainConversations.has(conversationKey(next))||Boolean(awaitingNewChatIdentity);
       history=[];historyPartial=false;historyPendingHydration=0;
@@ -717,12 +773,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         if(value?.tabId!==undefined && value.tabId!==next.tabId)
           throw new Error("Recent history came from another Chrome tab.");
         if(value&&Array.isArray(value.items)){
-          history=value.items.slice(-48).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,
-            text:String(item.text).slice(0,14000),status:"complete",truncated:item.truncated===true,
-            richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=14000?item.richText:null,
-            versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
-            hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
-            ...providerUserAttachments(item)}));
+          history=observedNativeHistory(value.items);
           historyPartial=value.partial===true;
           // Navigation may finish before ChatGPT hydrates its transcript.
           // Retry at most five subsequent normal reads without a new send.
@@ -770,14 +821,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           if(fresh?.tabId!==undefined && fresh.tabId!==initialBinding.tabId)
             throw Object.assign(new Error("The selected Chrome tab changed while refreshing history."),{code:"CHAT_BRIDGE_TAB_CHANGED"});
           if(Array.isArray(fresh?.items)){
-            history=fresh.items.slice(-48).map((item:any):Message=>({
-              id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
-              status:"complete",truncated:item.truncated===true,
-              richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=14000?item.richText:null,
-              versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
-              hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
-              ...providerUserAttachments(item),
-            }));
+            history=observedNativeHistory(fresh.items);
             historyPartial=fresh.partial===true;
           }
         }catch{historyNotice="Recent conversation history could not be refreshed after generation.";}
@@ -789,15 +833,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           const fresh=await chatBridge.readRecent({binding:initialBinding});
           if(!sameSelection())return staleResult();
           if(Array.isArray(fresh?.items)&&fresh.items.length){
-            history=fresh.items.slice(-48).map((item:any):Message=>({
-              id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
-              status:"complete",truncated:item.truncated===true,
-              richText:typeof item.richText==="string"&&item.role==="assistant"
-                &&[...item.richText].length<=14000?item.richText:null,
-              versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
-              hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
-              ...providerUserAttachments(item),
-            }));
+            history=observedNativeHistory(fresh.items);
             historyPartial=fresh.partial===true;
             const stopped=stoppedTurn;
             if(stopped&&fresh.items.some((item:any)=>item.role==='user'
@@ -843,6 +879,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
             if(recent?.partial!==true&&users.length===1
               &&(awaiting.fileNames.length?filesMatch&&promptMatch:observedText===awaiting.text)){
               pending={userEpoch:inspected.userEpoch,previousAssistantTurnKey:null,deliveryId:awaiting.deliveryId};
+              recordConfirmedEpoch(awaiting.deliveryId,inspected.userEpoch);
               awaitingNewChatIdentity=null;
               awaitingFirstTurns.delete(conversationKey(selected));
               blocked=false;
@@ -920,6 +957,38 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-80),
       turn,sending,blocked,creationBlocked,taskId,messageEditAllowed,
       preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
+  };
+  const refreshHistory=async()=>{
+    if(!selected||selecting||sending||creating||pending||mutatingAction||blocked
+      ||!chatBridge.readRecent)return read();
+    const binding=selected,revision=selectedRevision;
+    let snapshot:any;
+    try{snapshot=await chatBridge.readRecent({binding});}
+    catch{
+      if(revision===selectedRevision)historyNotice="Earlier messages could not be reloaded. Existing messages remain visible.";
+      return read();
+    }
+    if(revision!==selectedRevision||!selected
+      ||selected.browserInstanceId!==binding.browserInstanceId
+      ||selected.tabId!==binding.tabId
+      ||selected.conversationId!==binding.conversationId)
+      invalid("Conversation changed while reloading visible ChatGPT history.");
+    if(snapshot?.tabId!==binding.tabId||!Array.isArray(snapshot?.items))
+      invalid("ChatGPT history did not confirm the selected Chrome tab.");
+    const incoming=observedNativeHistory(snapshot.items);
+    history=reconcileVisibleHistory(history,incoming);
+    // Local sent receipts are replaced only when the exact provider turn is
+    // visible. Text-only similarity cannot erase two intentional same prompts.
+    for(const [deliveryId,userEpoch] of confirmedLocalEpochs){
+      const user=snapshot.items.some((item:any)=>item.role==="user"&&item.turnKey===userEpoch);
+      const assistant=snapshot.items.some((item:any)=>item.role==="assistant"&&item.turnKey===userEpoch);
+      if(user)messages=messages.filter(item=>item.id!==deliveryId||item.status!=="sent");
+      if(assistant)messages=messages.filter(item=>item.id!==deliveryId+"-reply"||item.status!=="complete");
+      if(user&&assistant)confirmedLocalEpochs.delete(deliveryId);
+    }
+    historyPartial=historyPartial||snapshot.partial===true;
+    historyNotice=null;
+    return read();
   };
   const stopGeneration=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid Stop response request.");
@@ -1103,6 +1172,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           return{confirmed:false,ambiguous:true};
         }
         appendMessage({id:key,role:"user",text:(body.text as string).trim(),status:"sent"});
+        recordConfirmedEpoch(key,result.userEpoch);
         pending={userEpoch:result.userEpoch,previousAssistantTurnKey:result.previousAssistantTurnKey,deliveryId:key};
         return{confirmed:true,ambiguous:false};
       }catch(error){
@@ -1534,12 +1604,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         associatedTasks.set(conversationKey(source),newTaskId);
         selected={browserContext:"user",browserInstanceId:source.browserInstanceId,tabId:source.tabId,conversationId:source.conversationId,canonicalUrl:source.canonicalUrl};
         selectedRevision++;
-        history=[];messages=[];historyNotice=null;historyPartial=false;blocked=false;pending=null;awaitingNewChatIdentity=null;
+        history=[];messages=[];confirmedLocalEpochs.clear();
+        historyNotice=null;historyPartial=false;blocked=false;pending=null;awaitingNewChatIdentity=null;
         const messageId=key.replace(/^nch-/u,"tgb-");
         appendMessage({id:messageId,role:"user",
           text:firstMessage||attachments.map(item=>item.name).join("\n"),status:"sent"});
         if(typeof opened.userEpoch==="string"&&opened.userEpoch&&!attachments.length){
           pending={userEpoch:opened.userEpoch,previousAssistantTurnKey:null,deliveryId:messageId};
+          recordConfirmedEpoch(messageId,opened.userEpoch);
         }else {
           // A confirmed new tab/conversation can still precede its first turn's
           // DOM epoch. Keep sends blocked, but resolve from exact read-only
@@ -1578,5 +1650,5 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
 
   return Object.freeze({list,search,project,createProject,editProjectInstructions,addProjectTextSource,conversationAction,editMessage,retryAssistant,stopGeneration,responseVersions,branchNewChat,
     branchWorkChat:(value:unknown)=>branchNewChat(value,"work"),
-    branchVersionChat:(value:unknown)=>branchNewChat(value,"history"),tools,select,read,send,startNew,model});
+    branchVersionChat:(value:unknown)=>branchNewChat(value,"history"),tools,select,read,refreshHistory,send,startNew,model});
 }

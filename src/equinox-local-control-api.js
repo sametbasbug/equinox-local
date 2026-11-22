@@ -245,7 +245,7 @@ function validateTaskUpdateRequest(body) {
     }
     return body;
 }
-export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, searchChatThreads = null, browseChatProject = null, createChatProject = null, editChatProjectInstructions = null, addChatProjectTextSource = null, controlChatConversation = null, editChatMessage = null, retryChatAssistant = null, stopChatGeneration = null, branchChatAssistant = null, branchWorkAssistant = null, branchVersionAssistant = null, inspectChatResponseVersions = null, getChatTools = null, selectChatThread = null, getChatState = null, sendChatText = null, startNewChat = null, getChatModel = null, changeChatModel = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
+export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, searchChatThreads = null, browseChatProject = null, createChatProject = null, editChatProjectInstructions = null, addChatProjectTextSource = null, controlChatConversation = null, editChatMessage = null, retryChatAssistant = null, stopChatGeneration = null, branchChatAssistant = null, branchWorkAssistant = null, branchVersionAssistant = null, inspectChatResponseVersions = null, getChatTools = null, selectChatThread = null, getChatState = null, refreshChatHistory = null, sendChatText = null, startNewChat = null, getChatModel = null, changeChatModel = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
     if (!configManager?.snapshot || !configManager?.replacePersisted) {
         throw new Error("Control Center API için configManager gerekli.");
     }
@@ -563,6 +563,12 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 if (typeof getChatState !== "function")
                     throw badRequest("Native chat is unavailable.");
                 send(200, { ok: true, chat: await getChatState() });
+                return;
+            }
+            if (method === "GET" && pathname === "/api/v1/chat/history") {
+                if (typeof refreshChatHistory !== "function")
+                    throw badRequest("Native Chat history reload is unavailable.");
+                send(200, { ok: true, chat: await refreshChatHistory() });
                 return;
             }
             if (method === "GET" && pathname === "/api/v1/chat/tools") {
@@ -1188,7 +1194,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
     // A second permission boundary inside the private IPC server, independent
     // of the renderer and Electron main allowlist. Keep lists synchronized.
     const UI_READ_PATHS = new Set([
-        "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model", "/api/v1/chat/tools",
+        "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/history", "/api/v1/chat/model", "/api/v1/chat/tools",
         "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
         "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
         "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",

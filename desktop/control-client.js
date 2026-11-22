@@ -52,7 +52,7 @@ export async function mutateControl(route) {
 // the preload bridge. The renderer connects to the existing current-user authenticated IPC socket
 // through Electron main, without a browser-accessible management route.
 const UI_READ_PATHS = new Set([
-    "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model", "/api/v1/chat/tools",
+    "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/history", "/api/v1/chat/model", "/api/v1/chat/tools",
     "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
     "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
     "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",

@@ -21,7 +21,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;createChatProject?:Callback|null;editChatProjectInstructions?:Callback|null;addChatProjectTextSource?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;stopChatGeneration?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;createChatProject?:Callback|null;editChatProjectInstructions?:Callback|null;addChatProjectTextSource?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;stopChatGeneration?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;refreshChatHistory?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -324,6 +324,7 @@ export function createEquinoxLocalControlApi({
   getChatTools = null,
   selectChatThread = null,
   getChatState = null,
+  refreshChatHistory = null,
   sendChatText = null,
   startNewChat = null,
   getChatModel = null,
@@ -683,6 +684,10 @@ export function createEquinoxLocalControlApi({
       if (method === "GET" && pathname === "/api/v1/chat/state") {
         if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");
         send(200, {ok:true,chat:await getChatState()});return;
+      }
+      if (method === "GET" && pathname === "/api/v1/chat/history") {
+        if (typeof refreshChatHistory !== "function") throw badRequest("Native Chat history reload is unavailable.");
+        send(200, {ok:true,chat:await refreshChatHistory()});return;
       }
       if (method === "GET" && pathname === "/api/v1/chat/tools") {
         if(typeof getChatTools!=="function")throw badRequest("Native Chat tool discovery is unavailable.");
@@ -1275,7 +1280,7 @@ export function createEquinoxLocalControlApi({
   // A second permission boundary inside the private IPC server, independent
   // of the renderer and Electron main allowlist. Keep lists synchronized.
 const UI_READ_PATHS = new Set([
-  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model", "/api/v1/chat/tools",
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/history", "/api/v1/chat/model", "/api/v1/chat/tools",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
   "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
