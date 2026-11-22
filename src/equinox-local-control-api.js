@@ -245,7 +245,7 @@ function validateTaskUpdateRequest(body) {
     }
     return body;
 }
-export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, searchChatThreads = null, browseChatProject = null, createChatProject = null, controlChatConversation = null, editChatMessage = null, retryChatAssistant = null, branchChatAssistant = null, branchWorkAssistant = null, branchVersionAssistant = null, inspectChatResponseVersions = null, getChatTools = null, selectChatThread = null, getChatState = null, sendChatText = null, startNewChat = null, getChatModel = null, changeChatModel = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
+export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, searchChatThreads = null, browseChatProject = null, createChatProject = null, editChatProjectInstructions = null, controlChatConversation = null, editChatMessage = null, retryChatAssistant = null, branchChatAssistant = null, branchWorkAssistant = null, branchVersionAssistant = null, inspectChatResponseVersions = null, getChatTools = null, selectChatThread = null, getChatState = null, sendChatText = null, startNewChat = null, getChatModel = null, changeChatModel = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
     if (!configManager?.snapshot || !configManager?.replacePersisted) {
         throw new Error("Control Center API için configManager gerekli.");
     }
@@ -399,6 +399,21 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 const project = await createChatProject(body);
                 state.mutationCount += 1;
                 send(200, { ok: true, project });
+                return;
+            }
+            if (method === "POST" && pathname === "/api/v1/chat/project_instructions") {
+                authorizeMutation();
+                if (typeof editChatProjectInstructions !== "function")
+                    throw badRequest("ChatGPT project instructions editing is unavailable.");
+                const body = validateExactObject(await readBody(), ["projectId", "name", "expectedInstructions", "instructions", "mutationId"], "ChatGPT project instructions");
+                if (typeof body.projectId !== "string" || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId)
+                    || typeof body.name !== "string" || !body.name.trim() || body.name.length > 120
+                    || typeof body.expectedInstructions !== "string" || body.expectedInstructions.length > 4000
+                    || typeof body.instructions !== "string" || body.instructions.length > 4000
+                    || body.instructions === body.expectedInstructions
+                    || typeof body.mutationId !== "string" || !/^npi-[a-f0-9-]{36}$/u.test(body.mutationId))
+                    throw badRequest("The project instructions request must include exact old/new values and a receipt.");
+                send(200, { ok: true, project: await editChatProjectInstructions(body) });
                 return;
             }
             if (method === "POST" && pathname === "/api/v1/chat/conversation_action") {
@@ -1150,7 +1165,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
     ]);
     const UI_WRITE_PATHS = {
         POST: new Set([
-            "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/conversation_action",
+            "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/project_instructions", "/api/v1/chat/conversation_action",
             "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
             "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
             "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

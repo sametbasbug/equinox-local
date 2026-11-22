@@ -3051,6 +3051,181 @@ async function createChatBridgeProject({tabId,name,memoryMode,mutationId}:{
   }
 }
 
+/** Save exact project instructions in real provider UI, only after a first-party
+ * explicit confirmation. A receipt is claimed before any browser interaction. */
+const chatBridgeProjectInstructionReceipts=new Set<string>();
+async function editChatBridgeProjectInstructions({tabId,projectId,name,expectedInstructions,newInstructions,mutationId}:{
+  tabId?:unknown;projectId?:unknown;name?:unknown;expectedInstructions?:unknown;
+  newInstructions?:unknown;mutationId?:unknown
+}={}){
+  if(!Number.isSafeInteger(tabId)||Number(tabId)<1
+    ||typeof projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(projectId)
+    ||typeof name!=="string"||!name.trim()||name.length>120
+    ||typeof expectedInstructions!=="string"||expectedInstructions.length>4000
+    ||typeof newInstructions!=="string"||newInstructions.length>4000
+    ||newInstructions===expectedInstructions
+    ||typeof mutationId!=="string"||!/^npi-[a-f0-9-]{36}$/u.test(mutationId))
+    throw new Error("An exact project, old instructions, new instructions and receipt are required.");
+  if(chatBridgeProjectInstructionReceipts.has(mutationId))
+    throw new Error("The project instructions receipt was consumed. Check ChatGPT.");
+  if(chatBridgeProjectInstructionReceipts.size>=32)
+    throw new Error("Project instructions receipt limit reached in this browser session.");
+  const source=await chooseTab(Number(tabId));
+  if(source.pendingUrl||(!chatGptConversationIdentity(source)&&source.url!=="https://chatgpt.com/"))
+    throw new Error("The source ChatGPT tab is not stable.");
+  chatBridgeProjectInstructionReceipts.add(mutationId);
+  const tabs=workerTabs();
+  if(!tabs.create||!tabs.remove||!tabs.get)throw new Error("Temporary project tab is unavailable.");
+  const projectUrl="https://chatgpt.com/g/"+projectId+"/project";
+  let tempId:number|null=null,submitted=false;
+  const evaluate=async(expression:string)=>{
+    const result=await send(tempId!,"Runtime.evaluate",{expression,returnByValue:true,awaitPromise:true,silent:true});
+    if(result?.exceptionDetails)throw new Error("The provider project form changed.");
+    return cdpObject(result?.result?.value) as any;
+  };
+  const openSettings=async()=>{
+    const point=await evaluate(`(async()=>{
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      if(location.origin!=="https://chatgpt.com"
+        ||location.pathname!==${JSON.stringify("/g/"+projectId+"/project")})
+        return{ready:false};
+      for(let i=0;i<35;i++){
+        const title=[...document.querySelectorAll("main button")].filter(x=>
+          x.getClientRects().length&&String(x.innerText||"").trim()===${JSON.stringify(name)});
+        const sidebar=[...document.querySelectorAll(
+          '[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]')].filter(x=>
+          x.getClientRects().length
+          &&x.getAttribute("data-app-action-sidebar-project-id")===${JSON.stringify(projectId)}
+          &&x.getAttribute("data-app-action-sidebar-project-label")===${JSON.stringify(name)});
+        const buttons=[...document.querySelectorAll('main button[aria-label]')].filter(b=>
+          b.getClientRects().length&&/^(?:Proje işlemleri|Project actions)$/iu.test(
+            b.getAttribute("aria-label")||""));
+        if(title.length===1&&sidebar.length===1&&buttons.length===1){
+          const r=buttons[0].getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;
+          if(r.width>=8&&r.height>=8&&x>=0&&y>=0&&x<innerWidth&&y<innerHeight
+            &&document.elementFromPoint(x,y)?.closest("button")===buttons[0])
+            return{ready:true,x,y};
+        }
+        await sleep(100);
+      }
+      return{ready:false};
+    })`);
+    if(point?.ready!==true||!Number.isFinite(point.x)||!Number.isFinite(point.y))
+      throw new Error("ChatGPT did not confirm the exact project page and menu.");
+    await send(tempId!,"Input.dispatchMouseEvent",
+      {type:"mousePressed",x:point.x,y:point.y,button:"left",clickCount:1});
+    await send(tempId!,"Input.dispatchMouseEvent",
+      {type:"mouseReleased",x:point.x,y:point.y,button:"left",clickCount:1});
+    const opened=await evaluate(`(async()=>{
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      let menu=null;
+      for(let i=0;i<25;i++){
+        const items=[...document.querySelectorAll('[role=menuitem]')].filter(x=>
+          x.getClientRects().length&&/^(?:Proje ayarları|Project settings)$/iu.test(
+            String(x.innerText||"").trim()));
+        if(items.length===1){menu=items[0];break}
+        await sleep(100);
+      }
+      if(!menu)return{ready:false};
+      menu.click();
+      for(let i=0;i<30;i++){
+        const dialogs=[...document.querySelectorAll('[role=dialog]')].filter(d=>
+          d.getClientRects().length&&d.querySelector('input[name="project-name"]')
+            &&d.querySelector('textarea[name="project-instructions"]')
+            &&[...d.querySelectorAll('h2')].some(h=>
+              /^(?:Proje ayarları|Project settings)$/iu.test(String(h.innerText||"").trim())));
+        if(dialogs.length===1)return{ready:true};
+        await sleep(100);
+      }
+      return{ready:false};
+    })`);
+    if(opened?.ready!==true)throw new Error("Provider Project settings did not open.");
+  };
+  try{
+    const tab=await tabs.create({url:projectUrl,active:false});
+    if(!Number.isSafeInteger(tab?.id)||Number(tab.id)<1)
+      throw new Error("No project tab was created.");
+    tempId=Number(tab.id);
+    await waitForTab(tempId,tab=>tab.status==="complete"&&tab.url===projectUrl,10_000);
+    await requireDebuggableTab(tempId);await attachTab(tempId);
+    await openSettings();
+    const staged=await evaluate(`(async()=>{
+      const d=[...document.querySelectorAll('[role=dialog]')].filter(x=>
+        x.getClientRects().length&&x.querySelector('textarea[name="project-instructions"]'));
+      if(d.length!==1)return{ready:false};
+      const textarea=d[0].querySelector('textarea[name="project-instructions"]');
+      const title=d[0].querySelector('input[name="project-name"]');
+      if(title?.value!==${JSON.stringify(name)}
+        ||textarea?.value!==${JSON.stringify(expectedInstructions)})
+        return{ready:false};
+      const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value")?.set;
+      if(!setter)return{ready:false};
+      setter.call(textarea,${JSON.stringify(newInstructions)});
+      textarea.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText"}));
+      await new Promise(resolve=>setTimeout(resolve,100));
+      const save=[...d[0].querySelectorAll('button')].filter(b=>
+        b.getClientRects().length&&/^(?:Kaydet|Save)$/iu.test(
+          String(b.innerText||"").trim())&&!b.disabled);
+      if(textarea.value!==${JSON.stringify(newInstructions)}
+        ||save.length!==1)return{ready:false};
+      const r=save[0].getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;
+      if(r.width<8||r.height<8||x<0||y<0||x>=innerWidth||y>=innerHeight
+        ||document.elementFromPoint(x,y)?.closest("button")!==save[0])
+        return{ready:false};
+      return{ready:true,x,y};
+    })`);
+    if(staged?.ready!==true||!Number.isFinite(staged.x)||!Number.isFinite(staged.y))
+      throw new Error("Project instructions changed or Save is not offered. No edit was submitted.");
+    const current=await chooseTab(Number(tabId));
+    if(current.pendingUrl||current.url!==source.url)
+      throw new Error("The original Chrome tab changed before project Save.");
+    submitted=true;
+    await send(tempId,"Input.dispatchMouseEvent",
+      {type:"mousePressed",x:staged.x,y:staged.y,button:"left",clickCount:1});
+    await send(tempId,"Input.dispatchMouseEvent",
+      {type:"mouseReleased",x:staged.x,y:staged.y,button:"left",clickCount:1});
+    const closed=await evaluate(`(async()=>{
+      for(let i=0;i<35;i++){
+        const forms=[...document.querySelectorAll('[role=dialog]')].filter(d=>
+          d.getClientRects().length&&d.querySelector('textarea[name="project-instructions"]'));
+        if(forms.length===0)return{closed:true};
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      return{closed:false};
+    })`);
+    if(closed?.closed!==true)throw new Error("Provider did not close Project Settings after Save.");
+    await send(tempId,"Page.navigate",{url:projectUrl});
+    await waitForTab(tempId,tab=>tab.status==="complete"&&tab.url===projectUrl,10_000);
+    await openSettings();
+    const verified=await evaluate(`(()=>{
+      if(location.origin!=="https://chatgpt.com"||
+        location.pathname!==${JSON.stringify("/g/"+projectId+"/project")})
+        return{verified:false};
+      const d=[...document.querySelectorAll('[role=dialog]')].filter(x=>
+        x.getClientRects().length&&x.querySelector('textarea[name="project-instructions"]'));
+      return{verified:d.length===1
+        &&d[0].querySelector('input[name="project-name"]')?.value===${JSON.stringify(name)}
+        &&d[0].querySelector('textarea[name="project-instructions"]')?.value
+          ===${JSON.stringify(newInstructions)}};
+    })()`);
+    if(verified?.verified!==true)
+      throw new Error("Project Save was submitted but the new instructions could not be read back.");
+    const still=await chooseTab(Number(tabId));
+    if(still.pendingUrl||still.url!==source.url)
+      throw new Error("The original Chrome tab changed during project editing.");
+    return{confirmed:true,projectId,name,instructions:newInstructions};
+  }catch(error){
+    if(submitted)throw new Error("Project instructions Save may have succeeded. Check ChatGPT before retrying. "+
+      (error instanceof Error?error.message:"Could not confirm the edit."));
+    throw error;
+  }finally{
+    if(tempId!==null){
+      await detachTab(tempId).catch(()=>{});
+      await tabs.remove(tempId).catch(()=>{});
+    }
+  }
+}
+
 /** Read the connected account's visible provider composer tool menu without
  * selecting a tool, uploading a file or altering any active conversation. */
 
@@ -11529,6 +11704,7 @@ const COMMANDS = {
   "chat_bridge.search": searchChatBridgeHistory,
   "chat_bridge.project": browseChatBridgeProject,
   "chat_bridge.project_create": createChatBridgeProject,
+  "chat_bridge.project_instructions": editChatBridgeProjectInstructions,
   "chat_bridge.conversation_action": controlChatBridgeConversation,
   "chat_bridge.edit_message": editChatBridgeMessage,
   "chat_bridge.retry_assistant": retryChatBridgeAssistant,

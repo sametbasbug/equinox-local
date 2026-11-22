@@ -753,6 +753,24 @@
           </div>
           <p id="native-chat-edit-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
         </dialog>
+        <dialog id="native-chat-project-instructions-dialog" class="native-chat-action-dialog" aria-labelledby="native-chat-project-instructions-title">
+          <div class="native-chat-action-head">
+            <div>
+              <p class="native-chat-action-eyebrow">ChatGPT project</p>
+              <h3 id="native-chat-project-instructions-title">Edit project instructions</h3>
+            </div>
+            <button id="native-chat-project-instructions-close" class="icon-button" type="button" aria-label="Close instructions editor">×</button>
+          </div>
+          <p id="native-chat-project-instructions-context" class="native-chat-action-subtitle"></p>
+          <p class="native-chat-action-subtitle">Changes the instructions for this project in ChatGPT. If someone else changed them, Save is rejected.</p>
+          <label class="native-chat-action-label" for="native-chat-project-instructions-text">Instructions</label>
+          <textarea id="native-chat-project-instructions-text" class="native-chat-edit-input" rows="7" maxlength="4000"></textarea>
+          <div class="native-chat-action-footer">
+            <button id="native-chat-project-instructions-cancel" class="button secondary" type="button">Cancel</button>
+            <button id="native-chat-project-instructions-confirm" class="button primary" type="button" disabled>Save in ChatGPT</button>
+          </div>
+          <p id="native-chat-project-instructions-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
+        </dialog>
         <dialog id="native-chat-project-create-dialog" class="native-chat-action-dialog" aria-labelledby="native-chat-project-create-title">
           <div class="native-chat-action-head">
             <div>

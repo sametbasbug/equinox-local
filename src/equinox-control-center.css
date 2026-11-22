@@ -851,6 +851,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   max-height: 220px;
   overflow: auto;
 }
+.native-chat-project-settings .native-chat-project-instructions-edit {
+  display:inline-flex;
+  margin:0 10px 11px;
+  padding:5px 8px;
+  font-size:11px;
+}
 
 .native-chat-thread-group-heading {
   margin: 11px 12px 4px 17px;

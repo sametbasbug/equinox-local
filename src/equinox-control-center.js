@@ -480,6 +480,9 @@ let chatProjectThreads = [];
 let chatProjectBusy = false;
 let chatProjectCreateBusy = false;
 let chatProjectCreateAttempted = false;
+let chatProjectInstructionsBusy = false;
+let chatProjectInstructionsAttempted = false;
+let chatProjectInstructionsCandidate = null;
 let chatProjectError = "";
 let chatProjectGeneration = 0;
 let chatSearchQuery = "";
@@ -588,6 +591,7 @@ function renderNativeChatThreads() {
         const focusedProject = document.activeElement instanceof HTMLButtonElement && list.contains(document.activeElement)
             ? document.activeElement.dataset.projectId : null;
         const projectExpanded = list.querySelector(".native-chat-project-index")?.open ?? true;
+        const projectSettingsExpanded = list.querySelector(".native-chat-project-settings")?.open ?? false;
         const next = document.createDocumentFragment();
         let nextFocus;
         if (ready && !deepSearch && chatProjectCatalog.length) {
@@ -628,6 +632,7 @@ function renderNativeChatThreads() {
             if (chatProjectId && chatProjectSettings && !chatProjectBusy) {
                 const info = document.createElement("details");
                 info.className = "native-chat-project-settings";
+                info.open = projectSettingsExpanded;
                 const summary = document.createElement("summary");
                 summary.textContent = localizeUiText("Project settings");
                 info.append(summary);
@@ -649,6 +654,15 @@ function renderNativeChatThreads() {
                     const more = document.createElement("small");
                     more.textContent = localizeUiText("Instructions are truncated. Open ChatGPT to view the rest.");
                     info.append(more);
+                }
+                else {
+                    const edit = document.createElement("button");
+                    edit.type = "button";
+                    edit.className = "text-button native-chat-project-instructions-edit";
+                    edit.textContent = localizeUiText("Edit instructions");
+                    edit.disabled = chatProjectInstructionsBusy;
+                    edit.addEventListener("click", openNativeChatProjectInstructionsEditor);
+                    info.append(edit);
                 }
                 next.append(info);
             }
@@ -820,6 +834,75 @@ async function submitNativeChatProjectCreation() {
         chatProjectCreateBusy = false;
         updateNativeChatProjectCreator();
         updateNativeChatControls();
+    }
+}
+function nativeChatProjectInstructionsDialog() {
+    return $("native-chat-project-instructions-dialog");
+}
+function updateNativeChatProjectInstructionsEditor() {
+    const c = chatProjectInstructionsCandidate;
+    const value = document.getElementById("native-chat-project-instructions-text").value;
+    $("native-chat-project-instructions-confirm").disabled = chatProjectInstructionsBusy
+        || chatProjectInstructionsAttempted || !c || value.length > 4000 || value === c.expected
+        || chatProjectId !== c.projectId || chatProjectName !== c.name
+        || chatProjectSettings?.instructions !== c.expected || chatProjectSettings?.instructionsTruncated === true;
+    $("native-chat-project-instructions-close").setAttribute("aria-disabled", String(chatProjectInstructionsBusy));
+    $("native-chat-project-instructions-cancel").setAttribute("aria-disabled", String(chatProjectInstructionsBusy));
+}
+function openNativeChatProjectInstructionsEditor() {
+    if (chatProjectInstructionsBusy || chatProjectBusy || !chatProjectId || !chatProjectName
+        || !chatProjectSettings || chatProjectSettings.instructionsTruncated)
+        return;
+    const dialog = nativeChatProjectInstructionsDialog();
+    if (dialog.open)
+        return;
+    chatProjectInstructionsCandidate = {
+        projectId: chatProjectId, name: chatProjectName, expected: chatProjectSettings.instructions
+    };
+    chatProjectInstructionsAttempted = false;
+    document.getElementById("native-chat-project-instructions-text").value = chatProjectSettings.instructions;
+    setNativeChatCopy("native-chat-project-instructions-context", chatProjectName);
+    setNativeChatCopy("native-chat-project-instructions-status", "");
+    updateNativeChatProjectInstructionsEditor();
+    dialog.showModal();
+    $("native-chat-project-instructions-text").focus();
+}
+async function submitNativeChatProjectInstructions() {
+    if (chatProjectInstructionsBusy || chatProjectInstructionsAttempted)
+        return;
+    const c = chatProjectInstructionsCandidate, dialog = nativeChatProjectInstructionsDialog();
+    if (!c || !dialog.open || chatProjectId !== c.projectId || chatProjectName !== c.name
+        || chatProjectSettings?.instructions !== c.expected
+        || chatProjectSettings?.instructionsTruncated === true)
+        return;
+    const instructions = document.getElementById("native-chat-project-instructions-text").value;
+    if (instructions === c.expected || instructions.length > 4000)
+        return;
+    chatProjectInstructionsBusy = true;
+    chatProjectInstructionsAttempted = true;
+    updateNativeChatProjectInstructionsEditor();
+    setNativeChatCopy("native-chat-project-instructions-status", "Saving project instructions…");
+    try {
+        const data = await mutationJson("/api/v1/chat/project_instructions", "POST", {
+            projectId: c.projectId, name: c.name, expectedInstructions: c.expected,
+            instructions, mutationId: "npi-" + crypto.randomUUID()
+        });
+        if (data.project?.confirmed !== true || data.project.projectId !== c.projectId
+            || data.project.name !== c.name || data.project.instructions !== instructions)
+            throw new Error("ChatGPT did not confirm this project instruction update.");
+        if (chatProjectId === c.projectId && chatProjectName === c.name && chatProjectSettings) {
+            chatProjectSettings = { ...chatProjectSettings, instructions, instructionsTruncated: false };
+            renderNativeChatThreads();
+        }
+        dialog.close();
+        showToast(localizeUiText("Project instructions saved in ChatGPT."));
+    }
+    catch (error) {
+        setNativeChatCopy("native-chat-project-instructions-status", nativeChatErrorMessage(error));
+    }
+    finally {
+        chatProjectInstructionsBusy = false;
+        updateNativeChatProjectInstructionsEditor();
     }
 }
 async function browseNativeChatProject(projectId) {
@@ -6580,6 +6663,25 @@ function bindEvents() {
     $("native-chat-action-pin").addEventListener("click", () => void applyNativeChatAction("pin"));
     $("native-chat-action-rename").addEventListener("click", () => void applyNativeChatAction("rename"));
     $("native-chat-filter").addEventListener("input", scheduleNativeChatSearch);
+    $("native-chat-project-instructions-text").addEventListener("input", updateNativeChatProjectInstructionsEditor);
+    $("native-chat-project-instructions-confirm").addEventListener("click", () => void submitNativeChatProjectInstructions());
+    for (const name of ["native-chat-project-instructions-close", "native-chat-project-instructions-cancel"]) {
+        $(name).addEventListener("click", () => {
+            if (!chatProjectInstructionsBusy)
+                nativeChatProjectInstructionsDialog().close();
+        });
+    }
+    $("native-chat-project-instructions-dialog").addEventListener("cancel", event => {
+        if (chatProjectInstructionsBusy)
+            event.preventDefault();
+    });
+    $("native-chat-project-instructions-dialog").addEventListener("close", () => {
+        if (chatProjectInstructionsBusy)
+            return;
+        chatProjectInstructionsCandidate = null;
+        chatProjectInstructionsAttempted = false;
+        document.getElementById("native-chat-project-instructions-text").value = "";
+    });
     $("native-chat-project-create").addEventListener("click", openNativeChatProjectCreator);
     $("native-chat-project-create-name").addEventListener("input", updateNativeChatProjectCreator);
     $("native-chat-project-create-memory").addEventListener("change", updateNativeChatProjectCreator);

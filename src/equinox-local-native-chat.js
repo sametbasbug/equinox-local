@@ -123,6 +123,9 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     };
     const createAttempts = new Map();
     const projectCreateAttempts = new Map();
+    const projectInstructionAttempts = new Map();
+    let projectInstructionBlocked = false;
+    let projectInstructionsUpdating = false;
     let projectCreateBlocked = false;
     let projectCreating = false;
     const attempts = new Map();
@@ -282,17 +285,27 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         const browserInstanceId = context();
         if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
             invalid("Project creation requires Equinox Browser Chat Bridge 13.");
-        const current = await list();
-        if (current.browserInstanceId !== browserInstanceId)
-            invalid("Chrome changed during project creation.");
-        const existing = current.projects;
-        if (existing.some(item => item.name === name))
-            invalid("A project with this exact name is already visible in ChatGPT.");
-        const observer = selected?.tabId ?? current.observerTabId;
-        if (!Number.isSafeInteger(observer) || Number(observer) < 1)
-            invalid("Open ChatGPT in your connected Chrome before creating a project.");
-        const revision = selectedRevision;
         projectCreating = true;
+        mutatingAction = true; // Reserve before async discovery to prevent concurrent project saves.
+        let current;
+        let observer;
+        try {
+            current = await list();
+            if (current.browserInstanceId !== browserInstanceId)
+                invalid("Chrome changed during project creation.");
+            const existing = current.projects;
+            if (existing.some(item => item.name === name))
+                invalid("A project with this exact name is already visible in ChatGPT.");
+            observer = selected?.tabId ?? current.observerTabId;
+            if (!Number.isSafeInteger(observer) || Number(observer) < 1)
+                invalid("Open ChatGPT in your connected Chrome before creating a project.");
+        }
+        catch (error) {
+            projectCreating = false;
+            mutatingAction = false;
+            throw error;
+        }
+        const revision = selectedRevision;
         const promise = (async () => {
             try {
                 const result = await call("chat_bridge.project_create", {
@@ -316,9 +329,87 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             }
             finally {
                 projectCreating = false;
+                mutatingAction = false;
             }
         })();
         projectCreateAttempts.set(id, { name, memoryMode, promise });
+        return promise;
+    };
+    const editProjectInstructions = async (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            invalid("Invalid project instructions request.");
+        const body = value;
+        if (Object.keys(body).some(key => !["projectId", "name", "expectedInstructions", "instructions", "mutationId"].includes(key))
+            || typeof body.projectId !== "string" || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId)
+            || typeof body.name !== "string" || !body.name.trim() || body.name.length > 120
+            || typeof body.expectedInstructions !== "string" || body.expectedInstructions.length > 4000
+            || typeof body.instructions !== "string" || body.instructions.length > 4000
+            || body.instructions === body.expectedInstructions
+            || typeof body.mutationId !== "string" || !/^npi-[a-f0-9-]{36}$/u.test(body.mutationId))
+            invalid("Project instruction edits need an exact project and previous value.");
+        const key = body.mutationId, fingerprint = JSON.stringify(body);
+        const prior = projectInstructionAttempts.get(key);
+        if (prior) {
+            if (prior.fingerprint !== fingerprint)
+                invalid("Project instruction receipt cannot be reused for another edit.");
+            return prior.promise;
+        }
+        if (projectInstructionBlocked || projectInstructionsUpdating)
+            invalid("An earlier project instruction edit may have succeeded. Check ChatGPT first.");
+        if (mutatingAction || selecting || creating || sending || pending || blocked || projectCreating)
+            invalid("Finish the active ChatGPT operation before editing instructions.");
+        if (projectInstructionAttempts.size >= 20)
+            invalid("Project instruction edit limit reached for this runtime.");
+        const browserInstanceId = context();
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            invalid("Project instruction edits require Equinox Browser Chat Bridge 13.");
+        projectInstructionsUpdating = true;
+        mutatingAction = true; // Claim the shared mutation boundary before async sidebar discovery.
+        let observer;
+        try {
+            const projects = await list();
+            if (projects.browserInstanceId !== browserInstanceId)
+                invalid("Chrome changed during project instruction editing.");
+            const choice = projects.projects.find(item => item.id === body.projectId && item.name === body.name);
+            if (!choice)
+                invalid("The exact project is no longer in the ChatGPT sidebar.");
+            observer = selected?.tabId ?? projects.observerTabId;
+            if (!observer || browsedProject?.projectId !== body.projectId
+                || browsedProject.tabId !== observer || browsedProject.browserInstanceId !== browserInstanceId
+                || Date.now() - browsedProject.checkedAt > 5 * 60_000)
+                invalid("Open the selected project in Native Chat before editing its instructions.");
+        }
+        catch (error) {
+            projectInstructionsUpdating = false;
+            mutatingAction = false;
+            throw error;
+        }
+        const revision = selectedRevision;
+        const promise = (async () => {
+            try {
+                const result = await call("chat_bridge.project_instructions", {
+                    tabId: observer, projectId: body.projectId, name: body.name,
+                    expectedInstructions: body.expectedInstructions, newInstructions: body.instructions,
+                    mutationId: key
+                }, 38_000);
+                if (result?.confirmed !== true || result.projectId !== body.projectId
+                    || result.name !== body.name || result.instructions !== body.instructions
+                    || context() !== browserInstanceId || selectedRevision !== revision)
+                    invalid("The provider did not confirm the exact project instructions change.");
+                return { confirmed: true, projectId: body.projectId, name: body.name,
+                    instructions: body.instructions };
+            }
+            catch (error) {
+                // A Save can succeed just before a transport timeout. No silent retry.
+                projectInstructionBlocked = true;
+                throw error;
+            }
+            finally {
+                projectInstructionsUpdating = false;
+                mutatingAction = false;
+            }
+        })();
+        projectInstructionAttempts.set(key, { fingerprint, promise });
         return promise;
     };
     const project = async (value) => {
@@ -1445,7 +1536,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, toolKey, fileKey, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, search, project, createProject, conversationAction, editMessage, retryAssistant, responseVersions, branchNewChat,
+    return Object.freeze({ list, search, project, createProject, editProjectInstructions, conversationAction, editMessage, retryAssistant, responseVersions, branchNewChat,
         branchWorkChat: (value) => branchNewChat(value, "work"),
         branchVersionChat: (value) => branchNewChat(value, "history"), tools, select, read, send, startNew, model });
 }
