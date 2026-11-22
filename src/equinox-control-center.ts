@@ -2765,8 +2765,11 @@ function renderNativeChatState(chat: UiRemoteData) {
       && task?.chatBinding?.browserContext === "user"
       && task.chatBinding.tabId === chatActive.tabId)
     : null;
+  // The full objective/title stays in Task details. Keep the header a
+  // useful compact checkpoint label instead of repeating a clipped task name.
   const taskText = relatedTask ? [
-    "Task Capsule", String(relatedTask.title || relatedTask.taskId).slice(0, 64), String(relatedTask.status || "unknown").slice(0, 24),
+    "Task Capsule", "Checkpoint " + String(relatedTask.checkpointRevision || 0),
+    String(relatedTask.status || "unknown").slice(0, 24),
   ].join(" · ") : "";
   setNativeChatCopy("native-chat-task", taskText);
   $("native-chat-task").hidden = !relatedTask;

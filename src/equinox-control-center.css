@@ -1509,9 +1509,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   color: var(--text);
 }
 .native-chat-web-action[hidden] { display: none; }
-@media (max-width: 980px) {
-  .native-chat-web-action { padding: 5px; }
+/* Main Chat is narrower than the window because of the sidebar. Default
+   1180px windows need icon-only external handoff to keep the title readable. */
+@media (max-width: 1380px) {
+  .native-chat-web-action { width: 32px; min-width: 32px; height: 32px; padding: 5px; }
   #native-chat-open-web span { display: none; }
+  .native-chat-web-action svg { width: 17px; height: 17px; }
 }
 
 /* The provider's visible HTTPS citations are copyable without silently
