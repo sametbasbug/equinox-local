@@ -3161,6 +3161,254 @@ async function editChatBridgeProjectInstructions({ tabId, projectId, name, expec
         }
     }
 }
+/** Paste one explicitly confirmed text source into the authentic ChatGPT Project
+ * Sources UI. Never uses private provider endpoints or touches the user task tab. */
+const chatBridgeProjectTextReceipts = new Set();
+async function addChatBridgeProjectTextSource({ tabId, projectId, name, title, text, mutationId } = {}) {
+    if (!Number.isSafeInteger(tabId) || Number(tabId) < 1
+        || typeof projectId !== "string" || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(projectId)
+        || typeof name !== "string" || !name.trim() || name.length > 120
+        || typeof title !== "string" || title !== title.trim() || title.length < 1 || title.length > 80
+        || /[\r\n\x00-\x1f\x7f]/u.test(title)
+        || typeof text !== "string" || !text.trim() || text.length > 12000 || /\x00/u.test(text)
+        || typeof mutationId !== "string" || !/^nps-[a-f0-9-]{36}$/u.test(mutationId))
+        throw new Error("Project text source requires exact project, title, content and one-use receipt.");
+    if (chatBridgeProjectTextReceipts.has(mutationId))
+        throw new Error("This project source receipt was consumed. Check ChatGPT before retrying.");
+    if (chatBridgeProjectTextReceipts.size >= 32)
+        throw new Error("Project source receipt limit reached for this Browser session.");
+    const source = await chooseTab(Number(tabId));
+    if (source.pendingUrl || (!chatGptConversationIdentity(source) && source.url !== "https://chatgpt.com/"))
+        throw new Error("Project source creation requires a stable signed-in ChatGPT tab.");
+    chatBridgeProjectTextReceipts.add(mutationId);
+    const tabs = workerTabs(), projectUrl = "https://chatgpt.com/g/" + projectId + "/project";
+    if (!tabs.create || !tabs.remove || !tabs.get)
+        throw new Error("Temporary Chrome tabs are unavailable.");
+    let tempId = null, submitted = false;
+    const evaluate = async (expression) => {
+        const reply = await send(tempId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true, silent: true });
+        if (reply?.exceptionDetails)
+            throw new Error("ChatGPT Project Sources form changed.");
+        return cdpObject(reply?.result?.value);
+    };
+    const mouse = async (x, y) => {
+        if (!Number.isFinite(x) || !Number.isFinite(y))
+            throw new Error("Provider control coordinate is invalid.");
+        await send(tempId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        await send(tempId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    };
+    try {
+        const created = await tabs.create({ url: projectUrl, active: false });
+        if (!Number.isSafeInteger(created?.id) || Number(created.id) < 1)
+            throw new Error("The project creation tab was not returned.");
+        tempId = Number(created.id);
+        await waitForTab(tempId, tab => tab.status === "complete" && tab.url === projectUrl, 10_000);
+        await requireDebuggableTab(tempId);
+        await attachTab(tempId);
+        const start = await evaluate(`(async()=>{
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      if(location.origin!=="https://chatgpt.com"
+        ||location.pathname!==${JSON.stringify("/g/" + projectId + "/project")})
+        return{ready:false};
+      let tab=null,panel=null;
+      for(let n=0;n<35;n++){
+        const sidebar=[...document.querySelectorAll(
+          '[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]')].filter(el=>
+            el.getClientRects().length
+            &&el.getAttribute("data-app-action-sidebar-project-id")===${JSON.stringify(projectId)}
+            &&el.getAttribute("data-app-action-sidebar-project-label")===${JSON.stringify(name)});
+        const found=[...document.querySelectorAll('button[role="tab"]')].filter(b=>
+          b.getClientRects().length&&/^(?:Kaynaklar|Sources)$/iu.test(String(b.innerText||"").trim()));
+        if(sidebar.length===1&&found.length===1){tab=found[0];break}
+        await sleep(100);
+      }
+      if(!tab)return{ready:false};
+      tab.click();
+      for(let n=0;n<35;n++){
+        const panels=[...document.querySelectorAll('[role="tabpanel"][id$="-sources"]')].filter(el=>
+          el.getClientRects().length);
+        if(tab.getAttribute("aria-selected")==="true"&&panels.length===1){panel=panels[0];break}
+        await sleep(100);
+      }
+      if(!panel)return{ready:false};
+      const list=[...panel.querySelectorAll('ul li[class*="project-source"]')];
+      if(list.length>=40)return{ready:false};
+      const existing=list.map(li=>String(li.querySelector('div[title]')?.getAttribute('title')||"").trim());
+      if(existing.some(x=>!x||x.length>200)||new Set(existing).size!==existing.length)return{ready:false};
+      const add=[...panel.querySelectorAll("button")].filter(b=>
+        b.getClientRects().length&&/^(?:Kaynak ekle|Add source)$/iu.test(
+          String(b.innerText||"").trim()));
+      if(add.length!==1)return{ready:false};
+      add[0].click();
+      let dialog=null;
+      for(let n=0;n<30;n++){
+        const found=[...document.querySelectorAll('[role="dialog"]')].filter(d=>
+          d.getClientRects().length&&[...d.querySelectorAll("button")].some(b=>
+            /^(?:Metin yapıştır|Paste text)$/iu.test(String(b.innerText||"").trim())));
+        if(found.length===1){dialog=found[0];break}
+        await sleep(100);
+      }
+      if(!dialog)return{ready:false};
+      const paste=[...dialog.querySelectorAll("button")].filter(b=>
+        b.getClientRects().length&&/^(?:Metin yapıştır|Paste text)$/iu.test(
+          String(b.innerText||"").trim()));
+      if(paste.length!==1)return{ready:false};
+      paste[0].click();
+      return{ready:true,existing};
+    })()`);
+        if (start?.ready !== true || !Array.isArray(start.existing) || start.existing.length >= 40
+            || start.existing.some((v) => typeof v !== "string" || !v || v.length > 200))
+            throw new Error("Provider project identity or Sources dialog was not confirmed.");
+        const staged = await evaluate(`(async()=>{
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      let dialog=null;
+      for(let n=0;n<35;n++){
+        const found=[...document.querySelectorAll('[role="dialog"]')].filter(d=>
+          d.getClientRects().length&&d.querySelector('input[name="source-title"]')
+          &&d.querySelector('textarea[name="source-text"]')
+          &&[...d.querySelectorAll('h2')].some(h=>
+            /^(?:Metin kaynağı ekle|Add text source)$/iu.test(String(h.innerText||"").trim())));
+        if(found.length===1){dialog=found[0];break}
+        await sleep(100);
+      }
+      if(!dialog)return{ready:false};
+      const input=dialog.querySelector('input[name="source-title"]');
+      const textarea=dialog.querySelector('textarea[name="source-text"]');
+      if(input.value||textarea.value)return{ready:false};
+      const setInput=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")?.set;
+      const setText=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value")?.set;
+      if(!setInput||!setText)return{ready:false};
+      setInput.call(input,${JSON.stringify(title)});
+      input.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText"}));
+      setText.call(textarea,${JSON.stringify(text)});
+      textarea.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText"}));
+      await sleep(100);
+      const buttons=[...dialog.querySelectorAll("button")].filter(b=>
+        b.getClientRects().length&&/^(?:Kaydet|Save)$/iu.test(String(b.innerText||"").trim())
+        &&!b.disabled);
+      if(input.value!==${JSON.stringify(title)}
+        ||textarea.value!==${JSON.stringify(text)}||buttons.length!==1)
+        return{ready:false};
+      const r=buttons[0].getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;
+      if(r.width<8||r.height<8||x<0||y<0||x>=innerWidth||y>=innerHeight
+        ||document.elementFromPoint(x,y)?.closest("button")!==buttons[0])
+        return{ready:false};
+      return{ready:true,x,y};
+    })()`);
+        if (staged?.ready !== true)
+            throw new Error("ChatGPT did not confirm the text source form and Save.");
+        const current = await chooseTab(Number(tabId));
+        if (current.pendingUrl || current.url !== source.url)
+            throw new Error("The original task tab changed before project source Save.");
+        submitted = true;
+        await mouse(staged.x, staged.y);
+        const saved = await evaluate(`(async()=>{
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      if(location.pathname!==${JSON.stringify("/g/" + projectId + "/project")})
+        return{ready:false};
+      for(let n=0;n<45;n++){
+        const dialogs=[...document.querySelectorAll('[role=dialog]')].filter(d=>
+          d.getClientRects().length&&d.querySelector('textarea[name="source-text"]'));
+        const panel=[...document.querySelectorAll('[role="tabpanel"][id$="-sources"]')].find(el=>
+          el.getClientRects().length);
+        if(dialogs.length||!panel){await sleep(120);continue}
+        const rows=[...panel.querySelectorAll('ul li[class*="project-source"]')];
+        const added=rows.map(li=>{
+          const name=String(li.querySelector('div[title]')?.getAttribute("title")||"").trim();
+          const labels=[...li.querySelectorAll('button[aria-label]')].map(b=>
+            String(b.getAttribute("aria-label")||""));
+          const valid=labels.some(x=>x.includes(name)&&/(?:önizleme|preview)/iu.test(x))
+            &&labels.some(x=>x.includes(name)&&/(?:işlemler|actions)/iu.test(x));
+          return{name,valid};
+        }).filter(x=>x.name&&!${JSON.stringify(start.existing)}.includes(x.name));
+        if(added.length===1&&added[0].valid&&added[0].name.length<=200)
+          return{ready:true,fileName:added[0].name};
+        if(added.length>1)return{ready:false};
+        await sleep(120);
+      }
+      return{ready:false};
+    })()`);
+        if (saved?.ready !== true || typeof saved.fileName !== "string"
+            || !saved.fileName || saved.fileName.length > 200)
+            throw new Error("Text source Save may have succeeded, but the new source card was not confirmed.");
+        // New source remains available after a fresh provider page load.
+        await send(tempId, "Page.navigate", { url: projectUrl });
+        await waitForTab(tempId, tab => tab.status === "complete" && tab.url === projectUrl, 10_000);
+        const targetFile = saved.fileName;
+        const proof = await evaluate(`(async()=>{
+      if(location.origin!=="https://chatgpt.com"
+        ||location.pathname!==${JSON.stringify("/g/" + projectId + "/project")})
+        return{ready:false};
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      let panel=null;
+      for(let n=0;n<35;n++){
+        const sidebar=[...document.querySelectorAll(
+          '[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]')].filter(el=>
+            el.getClientRects().length
+            &&el.getAttribute("data-app-action-sidebar-project-id")===${JSON.stringify(projectId)}
+            &&el.getAttribute("data-app-action-sidebar-project-label")===${JSON.stringify(name)});
+        const tab=[...document.querySelectorAll('button[role="tab"]')].filter(b=>
+          b.getClientRects().length&&/^(?:Kaynaklar|Sources)$/iu.test(String(b.innerText||"").trim()));
+        if(sidebar.length===1&&tab.length===1){
+          tab[0].click();
+          const panels=[...document.querySelectorAll('[role="tabpanel"][id$="-sources"]')].filter(el=>
+            el.getClientRects().length);
+          if(panels.length===1&&tab[0].getAttribute("aria-selected")==="true"){
+            panel=panels[0];break;
+          }
+        }
+        await sleep(100);
+      }
+      if(!panel)return{ready:false};
+      let preview=null;
+      for(let n=0;n<35;n++){
+        const rows=[...panel.querySelectorAll('ul li[class*="project-source"]')].filter(li=>
+          li.getClientRects().length
+          &&li.querySelector('div[title]')?.getAttribute("title")===${JSON.stringify(targetFile)});
+        if(rows.length===1){
+          const matches=[...rows[0].querySelectorAll('button[aria-label]')].filter(b=>
+            b.getClientRects().length
+            &&(b.getAttribute("aria-label")===(${JSON.stringify(targetFile)}+" önizlemesi")
+              ||b.getAttribute("aria-label")===(${JSON.stringify(targetFile)}+" preview")));
+          if(matches.length===1){preview=matches[0];break}
+        }
+        await sleep(100);
+      }
+      if(!preview)return{ready:false};
+      preview.click();
+      for(let n=0;n<35;n++){
+        const viewer=[...document.querySelectorAll('div[aria-label]')].filter(el=>
+          el.getClientRects().length&&el.getAttribute("aria-label")===${JSON.stringify(targetFile)}
+          &&el.querySelector('button[aria-label]'));
+        const body=viewer.flatMap(el=>[...el.querySelectorAll('div.whitespace-pre-wrap')]).filter(el=>
+          el.getClientRects().length&&String(el.innerText||"")===${JSON.stringify(text)});
+        const header=viewer.some(el=>[...el.querySelectorAll('button[aria-label]')].some(b=>
+          String(b.getAttribute("aria-label")||"").startsWith(${JSON.stringify(title)}+" ")));
+        if(body.length===1&&header)return{ready:true};
+        await sleep(100);
+      }
+      return{ready:false};
+    })()`);
+        if (proof?.ready !== true)
+            throw new Error("Source card was created, but persisted title and text could not be read back.");
+        const still = await chooseTab(Number(tabId));
+        if (still.pendingUrl || still.url !== source.url)
+            throw new Error("Original task tab changed during source creation.");
+        return { confirmed: true, projectId, name, title, fileName: targetFile };
+    }
+    catch (error) {
+        if (submitted)
+            throw new Error("Project text source may have been saved. Inspect ChatGPT before retrying. " +
+                (error instanceof Error ? error.message : "Provider confirmation unavailable."));
+        throw error;
+    }
+    finally {
+        if (tempId !== null) {
+            await detachTab(tempId).catch(() => { });
+            await tabs.remove(tempId).catch(() => { });
+        }
+    }
+}
 /** Read the connected account's visible provider composer tool menu without
  * selecting a tool, uploading a file or altering any active conversation. */
 /** Stages a provider-confirmed tool on an empty New Chat home composer.
@@ -11357,6 +11605,7 @@ const COMMANDS = {
     "chat_bridge.project": browseChatBridgeProject,
     "chat_bridge.project_create": createChatBridgeProject,
     "chat_bridge.project_instructions": editChatBridgeProjectInstructions,
+    "chat_bridge.project_text_source": addChatBridgeProjectTextSource,
     "chat_bridge.conversation_action": controlChatBridgeConversation,
     "chat_bridge.edit_message": editChatBridgeMessage,
     "chat_bridge.retry_assistant": retryChatBridgeAssistant,

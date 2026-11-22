@@ -753,6 +753,26 @@
           </div>
           <p id="native-chat-edit-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
         </dialog>
+        <dialog id="native-chat-project-text-source-dialog" class="native-chat-action-dialog" aria-labelledby="native-chat-project-text-source-title">
+          <div class="native-chat-action-head">
+            <div>
+              <p class="native-chat-action-eyebrow">ChatGPT project</p>
+              <h3 id="native-chat-project-text-source-title">Add text source</h3>
+            </div>
+            <button id="native-chat-project-text-source-close" class="icon-button" type="button" aria-label="Close text source editor">×</button>
+          </div>
+          <p id="native-chat-project-text-source-context" class="native-chat-action-subtitle"></p>
+          <p class="native-chat-action-subtitle">Saves this text in the selected ChatGPT project's Sources. Verify the project and content before confirming.</p>
+          <label class="native-chat-action-label" for="native-chat-project-text-source-name">Source title</label>
+          <input id="native-chat-project-text-source-name" class="native-chat-edit-input" type="text" maxlength="80" autocomplete="off">
+          <label class="native-chat-action-label" for="native-chat-project-text-source-text">Source text</label>
+          <textarea id="native-chat-project-text-source-text" class="native-chat-edit-input" rows="7" maxlength="12000"></textarea>
+          <div class="native-chat-action-footer">
+            <button id="native-chat-project-text-source-cancel" class="button secondary" type="button">Cancel</button>
+            <button id="native-chat-project-text-source-confirm" class="button primary" type="button" disabled>Save source in ChatGPT</button>
+          </div>
+          <p id="native-chat-project-text-source-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
+        </dialog>
         <dialog id="native-chat-project-instructions-dialog" class="native-chat-action-dialog" aria-labelledby="native-chat-project-instructions-title">
           <div class="native-chat-action-head">
             <div>

@@ -21,7 +21,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;createChatProject?:Callback|null;editChatProjectInstructions?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;createChatProject?:Callback|null;editChatProjectInstructions?:Callback|null;addChatProjectTextSource?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -312,6 +312,7 @@ export function createEquinoxLocalControlApi({
   browseChatProject = null,
   createChatProject = null,
   editChatProjectInstructions = null,
+  addChatProjectTextSource = null,
   controlChatConversation = null,
   editChatMessage = null,
   retryChatAssistant = null,
@@ -537,6 +538,22 @@ export function createEquinoxLocalControlApi({
           ||typeof body.mutationId!=="string"||!/^npi-[a-f0-9-]{36}$/u.test(body.mutationId))
           throw badRequest("The project instructions request must include exact old/new values and a receipt.");
         send(200,{ok:true,project:await editChatProjectInstructions(body)});return;
+      }
+      if(method==="POST"&&pathname==="/api/v1/chat/project_text_source"){
+        authorizeMutation();
+        if(typeof addChatProjectTextSource!=="function")
+          throw badRequest("ChatGPT project text source creation is unavailable.");
+        const body=validateExactObject(await readBody(),
+          ["projectId","name","title","text","mutationId"],"ChatGPT project text source");
+        if(typeof body.projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId)
+          ||typeof body.name!=="string"||!body.name.trim()||body.name.length>120
+          ||typeof body.title!=="string"||body.title!==body.title.trim()||!body.title
+          ||body.title.length>80||/[\r\n\x00-\x1f\x7f]/u.test(body.title)
+          ||typeof body.text!=="string"||!body.text.trim()||body.text.length>12000
+          ||/\x00/u.test(body.text)||typeof body.mutationId!=="string"
+          ||!/^nps-[a-f0-9-]{36}$/u.test(body.mutationId))
+          throw badRequest("Project text sources require exact project, title, text and one-use identity.");
+        send(200,{ok:true,project:await addChatProjectTextSource(body)});return;
       }
       if (method === "POST" && pathname === "/api/v1/chat/conversation_action") {
         authorizeMutation();
@@ -1251,7 +1268,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/project_instructions", "/api/v1/chat/conversation_action",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/project_instructions", "/api/v1/chat/project_text_source", "/api/v1/chat/conversation_action",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

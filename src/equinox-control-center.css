@@ -892,6 +892,14 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   text-overflow:ellipsis;
 }
 .native-chat-project-source-kind { color:var(--muted); }
+.native-chat-project-source-add {
+  display:inline-flex;
+  width:calc(100% - 20px);
+  min-height:30px;
+  margin:9px 10px;
+  justify-content:center;
+  font-size:11px;
+}
 
 
 .native-chat-thread-group-heading {

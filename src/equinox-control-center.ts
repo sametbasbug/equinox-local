@@ -508,6 +508,9 @@ let chatProjectCreateAttempted=false;
 let chatProjectInstructionsBusy=false;
 let chatProjectInstructionsAttempted=false;
 let chatProjectInstructionsCandidate:{projectId:string;name:string;expected:string}|null=null;
+let chatProjectTextBusy=false;
+let chatProjectTextAttempted=false;
+let chatProjectTextCandidate:{projectId:string;name:string}|null=null;
 let chatProjectError = "";
 let chatProjectGeneration = 0;
 let chatSearchQuery = "";
@@ -613,7 +616,7 @@ function renderNativeChatThreads() {
       String(thread.title || "ChatGPT conversation").toLocaleLowerCase(locale).includes(query));
   const signature = JSON.stringify([state.language, ready, query, searching,chatSearchError,
     chatProjectCatalog.map(p=>[p.id,p.name]),chatProjectId,chatProjectBusy,chatProjectError,
-    chatProjectSettings,chatProjectSources,threads.map(thread =>
+    chatProjectSettings,chatProjectSources,chatProjectTextBusy,threads.map(thread =>
     [thread.conversationId, thread.tabId, thread.title, thread.opened, thread.projectId,
       thread.projectName, isSelectedNativeChatThread(thread)])]);
   const list = $("native-chat-thread-list");
@@ -726,6 +729,14 @@ function renderNativeChatThreads() {
           const note=document.createElement("p");
           note.textContent=localizeUiText("Showing only sources visible in ChatGPT.");
           info.append(note);
+        }
+        if(chatProjectSources&&chatProjectSources.items.length<40){
+          const add=document.createElement("button");
+          add.type="button";add.className="button secondary native-chat-project-source-add";
+          add.textContent=localizeUiText("Add text source");
+          add.disabled=chatProjectTextBusy||chatProjectInstructionsBusy;
+          add.addEventListener("click",openNativeChatProjectTextSourceEditor);
+          info.append(add);
         }
         next.append(info);
       }
@@ -883,6 +894,72 @@ async function submitNativeChatProjectCreation(){
     chatProjectCreateBusy=false;
     updateNativeChatProjectCreator();
     updateNativeChatControls();
+  }
+}
+
+function nativeChatProjectTextDialog():HTMLDialogElement{
+  return $("native-chat-project-text-source-dialog") as HTMLDialogElement;
+}
+function updateNativeChatProjectTextSourceEditor(){
+  const c=chatProjectTextCandidate;
+  const title=($("native-chat-project-text-source-name") as HTMLInputElement).value.trim();
+  const content=(document.getElementById("native-chat-project-text-source-text") as HTMLTextAreaElement).value;
+  $("native-chat-project-text-source-confirm").disabled=chatProjectTextBusy
+    ||chatProjectTextAttempted||!c||!title||title.length>80
+    ||/[\r\n\x00-\x1f\x7f]/u.test(title)
+    ||!content.trim()||content.length>12000
+    ||chatProjectId!==c.projectId||chatProjectName!==c.name
+    ||!chatProjectSources||chatProjectSources.items.length>=40;
+  $("native-chat-project-text-source-close").setAttribute("aria-disabled",String(chatProjectTextBusy));
+  $("native-chat-project-text-source-cancel").setAttribute("aria-disabled",String(chatProjectTextBusy));
+}
+function openNativeChatProjectTextSourceEditor(){
+  if(chatProjectTextBusy||chatProjectBusy||chatProjectInstructionsBusy
+    ||!chatProjectId||!chatProjectName||!chatProjectSources
+    ||chatProjectSources.items.length>=40)return;
+  const dialog=nativeChatProjectTextDialog();
+  if(dialog.open)return;
+  chatProjectTextCandidate={projectId:chatProjectId,name:chatProjectName};
+  chatProjectTextAttempted=false;
+  ($("native-chat-project-text-source-name") as HTMLInputElement).value="";
+  (document.getElementById("native-chat-project-text-source-text") as HTMLTextAreaElement).value="";
+  setNativeChatCopy("native-chat-project-text-source-context",chatProjectName);
+  setNativeChatCopy("native-chat-project-text-source-status","");
+  updateNativeChatProjectTextSourceEditor();
+  dialog.showModal();
+  $("native-chat-project-text-source-name").focus();
+}
+async function submitNativeChatProjectTextSource(){
+  if(chatProjectTextBusy||chatProjectTextAttempted)return;
+  const c=chatProjectTextCandidate,dialog=nativeChatProjectTextDialog();
+  if(!c||!dialog.open||chatProjectId!==c.projectId||chatProjectName!==c.name
+    ||!chatProjectSources||chatProjectSources.items.length>=40)return;
+  const title=($("native-chat-project-text-source-name") as HTMLInputElement).value.trim();
+  const content=(document.getElementById("native-chat-project-text-source-text") as HTMLTextAreaElement).value;
+  if(!title||title.length>80||/[\r\n\x00-\x1f\x7f]/u.test(title)
+    ||!content.trim()||content.length>12000)return;
+  chatProjectTextAttempted=true;chatProjectTextBusy=true;
+  updateNativeChatProjectTextSourceEditor();
+  renderNativeChatThreads();
+  setNativeChatCopy("native-chat-project-text-source-status","Saving project text source…");
+  try{
+    const data=await mutationJson("/api/v1/chat/project_text_source","POST",{
+      projectId:c.projectId,name:c.name,title,text:content,
+      mutationId:"nps-"+crypto.randomUUID()});
+    if(data.project?.confirmed!==true||data.project.projectId!==c.projectId
+      ||data.project.name!==c.name||data.project.title!==title
+      ||typeof data.project.fileName!=="string"||!data.project.fileName)
+      throw new Error("ChatGPT did not confirm this project's persisted text source.");
+    dialog.close();
+    if(chatProjectId===c.projectId&&chatProjectName===c.name)
+      void browseNativeChatProject(c.projectId);
+    showToast(localizeUiText("Project text source saved in ChatGPT."));
+  }catch(error){
+    setNativeChatCopy("native-chat-project-text-source-status",nativeChatErrorMessage(error));
+  }finally{
+    chatProjectTextBusy=false;
+    updateNativeChatProjectTextSourceEditor();
+    renderNativeChatThreads();
   }
 }
 
@@ -6399,6 +6476,23 @@ function bindEvents() {
   $("native-chat-action-pin").addEventListener("click",()=>void applyNativeChatAction("pin"));
   $("native-chat-action-rename").addEventListener("click",()=>void applyNativeChatAction("rename"));
   $("native-chat-filter").addEventListener("input", scheduleNativeChatSearch);
+  $("native-chat-project-text-source-name").addEventListener("input",updateNativeChatProjectTextSourceEditor);
+  $("native-chat-project-text-source-text").addEventListener("input",updateNativeChatProjectTextSourceEditor);
+  $("native-chat-project-text-source-confirm").addEventListener("click",()=>void submitNativeChatProjectTextSource());
+  for(const id of ["native-chat-project-text-source-close","native-chat-project-text-source-cancel"]){
+    $(id).addEventListener("click",()=>{
+      if(!chatProjectTextBusy)nativeChatProjectTextDialog().close();
+    });
+  }
+  $("native-chat-project-text-source-dialog").addEventListener("cancel",event=>{
+    if(chatProjectTextBusy)event.preventDefault();
+  });
+  $("native-chat-project-text-source-dialog").addEventListener("close",()=>{
+    if(chatProjectTextBusy)return;
+    chatProjectTextCandidate=null;chatProjectTextAttempted=false;
+    ($("native-chat-project-text-source-name") as HTMLInputElement).value="";
+    (document.getElementById("native-chat-project-text-source-text") as HTMLTextAreaElement).value="";
+  });
   $("native-chat-project-instructions-text").addEventListener("input",updateNativeChatProjectInstructionsEditor);
   $("native-chat-project-instructions-confirm").addEventListener("click",()=>void submitNativeChatProjectInstructions());
   for(const name of ["native-chat-project-instructions-close","native-chat-project-instructions-cancel"]){

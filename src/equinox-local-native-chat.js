@@ -124,6 +124,9 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     const createAttempts = new Map();
     const projectCreateAttempts = new Map();
     const projectInstructionAttempts = new Map();
+    const projectTextAttempts = new Map();
+    let projectTextBlocked = false;
+    let projectTextAdding = false;
     let projectInstructionBlocked = false;
     let projectInstructionsUpdating = false;
     let projectCreateBlocked = false;
@@ -410,6 +413,84 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             }
         })();
         projectInstructionAttempts.set(key, { fingerprint, promise });
+        return promise;
+    };
+    const addProjectTextSource = async (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            invalid("Invalid project text source request.");
+        const body = value;
+        if (Object.keys(body).some(key => !["projectId", "name", "title", "text", "mutationId"].includes(key))
+            || typeof body.projectId !== "string" || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId)
+            || typeof body.name !== "string" || !body.name.trim() || body.name.length > 120
+            || typeof body.title !== "string" || body.title !== body.title.trim()
+            || !body.title || body.title.length > 80 || /[\r\n\x00-\x1f\x7f]/u.test(body.title)
+            || typeof body.text !== "string" || !body.text.trim() || body.text.length > 12000
+            || /\x00/u.test(body.text) || typeof body.mutationId !== "string"
+            || !/^nps-[a-f0-9-]{36}$/u.test(body.mutationId))
+            invalid("Project text source requires an exact project, title, text and one-use receipt.");
+        const key = body.mutationId, fingerprint = JSON.stringify(body);
+        const prior = projectTextAttempts.get(key);
+        if (prior) {
+            if (prior.fingerprint !== fingerprint)
+                invalid("Project source receipt cannot be reused for a different source.");
+            return prior.promise;
+        }
+        if (projectTextBlocked || projectTextAdding)
+            invalid("A project source may have been saved. Inspect ChatGPT before attempting another.");
+        if (mutatingAction || selecting || creating || sending || pending || blocked
+            || projectCreating || projectInstructionsUpdating)
+            invalid("Finish the current ChatGPT action before adding project text.");
+        if (projectTextAttempts.size >= 20)
+            invalid("Project source operation limit reached for this runtime.");
+        const browserInstanceId = context();
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            invalid("Text sources require Equinox Browser Chat Bridge v13.");
+        projectTextAdding = true;
+        mutatingAction = true;
+        let observer;
+        try {
+            const projects = await list();
+            if (projects.browserInstanceId !== browserInstanceId)
+                invalid("The personal Chrome session changed.");
+            if (!projects.projects.some(item => item.id === body.projectId && item.name === body.name))
+                invalid("The exact project is missing from the current ChatGPT sidebar.");
+            observer = selected?.tabId ?? projects.observerTabId;
+            if (!observer || browsedProject?.projectId !== body.projectId
+                || browsedProject.tabId !== observer || browsedProject.browserInstanceId !== browserInstanceId
+                || Date.now() - browsedProject.checkedAt > 5 * 60_000)
+                invalid("Browse the exact project in Native Chat before adding its source.");
+        }
+        catch (error) {
+            projectTextAdding = false;
+            mutatingAction = false;
+            throw error;
+        }
+        const revision = selectedRevision;
+        const promise = (async () => {
+            try {
+                const result = await call("chat_bridge.project_text_source", {
+                    tabId: observer, projectId: body.projectId, name: body.name,
+                    title: body.title, text: body.text, mutationId: key
+                }, 44_000);
+                if (result?.confirmed !== true || result.projectId !== body.projectId
+                    || result.name !== body.name || result.title !== body.title
+                    || typeof result.fileName !== "string" || !result.fileName
+                    || result.fileName.length > 200 || context() !== browserInstanceId
+                    || selectedRevision !== revision)
+                    invalid("The provider did not confirm the durable text source and its exact identity.");
+                return { confirmed: true, projectId: body.projectId, name: body.name,
+                    title: body.title, fileName: result.fileName };
+            }
+            catch (error) {
+                projectTextBlocked = true; // Provider may have committed just before Chrome/IPC timeout.
+                throw error;
+            }
+            finally {
+                projectTextAdding = false;
+                mutatingAction = false;
+            }
+        })();
+        projectTextAttempts.set(key, { fingerprint, promise });
         return promise;
     };
     const project = async (value) => {
@@ -1548,7 +1629,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, toolKey, fileKey, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, search, project, createProject, editProjectInstructions, conversationAction, editMessage, retryAssistant, responseVersions, branchNewChat,
+    return Object.freeze({ list, search, project, createProject, editProjectInstructions, addProjectTextSource, conversationAction, editMessage, retryAssistant, responseVersions, branchNewChat,
         branchWorkChat: (value) => branchNewChat(value, "work"),
         branchVersionChat: (value) => branchNewChat(value, "history"), tools, select, read, send, startNew, model });
 }
