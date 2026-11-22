@@ -1196,7 +1196,7 @@ function paintNativeChatFileControls() {
     $("native-chat-file-remove").disabled = chatSending || chatSelecting || chatServerSending;
     setNativeChatCopy("native-chat-file-name", chatPickedFile
         ? chatPickedFile.name + " · " + Math.ceil(chatPickedFile.size / 1024) + " KiB"
-        : chatNewDraft ? "Attach one file with your first message" : "");
+        : chatNewDraft ? "You can start a chat with one file and no text" : "");
 }
 async function pickNativeChatFile() {
     if (chatSending || chatSelecting || chatBlocked || (!chatNewDraft && !chatActive)
@@ -1282,7 +1282,7 @@ function updateNativeChatControls() {
     const allowed = !busy && !chatBlocked && (chatNewDraft
         || Boolean(chatStateAvailable && chatActive && ["ready", "complete"].includes(chatTurn)));
     composer.disabled = !allowed;
-    $("native-chat-send").disabled = !allowed || (chatNewDraft ? !composer.value.trim() : (!composer.value.trim() && !chatPickedFile))
+    $("native-chat-send").disabled = !allowed || (!composer.value.trim() && !chatPickedFile)
         || (chatNewDraft && /[\r\n]/u.test(composer.value));
     $("native-chat-new").disabled = busy || chatNewDraft || !chatStateAvailable || chatConnection !== "ready" || chatCreationBlocked
         || chatBlocked || ["waiting", "generating"].includes(chatTurn);
@@ -1298,7 +1298,7 @@ function updateNativeChatControls() {
     $("native-chat-turn").dataset.turn = turn;
     setNativeChatCopy("native-chat-turn", Object.hasOwn(NATIVE_CHAT_TURN_LABELS, turn) ? NATIVE_CHAT_TURN_LABELS[turn] : "No chat selected");
     setNativeChatCopy("native-chat-compose-hint", chatNewDraft
-        ? "First message · Single line · Up to 1,500 characters"
+        ? "First message · Single line up to 1,500 characters, or attach a file without text"
         : "Enter to send · Shift+Enter for a new line");
 }
 function appendNativeChatInline(element, text) {
@@ -2305,7 +2305,7 @@ async function sendNativeChatMessage() {
     const composer = chatComposer();
     const text = composer.value.trim();
     if (composer.disabled || chatSending || chatSelecting || chatBlocked || (!chatActive && !chatNewDraft)
-        || (chatNewDraft ? !text : (!text && !chatPickedFile)) || text.length > 4000)
+        || (!text && !chatPickedFile) || text.length > 4000)
         return;
     if (chatNewDraft && (text.length > 1500 || /[\r\n]/u.test(composer.value))) {
         setNativeChatNotice("The first message must be one line of at most 1,500 characters.");

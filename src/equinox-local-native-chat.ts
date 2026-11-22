@@ -42,7 +42,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let historyNotice:string|null=null;
   let historyPendingHydration=0;
   let pending:{userEpoch:string;previousAssistantTurnKey:string|null;deliveryId:string}|null=null;
-  let awaitingNewChatIdentity:{conversationId:string;text:string;deliveryId:string}|null=null;
+  let awaitingNewChatIdentity:{conversationId:string;text:string;fileName:string|null;deliveryId:string}|null=null;
   let sending=false;
   let creating=false;
   let previousHistoryGeneration=false;
@@ -60,7 +60,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   // An ambiguous receipt belongs to the exact conversation; sidebar navigation
   // must never reset its send fence or permit a second uncertain message.
   const uncertainConversations=new Set<string>();
-  const awaitingFirstTurns=new Map<string,{conversationId:string;text:string;deliveryId:string}>();
+  const awaitingFirstTurns=new Map<string,{conversationId:string;text:string;fileName:string|null;deliveryId:string}>();
   // Internal exact-binding association. Task Capsule's public projection
   // intentionally omits browser instance and conversation identifiers.
   const associatedTasks=new Map<string,string>();
@@ -552,7 +552,12 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
             if(!sameSelection())return staleResult();
             if(recent?.tabId!==undefined && recent.tabId!==initialBinding.tabId) throw new Error("New Chat read another Chrome tab.");
             const users=Array.isArray(recent?.items)?recent.items.filter((item:any)=>item?.role==="user"):[];
-            if(recent?.partial!==true&&users.length===1&&users[0].text?.trim()===awaiting.text){
+            const observedText=String(users[0]?.text||"").trim();
+            const fileOnlyMatches=awaiting.fileName!==null&&!awaiting.text
+              &&observedText.split(/\r?\n/u)[0]===awaiting.fileName
+              &&observedText.split(/\r?\n/u).length<=3;
+            if(recent?.partial!==true&&users.length===1
+              &&(observedText===awaiting.text||fileOnlyMatches)){
               pending={userEpoch:inspected.userEpoch,previousAssistantTurnKey:null,deliveryId:awaiting.deliveryId};
               awaitingNewChatIdentity=null;
               awaitingFirstTurns.delete(conversationKey(selected));
@@ -992,7 +997,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(Object.keys(body).some(k=>!["creationId","text","model","effort","tool","file"].includes(k))
       ||typeof body.creationId!=="string"||
       !/^nch-[a-f0-9-]{36}$/u.test(body.creationId)||typeof body.text!=="string"||
-      !body.text.trim()||body.text.length>1500||/[\r\n\0]/u.test(body.text)
+      (!body.text.trim()&&!body.file)||body.text.length>1500||/[\r\n\0]/u.test(body.text)
       ||(body.model!==undefined&&(typeof body.model!=="string"||!body.model.trim()||body.model.length>80))
       ||(body.effort!==undefined&&(!Number.isInteger(body.effort)||Number(body.effort)<0||Number(body.effort)>12))
       ||(body.tool!==undefined&&(!body.tool||typeof body.tool!=="object"||Array.isArray(body.tool)
@@ -1010,7 +1015,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         ||(body.file as any).size>100*1024*1024
         ||path.basename((body.file as any).path)!==(body.file as any).name))
       ||(body.tool!==undefined&&body.file!==undefined))
-      invalid("The first Chat message requires one safe prompt, offered tool or explicitly selected file.");
+      invalid("The first Chat message requires a safe prompt or one explicitly selected file.");
     const key=body.creationId;
     const firstMessage=(body.text as string).trim();
     const modelChoice=typeof body.model==="string"?body.model.trim():null;
@@ -1082,14 +1087,16 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         selectedRevision++;
         history=[];messages=[];historyNotice=null;historyPartial=false;blocked=false;pending=null;awaitingNewChatIdentity=null;
         const messageId=key.replace(/^nch-/u,"tgb-");
-        appendMessage({id:messageId,role:"user",text:(body.text as string).trim(),status:"sent"});
+        appendMessage({id:messageId,role:"user",
+          text:firstMessage||selectedFile?.name||"",status:"sent"});
         if(typeof opened.userEpoch==="string"&&opened.userEpoch){
           pending={userEpoch:opened.userEpoch,previousAssistantTurnKey:null,deliveryId:messageId};
         }else {
           // A confirmed new tab/conversation can still precede its first turn's
           // DOM epoch. Keep sends blocked, but resolve from exact read-only
           // Browser history on a later status poll instead of locking forever.
-          awaitingNewChatIdentity={conversationId:source.conversationId,text:firstMessage,deliveryId:messageId};
+          awaitingNewChatIdentity={conversationId:source.conversationId,text:firstMessage,
+            fileName:!firstMessage&&selectedFile?selectedFile.name:null,deliveryId:messageId};
           awaitingFirstTurns.set(conversationKey(selected),awaitingNewChatIdentity);
           blocked=true;
           historyNotice="New Chat opened. Waiting to verify its first turn in Chrome; no message will be resent.";

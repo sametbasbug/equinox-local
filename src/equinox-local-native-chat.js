@@ -589,7 +589,12 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                         if (recent?.tabId !== undefined && recent.tabId !== initialBinding.tabId)
                             throw new Error("New Chat read another Chrome tab.");
                         const users = Array.isArray(recent?.items) ? recent.items.filter((item) => item?.role === "user") : [];
-                        if (recent?.partial !== true && users.length === 1 && users[0].text?.trim() === awaiting.text) {
+                        const observedText = String(users[0]?.text || "").trim();
+                        const fileOnlyMatches = awaiting.fileName !== null && !awaiting.text
+                            && observedText.split(/\r?\n/u)[0] === awaiting.fileName
+                            && observedText.split(/\r?\n/u).length <= 3;
+                        if (recent?.partial !== true && users.length === 1
+                            && (observedText === awaiting.text || fileOnlyMatches)) {
                             pending = { userEpoch: inspected.userEpoch, previousAssistantTurnKey: null, deliveryId: awaiting.deliveryId };
                             awaitingNewChatIdentity = null;
                             awaitingFirstTurns.delete(conversationKey(selected));
@@ -1084,7 +1089,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (Object.keys(body).some(k => !["creationId", "text", "model", "effort", "tool", "file"].includes(k))
             || typeof body.creationId !== "string" ||
             !/^nch-[a-f0-9-]{36}$/u.test(body.creationId) || typeof body.text !== "string" ||
-            !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
+            (!body.text.trim() && !body.file) || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
             || (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim() || body.model.length > 80))
             || (body.effort !== undefined && (!Number.isInteger(body.effort) || Number(body.effort) < 0 || Number(body.effort) > 12))
             || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
@@ -1102,7 +1107,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 || body.file.size > 100 * 1024 * 1024
                 || path.basename(body.file.path) !== body.file.name))
             || (body.tool !== undefined && body.file !== undefined))
-            invalid("The first Chat message requires one safe prompt, offered tool or explicitly selected file.");
+            invalid("The first Chat message requires a safe prompt or one explicitly selected file.");
         const key = body.creationId;
         const firstMessage = body.text.trim();
         const modelChoice = typeof body.model === "string" ? body.model.trim() : null;
@@ -1184,7 +1189,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 pending = null;
                 awaitingNewChatIdentity = null;
                 const messageId = key.replace(/^nch-/u, "tgb-");
-                appendMessage({ id: messageId, role: "user", text: body.text.trim(), status: "sent" });
+                appendMessage({ id: messageId, role: "user",
+                    text: firstMessage || selectedFile?.name || "", status: "sent" });
                 if (typeof opened.userEpoch === "string" && opened.userEpoch) {
                     pending = { userEpoch: opened.userEpoch, previousAssistantTurnKey: null, deliveryId: messageId };
                 }
@@ -1192,7 +1198,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     // A confirmed new tab/conversation can still precede its first turn's
                     // DOM epoch. Keep sends blocked, but resolve from exact read-only
                     // Browser history on a later status poll instead of locking forever.
-                    awaitingNewChatIdentity = { conversationId: source.conversationId, text: firstMessage, deliveryId: messageId };
+                    awaitingNewChatIdentity = { conversationId: source.conversationId, text: firstMessage,
+                        fileName: !firstMessage && selectedFile ? selectedFile.name : null, deliveryId: messageId };
                     awaitingFirstTurns.set(conversationKey(selected), awaitingNewChatIdentity);
                     blocked = true;
                     historyNotice = "New Chat opened. Waiting to verify its first turn in Chrome; no message will be resent.";

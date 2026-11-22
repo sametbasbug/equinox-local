@@ -65,6 +65,8 @@ const TR_UI = Object.freeze({
   "Retry in ChatGPT": "ChatGPT'de yeniden dene",
   "Checking exact assistant response…": "Özgün ChatGPT yanıtı doğrulanıyor…",
   "ChatGPT Retry started.": "ChatGPT yanıtı yeniden oluşturuyor.",
+  "You can start a chat with one file and no text": "Yalnızca dosya ekleyerek yeni sohbet başlatabilirsin",
+  "First message · Single line up to 1,500 characters, or attach a file without text": "İlk mesaj · En fazla 1.500 karakter, tek satır; istersen yalnızca dosya ekle",
   "Edit message": "Mesajı düzenle",
   "Close message editor": "Mesaj düzenleyicisini kapat",
   "Editing an earlier message may regenerate its reply and change the conversation branch.": "Önceki bir mesajı düzenlemek yanıtı yeniden oluşturabilir ve sohbet dalını değiştirebilir.",

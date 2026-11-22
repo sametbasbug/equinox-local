@@ -177,8 +177,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             throw new Error("Telegram new-task id is invalid.");
         if (!Number.isInteger(checkpointRevision) || checkpointRevision < 1)
             throw new Error("Telegram new-task checkpoint revision is invalid.");
-        if (initialMessage !== undefined && (typeof initialMessage !== "string" || !initialMessage.trim() || initialMessage.length > 1500 || /[\r\n]/u.test(initialMessage))) {
-            throw new Error("Task chat initial message must be a nonempty single line of at most 1500 characters.");
+        if (initialMessage !== undefined && (typeof initialMessage !== "string" || (!initialMessage.trim() && !file) || initialMessage.length > 1500 || /[\r\n]/u.test(initialMessage))) {
+            throw new Error("Task chat initial message must be a single line of up to 1500 characters, or one explicitly selected file.");
         }
         if (modelChoice !== undefined && (typeof modelChoice !== "string" || !modelChoice.trim() || modelChoice.length > 80))
             throw new Error("New Chat requested an invalid model name.");
@@ -439,7 +439,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                 if(named.length!==1||form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'))
                   return{ready:false,reason:"attachment_changed",name:null,text};
               }
-              if (!text) return { ready: false, reason: "composer_empty", name: null, text };
+              if (!text && !${JSON.stringify(Boolean(file))})
+                return { ready: false, reason: "composer_empty", name: null, text };
               if (text !== ${JSON.stringify(prompt)}) return { ready: false, reason: "composer_changed", name: null, text };
               if (!button) return { ready: false, reason: buttons.length > 1 ? "send_button_ambiguous" : "send_button_missing", name: null, text };
               if (button.getAttribute('data-testid') === 'stop-button') return { ready: false, reason: "generation_active", name: null, text };

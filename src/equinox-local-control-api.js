@@ -521,7 +521,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                     throw badRequest("New Chat is unavailable.");
                 const body = validateExactObject(await readBody(), ["creationId", "text", "model", "effort", "tool", "file"], "Native New Chat");
                 if (typeof body.creationId !== "string" || !/^nch-[a-f0-9-]{36}$/u.test(body.creationId) ||
-                    typeof body.text !== "string" || !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
+                    typeof body.text !== "string" || (!body.text.trim() && !body.file) || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
                     || (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim() || body.model.length > 80))
                     || (body.effort !== undefined && (!Number.isInteger(body.effort) || Number(body.effort) < 0 || Number(body.effort) > 12))
                     || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
@@ -537,7 +537,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                         || !Number.isSafeInteger(body.file.size) || body.file.size < 1
                         || body.file.size > 100 * 1024 * 1024))
                     || (body.tool !== undefined && body.file !== undefined))
-                    throw badRequest("New Chat requires a unique initial prompt, offered tool or selected local file.");
+                    throw badRequest("New Chat requires a prompt, or one explicitly selected file without text.");
                 const creation = await startNewChat(body);
                 state.mutationCount += 1;
                 send(200, { ok: true, creation });

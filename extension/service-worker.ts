@@ -2736,11 +2736,11 @@ async function stageChatBridgeNewComposer({
   filePath?:unknown;fileName?:unknown;fileSize?:unknown;
 }={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1
-    ||typeof text!=="string"||!text.trim()||text.length>1500||/[\r\n]/u.test(text)
+    ||typeof text!=="string"||(!text.trim()&&filePath===undefined)||text.length>1500||/[\r\n]/u.test(text)
     ||(toolName!==undefined&&(typeof toolName!=="string"||!toolName.trim()
       ||toolName.length>90||!["tool","app"].includes(String(toolKind))))
     ||(toolName===undefined&&toolKind!==undefined))
-    throw new Error("New Chat staging requires exact tab, prompt and selected tool or file.");
+    throw new Error("New Chat staging requires an exact tab plus a prompt or selected file.");
   const hint=toolKind==="tool"
     ?(/^(Web search|Web araması)$/iu.test(String(toolName))?"search"
       :/^(Create image|Görsel oluştur)$/iu.test(String(toolName))?"picture_v2":null)
@@ -2930,7 +2930,7 @@ async function stageChatBridgeNewComposer({
     if (focusResult?.exceptionDetails || cdpObject(focusResult?.result?.value)?.focused !== true) {
       throw new Error(focusResult?.exceptionDetails?.exception?.description || focusResult?.exceptionDetails?.text || "Chat Bridge could not focus the ChatGPT composer.");
     }
-    await send(id,"Input.insertText",{text:String(text).trim()});
+    if(String(text).trim())await send(id,"Input.insertText",{text:String(text).trim()});
     const confirmed=await send(id,"Runtime.evaluate",{
       expression:`(() => {
         if(location.origin!=='https://chatgpt.com'||location.pathname!=='/'
