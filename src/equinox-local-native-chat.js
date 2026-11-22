@@ -135,6 +135,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     const actionAttempts = new Map();
     const branchAttempts = new Map();
     const retryAttempts = new Map();
+    const stopAttempts = new Map();
     const editAttempts = new Map();
     let mutatingAction = false;
     function appendMessage(message) {
@@ -989,6 +990,81 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             turn, sending, blocked, creationBlocked, taskId, messageEditAllowed,
             preview, notice: notice || historyNotice, limitedHistory: historyPartial || !history.length, historyCount: history.length };
     };
+    const stopGeneration = async (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            invalid("Invalid Stop response request.");
+        const body = value;
+        if (Object.keys(body).some(key => !["tabId", "conversationId", "mutationId"].includes(key))
+            || !Number.isSafeInteger(body.tabId) || Number(body.tabId) < 1
+            || typeof body.conversationId !== "string"
+            || !/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
+            || typeof body.mutationId !== "string"
+            || !/^msp-[a-f0-9-]{36}$/u.test(body.mutationId))
+            invalid("Stop response requires the exact selected conversation and one-use identity.");
+        const id = body.mutationId, prior = stopAttempts.get(id);
+        if (prior) {
+            if (!selected || prior.conversationKey !== conversationKey(selected)
+                || prior.tabId !== selected.tabId || selected.tabId !== body.tabId
+                || selected.conversationId !== body.conversationId)
+                invalid("Stop response identity cannot be reused for another conversation.");
+            return prior.promise;
+        }
+        if (stopAttempts.size >= 256)
+            invalid("The current Native Chat session reached its bounded Stop limit.");
+        if (!selected || selecting || sending || creating || blocked || mutatingAction
+            || selected.tabId !== body.tabId || selected.conversationId !== body.conversationId)
+            invalid("Select one active, unblocked ChatGPT conversation before stopping a reply.");
+        const binding = selected, revision = selectedRevision;
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            invalid("Update Equinox Browser before using Stop response.");
+        const observed = await chatBridge.inspectTurnIdentity({ binding });
+        if (selectedRevision !== revision || !selected || selected.tabId !== binding.tabId
+            || conversationKey(selected) !== conversationKey(binding)
+            || sending || creating || blocked || mutatingAction
+            || observed?.generationActive !== true
+            || observed?.binding?.tabId !== binding.tabId
+            || observed?.binding?.conversationId !== binding.conversationId
+            || observed?.binding?.browserInstanceId !== binding.browserInstanceId)
+            invalid("The selected ChatGPT response is not actively generating.");
+        mutatingAction = true;
+        const promise = (async () => {
+            try {
+                const result = await call("chat_bridge.stop_generation", {
+                    tabId: binding.tabId, conversationId: binding.conversationId, mutationId: id,
+                }, 12_000);
+                if (selectedRevision !== revision || !selected
+                    || selected.tabId !== binding.tabId || conversationKey(selected) !== conversationKey(binding)
+                    || result?.tabId !== binding.tabId || result?.conversationId !== binding.conversationId)
+                    throw new Error("Stop response lost its exact Chrome conversation binding.");
+                if (result?.confirmed !== true || result?.stopped !== true) {
+                    if (result?.notSubmitted === true) {
+                        const err = new Error("ChatGPT no longer offered Stop for this exact response. Refresh the conversation.");
+                        err.statusCode = 409;
+                        throw err;
+                    }
+                    throw new Error("Stop may have been clicked. Check the actual ChatGPT response in Chrome.");
+                }
+                // The interruption ends the pending reply, but it must NOT fabricate
+                // assistant text or replay a send. Hydrate provider-rendered history.
+                pending = null;
+                historyPendingHydration = 5;
+                previousHistoryGeneration = false;
+                return { confirmed: true, stopped: true, chat: await read() };
+            }
+            catch (error) {
+                if (error?.statusCode !== 409) {
+                    blocked = true;
+                    uncertainConversations.add(conversationKey(binding));
+                }
+                throw error;
+            }
+            finally {
+                mutatingAction = false;
+            }
+        })();
+        stopAttempts.set(id, { conversationKey: conversationKey(binding), tabId: binding.tabId, promise });
+        return promise;
+    };
     const tools = async () => {
         const instance = context();
         if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
@@ -1629,7 +1705,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, toolKey, fileKey, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, search, project, createProject, editProjectInstructions, addProjectTextSource, conversationAction, editMessage, retryAssistant, responseVersions, branchNewChat,
+    return Object.freeze({ list, search, project, createProject, editProjectInstructions, addProjectTextSource, conversationAction, editMessage, retryAssistant, stopGeneration, responseVersions, branchNewChat,
         branchWorkChat: (value) => branchNewChat(value, "work"),
         branchVersionChat: (value) => branchNewChat(value, "history"), tools, select, read, send, startNew, model });
 }

@@ -11,6 +11,7 @@ export function localeForLanguage(language:unknown):"tr-TR"|"en-US" {
 
 const TR_UI = Object.freeze({
   "Chat": "Sohbet",
+  "Stop response": "Yanıtı durdur",
   // Native Chat workspace actions and status labels.
   "Copy": "Kopyala",
   "Copy message": "Mesajı kopyala",

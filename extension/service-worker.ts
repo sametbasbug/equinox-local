@@ -4712,6 +4712,93 @@ async function retryChatBridgeAssistant({tabId,conversationId,messageId,expected
   }finally{scheduleDetach(id,CONTINUATION_MUTATION_DETACH_MS);}
 }
 
+/** Interrupt only one confirmed in-progress response in the exact existing user tab.
+ * This is NOT the global Equinox Emergency Stop and never retries a click. */
+async function stopChatBridgeGeneration({tabId,conversationId,mutationId}:{
+  tabId?:unknown;conversationId?:unknown;mutationId?:unknown;
+}={}){
+  if(!Number.isSafeInteger(tabId)||Number(tabId)<1
+    ||typeof conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
+    ||typeof mutationId!=="string"||!/^msp-[a-f0-9-]{36}$/u.test(mutationId))
+    throw new Error("Stopping a ChatGPT response requires an exact tab, conversation and one-use identifier.");
+  const id=Number(tabId);
+  const tab=await chooseTab(id);
+  if(tab.pendingUrl||chatGptConversationIdentity(tab)?.conversationId!==conversationId)
+    throw new Error("The selected ChatGPT conversation changed before Stop.");
+  const before=await chatGptContinuationState(id);
+  if(before.conversationId!==conversationId||!before.generationActive||!before.userEpoch)
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+      confirmed:false,notSubmitted:true,reason:"no_active_generation"};
+  await requireDebuggableTab(id);
+  await attachTab(id);
+  let clickBoundary=false;
+  try{
+    const preflight=await send(id,"Runtime.evaluate",{
+      expression:String.raw`(()=>{
+        if(location.origin!=='https://chatgpt.com'
+          ||location.pathname.split('/').at(-1)!==${JSON.stringify(conversationId)})
+          return{ready:false};
+        const turnKey=String([...document.querySelectorAll('[data-turn-key]')]
+          .at(-1)?.getAttribute('data-turn-key')||'').trim().split(/\s+/u)[0];
+        const buttons=[...document.querySelectorAll('button[data-testid="stop-button"]')]
+          .filter(b=>b.getClientRects().length
+            &&!b.disabled&&b.getAttribute('aria-disabled')!=='true');
+        return{ready:turnKey===${JSON.stringify(before.userEpoch)}
+          &&buttons.length===1};
+      })()`,
+      returnByValue:true,silent:true
+    });
+    if(preflight?.exceptionDetails||cdpObject(preflight?.result?.value)?.ready!==true)
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+        confirmed:false,notSubmitted:true,reason:"stop_control_unavailable"};
+    if(!await claimChatBridgeReceipt(String(mutationId)))
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+        confirmed:false,duplicatePrevented:true};
+    const fresh=await chatGptContinuationState(id);
+    if(fresh.conversationId!==conversationId||fresh.userEpoch!==before.userEpoch
+      ||fresh.assistantTurnKey!==before.assistantTurnKey||!fresh.generationActive)
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+        confirmed:false,notSubmitted:true,reason:"generation_changed_before_click"};
+    // From this point an uncertain result is never safe to replay.
+    clickBoundary=true;
+    const clicked=await send(id,"Runtime.evaluate",{
+      expression:String.raw`(()=>{
+        if(location.origin!=='https://chatgpt.com'
+          ||location.pathname.split('/').at(-1)!==${JSON.stringify(conversationId)})
+          return{clicked:false};
+        const turnKey=String([...document.querySelectorAll('[data-turn-key]')]
+          .at(-1)?.getAttribute('data-turn-key')||'').trim().split(/\s+/u)[0];
+        const buttons=[...document.querySelectorAll('button[data-testid="stop-button"]')]
+          .filter(b=>b.getClientRects().length
+            &&!b.disabled&&b.getAttribute('aria-disabled')!=='true');
+        if(turnKey!==${JSON.stringify(before.userEpoch)}||buttons.length!==1)
+          return{clicked:false};
+        buttons[0].click();
+        return{clicked:true};
+      })()`,returnByValue:true,silent:true});
+    if(clicked?.exceptionDetails||cdpObject(clicked?.result?.value)?.clicked!==true)
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+        confirmed:false,ambiguous:true,reason:"stop_click_unconfirmed"};
+    for(let n=0;n<20;n++){
+      const current=await chooseTab(id);
+      if(current.pendingUrl||chatGptConversationIdentity(current)?.conversationId!==conversationId)
+        break;
+      const state=await chatGptContinuationState(id);
+      if(state.conversationId!==conversationId||state.userEpoch!==before.userEpoch)
+        break;
+      if(!state.generationActive)return{chatBridgeVersion:CHAT_BRIDGE_VERSION,
+        tabId:id,conversationId,confirmed:true,stopped:true};
+      await new Promise(resolve=>setTimeout(resolve,125));
+    }
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+      confirmed:false,ambiguous:true,reason:"stop_not_confirmed"};
+  }catch{
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+      confirmed:false,ambiguous:clickBoundary,notSubmitted:!clickBoundary,
+      reason:clickBoundary?"stop_uncertain":"stop_not_submitted"};
+  }finally{scheduleDetach(id,CONTINUATION_MUTATION_DETACH_MS);}
+}
+
 /** Open the provider's exact New-chat or Work branch, never a simulated copy. */
 async function branchChatBridgeAssistant({tabId,conversationId,messageId,expectedText,firstMessage,mutationId,branchMode="new",versionMessageId,versionText}:{
   tabId?:unknown;conversationId?:unknown;messageId?:unknown;expectedText?:unknown;firstMessage?:unknown;mutationId?:unknown;branchMode?:"new"|"work"|"history";versionMessageId?:unknown;versionText?:unknown;
@@ -12042,6 +12129,7 @@ const COMMANDS = {
   "chat_bridge.conversation_action": controlChatBridgeConversation,
   "chat_bridge.edit_message": editChatBridgeMessage,
   "chat_bridge.retry_assistant": retryChatBridgeAssistant,
+  "chat_bridge.stop_generation": stopChatBridgeGeneration,
   "chat_bridge.branch_new_chat": (args:any)=>branchChatBridgeAssistant({...args,branchMode:"new"}),
   "chat_bridge.branch_work_chat": (args:any)=>branchChatBridgeAssistant({...args,branchMode:"work"}),
   "chat_bridge.branch_version_new": (args:any)=>branchChatBridgeAssistant({...args,branchMode:"history"}),

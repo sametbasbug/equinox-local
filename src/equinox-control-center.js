@@ -433,6 +433,7 @@ let chatRefreshingThreads = false;
 let chatThreadRefreshRequested = false;
 let chatThreadsCheckedAt = 0;
 let chatSending = false;
+let chatStopBusy = false;
 let chatSelecting = false;
 let chatSelectionGeneration = 0;
 let chatNewDraft = false;
@@ -1761,6 +1762,16 @@ function updateNativeChatControls() {
     composer.disabled = !allowed;
     $("native-chat-send").disabled = !allowed || (!composer.value.trim() && !chatPickedFiles.length)
         || (chatNewDraft && /[\r\n]/u.test(composer.value));
+    const stopButton = $("native-chat-stop-generation");
+    const stopLabel = localizeUiText("Stop response");
+    stopButton.title = stopLabel;
+    stopButton.setAttribute("aria-label", stopLabel);
+    const stopAvailable = chatStateAvailable && !chatNewDraft && Boolean(chatActive)
+        && !chatStopBusy && !busy && !chatBlocked && chatTurn === "generating"
+        && Number(state.status?.browser?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) >= 13;
+    stopButton.hidden = !stopAvailable;
+    stopButton.disabled = !stopAvailable;
+    $("native-chat-send").hidden = stopAvailable;
     $("native-chat-new").disabled = busy || chatNewDraft || !chatStateAvailable || chatConnection !== "ready" || chatCreationBlocked
         || chatBlocked || ["waiting", "generating"].includes(chatTurn);
     $("native-chat-project-create").disabled = busy || chatProjectCreateBusy || chatProjectBusy
@@ -3041,6 +3052,40 @@ async function selectNativeChat(thread) {
         updateNativeChatControls();
         if (chatThreadRefreshRequested)
             void refreshNativeChat();
+    }
+}
+async function stopNativeChatResponse() {
+    const binding = chatActive;
+    if (!binding || chatStopBusy || chatSending || chatSelecting || chatBlocked
+        || chatNewDraft || chatTurn !== "generating"
+        || $("native-chat-stop-generation").disabled)
+        return;
+    const generation = chatSelectionGeneration;
+    chatStopBusy = true;
+    updateNativeChatControls();
+    try {
+        const result = await mutationJson("/api/v1/chat/stop_generation", "POST", {
+            tabId: binding.tabId, conversationId: binding.conversationId,
+            mutationId: "msp-" + crypto.randomUUID(),
+        });
+        if (generation !== chatSelectionGeneration
+            || chatConversationKey(chatActive) !== chatConversationKey(binding)
+            || chatActive?.tabId !== binding.tabId)
+            return;
+        if (result.stopped?.confirmed !== true || result.stopped?.stopped !== true)
+            throw new Error("Stop was not confirmed. Inspect the active response in ChatGPT before another action.");
+        renderNativeChatState(result.stopped.chat);
+        setNativeChatNotice("ChatGPT response stopped.");
+    }
+    catch (error) {
+        if (generation === chatSelectionGeneration
+            && chatConversationKey(chatActive) === chatConversationKey(binding)
+            && chatActive?.tabId === binding.tabId)
+            setNativeChatNotice(nativeChatErrorMessage(error));
+    }
+    finally {
+        chatStopBusy = false;
+        updateNativeChatControls();
     }
 }
 function beginNewNativeChat({ quietDiscovery = false } = {}) {
@@ -7114,6 +7159,7 @@ function bindEvents() {
     });
     $("native-chat-new").addEventListener("click", () => beginNewNativeChat());
     $("native-chat-cancel-new").addEventListener("click", cancelNewNativeChat);
+    $("native-chat-stop-generation").addEventListener("click", () => void stopNativeChatResponse());
     $("native-chat-form").addEventListener("submit", event => {
         event.preventDefault();
         void sendNativeChatMessage();

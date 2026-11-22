@@ -21,7 +21,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;createChatProject?:Callback|null;editChatProjectInstructions?:Callback|null;addChatProjectTextSource?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;createChatProject?:Callback|null;editChatProjectInstructions?:Callback|null;addChatProjectTextSource?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;stopChatGeneration?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -316,6 +316,7 @@ export function createEquinoxLocalControlApi({
   controlChatConversation = null,
   editChatMessage = null,
   retryChatAssistant = null,
+  stopChatGeneration = null,
   branchChatAssistant = null,
   branchWorkAssistant = null,
   branchVersionAssistant = null,
@@ -617,6 +618,21 @@ export function createEquinoxLocalControlApi({
           throw badRequest("Retry requires an exact response and a one-use mutation identifier.");
         const retry=await retryChatAssistant(body);
         state.mutationCount+=1;send(200,{ok:true,retry});return;
+      }
+      if(method==="POST"&&pathname==="/api/v1/chat/stop_generation"){
+        authorizeMutation();
+        if(typeof stopChatGeneration!=="function")
+          throw badRequest("Native Chat Stop response is unavailable.");
+        const body=validateExactObject(await readBody(),
+          ["tabId","conversationId","mutationId"],"Native Chat Stop response");
+        if(!Number.isSafeInteger(body.tabId)||body.tabId<1
+          ||typeof body.conversationId!=="string"
+          ||!/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
+          ||typeof body.mutationId!=="string"
+          ||!/^msp-[a-f0-9-]{36}$/u.test(body.mutationId))
+          throw badRequest("Stop requires one exact selected Chrome conversation and one-use identity.");
+        const stopped=await stopChatGeneration(body);
+        state.mutationCount+=1;send(200,{ok:true,stopped});return;
       }
       if(method==="POST"&&pathname==="/api/v1/chat/response_versions"){
         authorizeMutation(); // Private user's Chrome UI modal is opened and closed for this read.
@@ -1268,7 +1284,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/project_instructions", "/api/v1/chat/project_text_source", "/api/v1/chat/conversation_action", "/api/v1/chat/message_edit", "/api/v1/chat/retry_assistant", "/api/v1/chat/response_versions", "/api/v1/chat/branch_new", "/api/v1/chat/branch_work", "/api/v1/chat/branch_version",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/project_instructions", "/api/v1/chat/project_text_source", "/api/v1/chat/conversation_action", "/api/v1/chat/message_edit", "/api/v1/chat/retry_assistant", "/api/v1/chat/stop_generation", "/api/v1/chat/response_versions", "/api/v1/chat/branch_new", "/api/v1/chat/branch_work", "/api/v1/chat/branch_version",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",
