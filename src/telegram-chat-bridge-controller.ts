@@ -197,7 +197,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         text: message,
         ...(tool?{toolName:tool.name,toolKind:tool.kind}:{}),
         ...(file?{filePath:file.path,fileName:file.name,fileSize:file.size}:{}),
-      }, file?75_000:tool?16_000:10_000) as BrowserResult | null;
+      }, file?75_000:tool?16_000:10_000) as (BrowserResult & {
+        notSubmitted?:boolean;ambiguous?:boolean;stage?:string}) | null;
       if (result?.confirmed === true) {
         if (typeof result.userEpoch !== "string" || typeof result.previousAssistantTurnKey !== "string") {
           const error = new Error("Telegram Chat Bridge delivery confirmation is missing turn identity.") as CodedError;
@@ -212,6 +213,11 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
           previousAssistantTurnKey: result.previousAssistantTurnKey,
           tabId: target.tabId,
         });
+      }
+      if(result?.notSubmitted===true&&result?.ambiguous===false){
+        const error=new Error("ChatGPT did not accept the selected tool or attachment before submission. No message was sent. Inspect and clear any unsent Chrome draft before trying again.") as CodedError;
+        error.code="CHAT_BRIDGE_NOT_READY";
+        throw error;
       }
       if (result?.duplicatePrevented === true) return Object.freeze({ confirmed: false, duplicatePrevented: true, deliveryId });
       const stage = typeof result?.stage === "string" ? result.stage.slice(0, 80) : "unknown";

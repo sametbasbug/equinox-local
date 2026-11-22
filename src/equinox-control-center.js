@@ -482,6 +482,7 @@ let chatToolCatalog = [];
 let chatToolSelection = null;
 let chatToolCatalogBusy = false;
 let chatToolCatalogBrowserInstance = null;
+let chatToolAutoAttemptInstance = null;
 // Only the provider's verified inline Search pill has an accepted send path.
 // Other tools/apps are discoverable, not falsely advertised as working.
 function nativeChatInlineToolSupported(value) {
@@ -1159,7 +1160,8 @@ function paintNativeChatToolControls() {
     const canChoose = !chatNewDraft && !chatBlocked && !busy && !chatPickedFile && chatConnection === "ready"
         && Boolean(chatActive) && ["ready", "complete"].includes(chatTurn);
     const current = chatToolSelection ? chatToolSelection.kind + ":" + chatToolSelection.name : "";
-    const options = [new Option(localizeUiText("No tool"), ""), ...chatToolCatalog.map(item => {
+    const offered = chatToolCatalogBrowserInstance === chatThreadBrowserInstanceId ? chatToolCatalog : [];
+    const options = [new Option(localizeUiText("No tool"), ""), ...offered.map(item => {
             const supported = nativeChatInlineToolSupported(item);
             const option = new Option((item.kind === "app" ? localizeUiText("Connected app") : localizeUiText("Account tool"))
                 + " · " + item.name + (supported ? "" : " · " + localizeUiText("Not yet supported")), item.kind + ":" + item.name);
@@ -1169,17 +1171,17 @@ function paintNativeChatToolControls() {
     const prior = Array.from(combo.options).map(x => x.value).join("|");
     if (prior !== options.map(x => x.value).join("|"))
         combo.replaceChildren(...options);
-    combo.value = chatToolCatalog.some(item => item.kind + ":" + item.name === current
+    combo.value = offered.some(item => item.kind + ":" + item.name === current
         && nativeChatInlineToolSupported(item)) ? current : "";
-    combo.disabled = !canChoose || !chatToolCatalog.length;
+    combo.disabled = !canChoose || !offered.length;
     $("native-chat-tool-refresh").disabled = busy || chatNewDraft || !chatActive;
     setNativeChatCopy("native-chat-tool-status", chatNewDraft
         ? "Tools are unavailable for New Chat first messages"
         : chatToolCatalogBusy ? "Tool options are loading…"
             : chatToolSelection ? "ChatGPT will confirm the chosen tool before sending"
-                : chatToolCatalog.length ? "Tool selection applies to the next message" : "");
+                : offered.length ? "Tool selection applies to the next message" : "");
 }
-async function refreshNativeChatToolCatalog() {
+async function refreshNativeChatToolCatalog(quiet = false) {
     if (chatToolCatalogBusy || chatNewDraft || !chatActive)
         return;
     chatToolCatalogBusy = true;
@@ -1201,7 +1203,7 @@ async function refreshNativeChatToolCatalog() {
             chatToolSelection = null;
     }
     catch (error) {
-        if (generation === chatSelectionGeneration)
+        if (generation === chatSelectionGeneration && !quiet)
             showToast(nativeChatErrorMessage(error));
     }
     finally {
@@ -1717,7 +1719,14 @@ async function refreshNativeChat(withThreads = false) {
                 return;
             chatThreadList = Array.isArray(result.chat?.threads) ? result.chat.threads : [];
             chatProjectCatalog = Array.isArray(result.chat?.projects) ? result.chat.projects : [];
-            chatThreadBrowserInstanceId = typeof result.chat?.browserInstanceId === "string" ? result.chat.browserInstanceId : null;
+            const nextInstance = typeof result.chat?.browserInstanceId === "string"
+                ? result.chat.browserInstanceId : null;
+            if (nextInstance !== chatThreadBrowserInstanceId) {
+                chatToolCatalog = [];
+                chatToolSelection = null;
+                chatToolCatalogBrowserInstance = null;
+            }
+            chatThreadBrowserInstanceId = nextInstance;
             chatDuplicateCount = Number.isSafeInteger(result.chat?.duplicateCount) ? Math.max(0, result.chat.duplicateCount) : 0;
             chatHistoryPartial = result.chat?.partial === true;
             chatConnection = "ready";
@@ -1729,6 +1738,14 @@ async function refreshNativeChat(withThreads = false) {
         if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
             return;
         renderNativeChatState(result.chat);
+        const instance = chatThreadBrowserInstanceId;
+        if (instance && chatActive && !chatNewDraft && !chatToolCatalogBusy
+            && chatToolAutoAttemptInstance !== instance) {
+            chatToolAutoAttemptInstance = instance;
+            // One background discovery per browser session. The manual refresh
+            // control remains available when the provider cannot offer tools yet.
+            void refreshNativeChatToolCatalog(true);
+        }
     }
     catch (error) {
         if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)

@@ -2083,6 +2083,9 @@ async function deliverChatBridgeMessage({
       throw new Error(`Chat Bridge could not focus the trusted Send button: ${reason}.`);
     }
     stage = "submit_focused";
+    // Reserve the irreversible send boundary BEFORE dispatching Enter.
+    // The keyboard operation can partially deliver and then throw.
+    stage = "submission_attempted";
     await dispatchKeyChord(tabId, "Enter");
     stage = "submitted_keyboard";
 
@@ -2117,7 +2120,19 @@ async function deliverChatBridgeMessage({
       ambiguous: true,
       stage,
     };
-  } finally {
+  }catch(error){
+    // Until the single trusted Enter/Send boundary, the provider draft may
+    // have changed, but the user's message was definitely NOT submitted.
+    // Return this proof distinctly from a timeout after the irreversible send.
+    if(stage!=="submission_attempted"
+      &&stage!=="submitted_keyboard"&&stage!=="epoch_confirmed"){
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,deliveryId,tabId,
+        confirmed:false,duplicatePrevented:false,ambiguous:false,
+        notSubmitted:true,stage,
+        reason:"provider_composer_not_ready"};
+    }
+    throw error;
+  }finally{
     scheduleDetach(tabId, CONTINUATION_MUTATION_DETACH_MS);
   }
 }

@@ -152,6 +152,11 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                     tabId: target.tabId,
                 });
             }
+            if (result?.notSubmitted === true && result?.ambiguous === false) {
+                const error = new Error("ChatGPT did not accept the selected tool or attachment before submission. No message was sent. Inspect and clear any unsent Chrome draft before trying again.");
+                error.code = "CHAT_BRIDGE_NOT_READY";
+                throw error;
+            }
             if (result?.duplicatePrevented === true)
                 return Object.freeze({ confirmed: false, duplicatePrevented: true, deliveryId });
             const stage = typeof result?.stage === "string" ? result.stage.slice(0, 80) : "unknown";
