@@ -680,7 +680,10 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             error.code = "CHAT_BRIDGE_DRIFTED";
             throw error;
         }
-        if (result?.status !== "ready" || typeof result.text !== "string" || !result.text.trim() || typeof result.assistantTurnKey !== "string") {
+        if (result?.status !== "ready" || typeof result.text !== "string"
+            || (!result.text.trim() && result.hasRichMedia !== true)
+            || (result.hasRichMedia !== undefined && typeof result.hasRichMedia !== "boolean")
+            || typeof result.assistantTurnKey !== "string") {
             const error = new Error("Telegram Chat Bridge returned an invalid final-response payload.");
             error.code = "CHAT_BRIDGE_READ_FAILED";
             throw error;
@@ -691,6 +694,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             assistantTurnKey: result.assistantTurnKey,
             truncated: result.truncated === true,
             richText: validateChatRichText(result.richText, 14_000),
+            hasRichMedia: result.hasRichMedia === true,
             tabId: target.tabId,
         });
     };

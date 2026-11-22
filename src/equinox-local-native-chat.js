@@ -946,7 +946,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                         const reply = result.text;
                         appendMessage({ id: receipt.deliveryId + "-reply", role: "assistant", text: reply.slice(0, MAX_ASSISTANT_CHARS), status: "complete",
                             truncated: result.truncated === true || reply.length > MAX_ASSISTANT_CHARS,
-                            richText: typeof result.richText === "string" && [...result.richText].length <= 14000 ? result.richText : null });
+                            richText: typeof result.richText === "string" && [...result.richText].length <= 14000 ? result.richText : null,
+                            hasRichMedia: result.hasRichMedia === true });
                         pending = null;
                     }
                     turn = "complete";

@@ -2159,6 +2159,17 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw `const projectChatBridgeRichT
   if (!actual || projected.replace(/\s+/g,'') !== actual.replace(/\s+/g,'')) return null;
   return formatted;
 };
+// A small citation favicon must not be mistaken for a generated image.
+// Only genuinely displayed media is marked, never its URL or source HTML.
+const hasChatBridgeVisibleMedia = (scope) => [...scope.querySelectorAll('img,video,canvas,iframe,math')]
+  .some(node => {
+    if (!node.getClientRects().length || node.closest('[aria-hidden="true"]')) return false;
+    if (node.tagName === 'IMG') {
+      const box=node.getBoundingClientRect();
+      return box.width >= 48 && box.height >= 48;
+    }
+    return true;
+  });
 // Exclude the speaker heading ONLY when the real DOM labels it as
 // accessibility-only H4. A reply that quotes those words remains untouched.
 const readChatBridgeVisibleText = (scope) => {
@@ -5197,8 +5208,7 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         const attachments=role==='user'?readUserAttachments(content):null;
         const raw=role==='assistant'?readChatBridgeVisibleText(content):
           String(content.innerText||content.textContent||'').trim();
-        const hasRichMedia=role==='assistant'&&[...content.querySelectorAll('img,video,canvas,iframe,math')]
-          .some(node=>node.getClientRects().length>0&&!node.closest('[aria-hidden="true"]'));
+        const hasRichMedia=role==='assistant'&&hasChatBridgeVisibleMedia(content);
         if(!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount&&!hasRichMedia)continue;
         const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const id=String(unit.getAttribute('data-chatgpt-search-message-ids')||turn.getAttribute('data-turn-key')||'').split(/\s+/u)[0].slice(0,200);
@@ -5220,8 +5230,7 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         const attachments=role==='user'?readUserAttachments(unit):null;
         const raw=role==='assistant'?readChatBridgeVisibleText(unit):
           String(unit.innerText||unit.textContent||'').trim();
-        const hasRichMedia=role==='assistant'&&[...unit.querySelectorAll('img,video,canvas,iframe,math')]
-          .some(node=>node.getClientRects().length>0&&!node.closest('[aria-hidden="true"]'));
+        const hasRichMedia=role==='assistant'&&hasChatBridgeVisibleMedia(unit);
         if((!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount&&!hasRichMedia)||remaining<=0)continue;
         const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const richText=role==='assistant'&&chars.length<=limit
@@ -5379,7 +5388,8 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
           : (legacyRoot.matches('[data-message-author-role="assistant"]')
             ? legacyRoot : (legacyRoot.querySelector('[data-message-author-role="assistant"]') || legacyRoot));
         const raw = readChatBridgeVisibleText(body);
-        if (!raw) return { found: true, empty: true };
+        const hasRichMedia = hasChatBridgeVisibleMedia(body);
+        if (!raw && !hasRichMedia) return { found: true, empty: true };
         const chars = [...raw];
         const maxChars = 12000;
         const richText=chars.length<=maxChars?projectChatBridgeRichText(body,14000):null;
@@ -5389,6 +5399,7 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
           text: chars.slice(0, maxChars).join(''),
           truncated: chars.length > maxChars,
           richText,
+          hasRichMedia,
           messageIdentity:modernAssistant?.getAttribute('data-chatgpt-search-message-ids')
             ||legacyRoot?.getAttribute('data-message-id')||legacyRoot?.getAttribute('data-testid')||null,
         };
@@ -5398,7 +5409,9 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
         if (result?.exceptionDetails)
             throw new Error(result.exceptionDetails.text || "Chat Bridge final response read failed.");
         const value = cdpObject(result?.result?.value);
-        if (!value?.found || value.empty || typeof value.text !== "string" || !value.text.trim()) {
+        if (!value?.found || value.empty || typeof value.text !== "string"
+            || typeof value.hasRichMedia !== "boolean"
+            || (!value.text.trim() && !value.hasRichMedia)) {
             return { chatBridgeVersion: CHAT_BRIDGE_VERSION, status: "waiting" };
         }
         const after = await chooseTab(tabId);
@@ -5429,6 +5442,7 @@ async function readChatBridgeFinalResponse({ tabId, conversationId, userEpoch, p
             text: value.text,
             truncated: value.truncated === true,
             richText: typeof value.richText === "string" && [...value.richText].length <= 14000 ? value.richText : null,
+            hasRichMedia: value.hasRichMedia === true,
         };
     }
     finally {
