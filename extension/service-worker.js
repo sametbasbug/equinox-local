@@ -2476,7 +2476,7 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
         || typeof canonicalUrl !== "string" || canonicalUrl.length > 400
         || chatGptConversationIdentity(canonicalUrl)?.conversationId !== conversationId
         || !canonicalUrl.startsWith("https://chatgpt.com/")
-        || !["inspect", "pin", "rename", "move", "archive"].includes(action)
+        || !["inspect", "pin", "rename", "move", "archive", "delete"].includes(action)
         || (action === "move" && (typeof targetProjectId !== "string"
             || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(targetProjectId)
             || typeof targetProjectName !== "string" || !targetProjectName.trim()
@@ -2580,11 +2580,52 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
         .filter(x=>/^(Move to project|Projeye taşı)$/iu.test(String(x.innerText||'').trim()));
       const archiveButton=[...currentMenu.querySelectorAll('[role="menuitem"][aria-keyshortcuts="A"]')]
         .filter(x=>x.getClientRects().length);
+      const deleteButton=[...currentMenu.querySelectorAll('[role="menuitem"]')]
+        .filter(x=>x.getClientRects().length
+          &&/^(Delete|Sil)$/iu.test(String(x.innerText||'').trim())
+          &&String(x.className||'').includes('text-danger'));
       const capabilities={pin:!!pinButton(),rename:rename.length===1,move:moveButton.length===1,
-        archive:archiveButton.length===1};
+        archive:archiveButton.length===1,delete:deleteButton.length===1};
       if(mode==='inspect'){
         await dismiss();
         return{status:'ready',title:before,pinned:pinned(),...capabilities};
+      }
+      if(mode==='delete'){
+        if(deleteButton.length!==1){await dismiss();return{status:'controls-unavailable'};}
+        deleteButton[0].click();
+        let modal=null;
+        for(let n=0;n<25;n++){
+          modal=[...document.querySelectorAll('[role="alertdialog"],[role="dialog"]')]
+            .find(x=>x.getClientRects().length
+              &&/delete|sil|kaldır/iu.test(String(x.innerText||'').slice(0,600)));
+          if(modal)break;
+          await pause(100);
+        }
+        // Never delete unless the provider itself presents a separate
+        // explicit destructive confirmation. No blind second click.
+        if(!modal)return{status:'provider-confirmation-missing'};
+        const confirm=[...modal.querySelectorAll('button')]
+          .filter(x=>x.getClientRects().length
+            &&/^(Delete|Sil|Delete chat|Sohbeti sil)$/iu.test(String(x.innerText||'').trim()));
+        const cancel=[...modal.querySelectorAll('button')]
+          .filter(x=>x.getClientRects().length
+            &&/^(Cancel|İptal)$/iu.test(String(x.innerText||'').trim()));
+        if(confirm.length!==1||cancel.length!==1||confirm[0].disabled){
+          cancel[0]?.click();
+          return{status:'provider-confirmation-ambiguous'};
+        }
+        confirm[0].click();
+        let absent=0;
+        for(let n=0;n<55;n++){
+          await pause(100);
+          const row=getRow();
+          const navigation=document.querySelector('nav,aside');
+          if((!row||!row.isConnected)&&navigation?.getClientRects().length)absent++;
+          else absent=0;
+          if(absent>=7)
+            return{status:'confirmed',title:before,pinned:false,...capabilities,deleted:true};
+        }
+        return{status:'unconfirmed',title:label(),pinned:pinned()};
       }
       if(mode==='archive'){
         if(archiveButton.length!==1){await dismiss();return{status:'controls-unavailable'};}
@@ -2684,7 +2725,8 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
             action, confirmed: value.status === "confirmed", available: true,
             title: String(value.title || "").slice(0, 120),
             pinned: value.pinned === true, pin: value.pin === true, rename: value.rename === true,
-            move: value.move === true, archive: value.archive === true, archived: value.archived === true,
+            move: value.move === true, archive: value.archive === true, delete: value.delete === true,
+            archived: value.archived === true, deleted: value.deleted === true,
             projectId: typeof value.projectId === "string" ? value.projectId : null };
     }
     finally {

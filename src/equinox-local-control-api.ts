@@ -508,7 +508,7 @@ export function createEquinoxLocalControlApi({
         if(!Number.isSafeInteger(body.tabId)||body.tabId<1
           ||typeof body.conversationId!=="string"
           ||!/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
-          ||!["inspect","pin","rename","move","archive"].includes(String(body.action))
+          ||!["inspect","pin","rename","move","archive","delete"].includes(String(body.action))
           ||(body.action==="move"&&(typeof body.targetProjectId!=="string"
             ||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.targetProjectId)))
           ||(body.action!=="move"&&body.targetProjectId!==undefined)

@@ -697,6 +697,16 @@
               </div>
             </div>
           </div>
+          <div class="native-chat-action-delete">
+            <button id="native-chat-action-delete" class="text-button" type="button" disabled>Delete conversation</button>
+            <div id="native-chat-action-delete-confirm" class="native-chat-action-confirm" hidden>
+              <p id="native-chat-action-delete-question">Permanently delete this conversation? This cannot be undone.</p>
+              <div class="native-chat-action-confirm-actions">
+                <button id="native-chat-action-delete-yes" class="button danger" type="button">Delete permanently</button>
+                <button id="native-chat-action-delete-no" class="button secondary" type="button">Cancel</button>
+              </div>
+            </div>
+          </div>
           <p id="native-chat-action-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
         </dialog>
         <aside id="native-chat-task-panel" class="native-chat-task-panel" aria-label="Task Capsule details" hidden>

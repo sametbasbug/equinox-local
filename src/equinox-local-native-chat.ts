@@ -246,7 +246,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       "targetProjectId"].includes(k))
       ||!Number.isSafeInteger(body.tabId)||Number(body.tabId)<1
       ||typeof body.conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
-      ||!["inspect","pin","rename","move","archive"].includes(String(body.action))
+      ||!["inspect","pin","rename","move","archive","delete"].includes(String(body.action))
       ||(body.action==="move"&&(typeof body.targetProjectId!=="string"
         ||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.targetProjectId)))
       ||(body.action!=="move"&&body.targetProjectId!==undefined)
@@ -297,8 +297,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           if(selected?.conversationId===id&&selected?.tabId===tabId)
             invalid("The active Native Chat conversation cannot move projects until its Task Capsule binding is safely refreshed. Select another chat first.");
         }
-        if(body.action==="archive"&&selected?.conversationId===id&&selected?.tabId===tabId)
-          invalid("The active Native Chat conversation cannot be archived until its Task Capsule binding is safely detached.");
+        if(["archive","delete"].includes(String(body.action))
+          &&selected?.conversationId===id&&selected?.tabId===tabId)
+          invalid("The active Native Chat conversation cannot be archived or deleted while its Task Capsule binding is attached.");
         const revision=selectedRevision;
         const response=await call("chat_bridge.conversation_action",{
           tabId,conversationId:id,canonicalUrl:thread.canonicalUrl,

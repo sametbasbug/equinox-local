@@ -462,6 +462,7 @@ let chatActionGeneration = 0;
 let chatActionBusy = false;
 let chatActionMutating = false;
 let chatActionArchivePending = false;
+let chatActionDeletePending = false;
 let chatProjectCatalog = [];
 let chatProjectId = null;
 let chatProjectName = "";
@@ -741,6 +742,7 @@ function updateNativeChatActionControls() {
     projectSelect.disabled = !canEdit || chatActionProvider.move !== true || taskBound
         || chatProjectCatalog.length === 0;
     $("native-chat-action-archive").disabled = !canEdit || chatActionProvider.archive !== true || taskBound;
+    $("native-chat-action-delete").disabled = !canEdit || chatActionProvider.delete !== true || taskBound;
     $("native-chat-action-move").disabled = projectSelect.disabled || !selectedProject
         || selectedProject.id === chatActionThread?.projectId
         || chatProjectCatalog.filter(p => p.name === selectedProject.name).length !== 1;
@@ -755,7 +757,9 @@ async function openNativeChatActions(thread) {
     chatActionThread = thread;
     chatActionProvider = null;
     chatActionArchivePending = false;
+    chatActionDeletePending = false;
     $("native-chat-action-archive-confirm").hidden = true;
+    $("native-chat-action-delete-confirm").hidden = true;
     chatActionBusy = true;
     setNativeChatCopy("native-chat-action-title", "Conversation actions");
     setNativeChatCopy("native-chat-action-subtitle", String(thread.title || "ChatGPT conversation"));
@@ -812,8 +816,12 @@ async function applyNativeChatAction(action) {
         return;
     if (action === "archive" && !chatActionArchivePending)
         return;
+    if (action === "delete" && !chatActionDeletePending)
+        return;
     chatActionArchivePending = false;
+    chatActionDeletePending = false;
     $("native-chat-action-archive-confirm").hidden = true;
+    $("native-chat-action-delete-confirm").hidden = true;
     chatActionBusy = true;
     chatActionMutating = true;
     $("native-chat-action-close").setAttribute("aria-disabled", "true");
@@ -831,7 +839,7 @@ async function applyNativeChatAction(action) {
         if (confirmed?.confirmed !== true || confirmed?.conversationId !== thread.conversationId)
             throw new Error("ChatGPT did not confirm the conversation change.");
         const actual = String(confirmed.title || thread.title);
-        if (action === "archive") {
+        if (action === "archive" || action === "delete") {
             for (const threads of [chatThreadList, chatSearchResults, chatProjectThreads]) {
                 const index = threads.findIndex(item => item.conversationId === thread.conversationId);
                 if (index >= 0)
@@ -842,7 +850,7 @@ async function applyNativeChatAction(action) {
             chatThreadRefreshRequested = true;
             if (dialog.open)
                 dialog.close();
-            showToast("Conversation archived in ChatGPT.");
+            showToast(action === "archive" ? "Conversation archived in ChatGPT." : "Conversation deleted in ChatGPT.");
             if (state.activeSection === "chat")
                 void refreshNativeChat(true);
             return;
@@ -5393,6 +5401,7 @@ function bindEvents() {
     $("native-chat-action-dialog").addEventListener("close", () => {
         chatActionGeneration++;
         chatActionArchivePending = false;
+        chatActionDeletePending = false;
         chatActionThread = null;
         chatActionProvider = null;
     });
@@ -5414,6 +5423,21 @@ function bindEvents() {
         $("native-chat-action-archive").focus();
     });
     $("native-chat-action-archive-yes").addEventListener("click", () => void applyNativeChatAction("archive"));
+    $("native-chat-action-delete").addEventListener("click", () => {
+        if ($("native-chat-action-delete").disabled)
+            return;
+        chatActionDeletePending = true;
+        const title = String(chatActionThread?.title || "ChatGPT conversation");
+        setNativeChatCopy("native-chat-action-delete-question", localizeUiText("Permanently delete this conversation? This cannot be undone.") + " " + title);
+        $("native-chat-action-delete-confirm").hidden = false;
+        $("native-chat-action-delete-yes").focus();
+    });
+    $("native-chat-action-delete-no").addEventListener("click", () => {
+        chatActionDeletePending = false;
+        $("native-chat-action-delete-confirm").hidden = true;
+        $("native-chat-action-delete").focus();
+    });
+    $("native-chat-action-delete-yes").addEventListener("click", () => void applyNativeChatAction("delete"));
     $("native-chat-action-pin").addEventListener("click", () => void applyNativeChatAction("pin"));
     $("native-chat-action-rename").addEventListener("click", () => void applyNativeChatAction("rename"));
     $("native-chat-filter").addEventListener("input", scheduleNativeChatSearch);
