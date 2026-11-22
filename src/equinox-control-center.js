@@ -474,6 +474,10 @@ let chatModelState = null;
 let chatModelIdentity = null;
 let chatModelBusy = false;
 let chatModelRenderSignature = "";
+let chatNewModelCatalog = null;
+let chatNewModelChoice = null;
+let chatNewEffortLevel = null;
+let chatNewModelBusy = false;
 let chatConnection = "checking";
 let chatConnectionError = "";
 let chatActive = null;
@@ -767,11 +771,16 @@ const NATIVE_CHAT_TURN_LABELS = {
 };
 function paintNativeChatModelControls() {
     const identity = chatConversationKey(chatActive);
-    const compatible = Boolean(identity && chatModelIdentity === identity && chatModelState?.available);
-    const rows = compatible && Array.isArray(chatModelState.choices) ? chatModelState.choices : [];
-    const selected = rows.find((choice) => choice.selected === true)?.label
-        || (compatible ? chatModelState.selectedModel : null);
-    const signature = JSON.stringify([rows.map((choice) => choice.label), selected, state.language]);
+    const compatible = !chatNewDraft && Boolean(identity && chatModelIdentity === identity && chatModelState?.available);
+    const draftCatalog = chatNewDraft && chatNewModelCatalog?.available === true;
+    const source = draftCatalog ? chatNewModelCatalog : compatible ? chatModelState : null;
+    const rows = source && Array.isArray(source.choices) ? source.choices : [];
+    const selected = chatNewDraft ? chatNewModelChoice
+        || rows.find((choice) => choice.selected === true)?.label
+        : rows.find((choice) => choice.selected === true)?.label
+            || (compatible ? chatModelState.selectedModel : null);
+    const signature = JSON.stringify([rows.map((choice) => choice.label), selected,
+        state.language, chatNewDraft]);
     const picker = $("native-chat-model-choice");
     if (signature !== chatModelRenderSignature) {
         chatModelRenderSignature = signature;
@@ -790,27 +799,36 @@ function paintNativeChatModelControls() {
     }
     picker.value = typeof selected === "string" && rows.some((x) => x.label === selected)
         ? selected : rows[0]?.label || "";
-    const canChange = !chatModelBusy && !chatSelecting && !chatSending && !chatServerSending
-        && !chatNewDraft && !chatBlocked && chatStateAvailable
+    const busy = chatModelBusy || chatNewModelBusy || chatSelecting || chatSending || chatServerSending;
+    const canChangeDraft = chatNewDraft && !busy && !chatBlocked;
+    const canChangeExisting = !chatNewDraft && !busy && !chatBlocked && chatStateAvailable
         && Boolean(chatActive) && ["ready", "complete"].includes(chatTurn)
         && !chatComposer().value.trim();
+    const canChange = canChangeDraft || canChangeExisting;
     picker.disabled = !canChange || rows.length === 0;
     $("native-chat-model-refresh").disabled = !canChange;
-    const power = compatible ? chatModelState.power : null;
-    const value = Number(power?.value);
+    const power = source?.power;
+    const value = chatNewDraft && chatNewEffortLevel !== null
+        ? chatNewEffortLevel : Number(power?.value);
     const min = Number(power?.min);
     const max = Number(power?.max);
     const hasPower = power && Number.isInteger(value) && Number.isInteger(min)
         && Number.isInteger(max) && min <= value && value <= max;
-    const label = compatible ? String(chatModelState.current || power?.label || "")
-        : chatModelState?.reason === "browser-upgrade-required" ? "Browser upgrade required" : "";
+    const label = chatNewDraft
+        ? hasPower && chatNewEffortLevel !== null
+            ? localizeUiText("Effort") + " " + String(value - min + 1) + "/" + String(max - min + 1)
+            : String(source?.current || "")
+        : compatible ? String(chatModelState.current || power?.label || "")
+            : chatModelState?.reason === "browser-upgrade-required" ? "Browser upgrade required" : "";
     setNativeChatCopy("native-chat-power-label", label || "Automatic");
     $("native-chat-power-less").disabled = !canChange || !hasPower || value <= min;
     $("native-chat-power-more").disabled = !canChange || !hasPower || value >= max;
-    const status = chatModelBusy ? "Checking model options…"
-        : compatible && rows.length ? "Models offered by your ChatGPT account"
-            : compatible ? "Choose Models to inspect your account options"
-                : chatModelState?.reason === "browser-upgrade-required" ? "Update Equinox Browser for model controls" : "";
+    const status = chatNewModelBusy || chatModelBusy ? "Checking model options…"
+        : chatNewDraft && rows.length ? "New Chat model settings apply before the first message"
+            : draftCatalog ? "Choose Models to inspect your account options"
+                : compatible && rows.length ? "Models offered by your ChatGPT account"
+                    : compatible ? "Choose Models to inspect your account options"
+                        : chatModelState?.reason === "browser-upgrade-required" ? "Update Equinox Browser for model controls" : "";
     setNativeChatCopy("native-chat-model-status", status);
 }
 async function readNativeChatModel() {
@@ -831,7 +849,51 @@ async function readNativeChatModel() {
     }
 }
 async function changeNativeChatModel(action, value) {
-    if (chatModelBusy || chatNewDraft || !chatActive || !["ready", "complete"].includes(chatTurn))
+    if (chatNewDraft) {
+        if (action === "choose") {
+            if (!chatNewModelCatalog?.choices?.some((row) => row.label === value))
+                return;
+            chatNewModelChoice = String(value);
+            paintNativeChatModelControls();
+            return;
+        }
+        if (action === "power") {
+            const power = chatNewModelCatalog?.power;
+            const current = chatNewEffortLevel ?? power?.value;
+            const target = Number(current) + (value === "right" ? 1 : -1);
+            if (Number.isInteger(target) && target >= Number(power?.min) && target <= Number(power?.max)) {
+                chatNewEffortLevel = target;
+                paintNativeChatModelControls();
+            }
+            return;
+        }
+        if (chatNewModelBusy)
+            return;
+        const generation = chatSelectionGeneration;
+        chatNewModelBusy = true;
+        paintNativeChatModelControls();
+        try {
+            const data = await mutationJson("/api/v1/chat/model", "POST", { action: "catalog" });
+            if (!chatNewDraft || generation !== chatSelectionGeneration)
+                return;
+            chatNewModelCatalog = data.model;
+            if (chatNewModelChoice && !chatNewModelCatalog?.choices?.some((row) => row.label === chatNewModelChoice))
+                chatNewModelChoice = null;
+            const power = chatNewModelCatalog?.power;
+            if (chatNewEffortLevel !== null && (chatNewEffortLevel < power?.min || chatNewEffortLevel > power?.max))
+                chatNewEffortLevel = null;
+        }
+        catch (error) {
+            if (chatNewDraft && generation === chatSelectionGeneration)
+                showToast(nativeChatErrorMessage(error));
+        }
+        finally {
+            chatNewModelBusy = false;
+            paintNativeChatModelControls();
+        }
+        return;
+    }
+    if (action === "catalog" || chatModelBusy || !chatActive || !["ready", "complete"].includes(chatTurn))
         return;
     const identity = chatConversationKey(chatActive);
     const generation = chatSelectionGeneration;
@@ -850,9 +912,8 @@ async function changeNativeChatModel(action, value) {
         chatModelState = data.model;
     }
     catch (error) {
-        if (identity === chatConversationKey(chatActive) && generation === chatSelectionGeneration) {
+        if (identity === chatConversationKey(chatActive) && generation === chatSelectionGeneration)
             showToast(nativeChatErrorMessage(error));
-        }
     }
     finally {
         chatModelBusy = false;
@@ -1467,6 +1528,9 @@ function beginNewNativeChat() {
     chatTaskRelated = null;
     $("native-chat-task-open").hidden = true;
     chatNewDraft = true;
+    chatNewModelCatalog = null;
+    chatNewModelChoice = null;
+    chatNewEffortLevel = null;
     chatSelectionGeneration++;
     chatNewCreationId = "nch-" + crypto.randomUUID();
     $("native-chat-cancel-new").hidden = false;
@@ -1480,12 +1544,16 @@ function beginNewNativeChat() {
     setNativeChatNotice("");
     updateNativeChatControls();
     composer.focus();
+    void changeNativeChatModel("catalog");
 }
 function cancelNewNativeChat() {
     if (chatSending)
         return;
     chatNewDraft = false;
     chatNewCreationId = null;
+    chatNewModelCatalog = null;
+    chatNewModelChoice = null;
+    chatNewEffortLevel = null;
     chatSelectionGeneration++;
     chatStateAvailable = false;
     $("native-chat-cancel-new").hidden = true;
@@ -1518,12 +1586,20 @@ async function sendNativeChatMessage() {
         if (newMessage) {
             if (!creationId)
                 throw new Error("New Chat creation identity is missing.");
-            const response = await mutationJson("/api/v1/chat/new", "POST", { text, creationId });
+            const request = { text, creationId };
+            if (chatNewModelChoice)
+                request.model = chatNewModelChoice;
+            if (chatNewEffortLevel !== null)
+                request.effort = chatNewEffortLevel;
+            const response = await mutationJson("/api/v1/chat/new", "POST", request);
             if (response.creation?.confirmed !== true)
                 throw new Error("New Chat creation could not be confirmed.");
             confirmed = true;
             chatNewDraft = false;
             chatNewCreationId = null;
+            chatNewModelCatalog = null;
+            chatNewModelChoice = null;
+            chatNewEffortLevel = null;
             composer.maxLength = 4000;
             composer.value = "";
             $("native-chat-cancel-new").hidden = true;

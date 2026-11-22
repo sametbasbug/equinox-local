@@ -35,6 +35,8 @@ const TR_UI = Object.freeze({
     "Open ChatGPT in Chrome to discover your conversations.": "Sohbetlerinizi görmek için Chrome’da ChatGPT'yi açın.",
     "Conversation history reflects the currently visible ChatGPT sidebar.": "Sohbet geçmişi, ChatGPT kenar çubuğunda o anda görünenlerle sınırlıdır.",
     "Model": "Model",
+    "Effort": "Düşünme",
+    "New Chat model settings apply before the first message": "Yeni sohbette model seçimi ilk mesajdan önce uygulanır",
     "Discover available models": "Kullanılabilir modelleri keşfet",
     "Discover models available to this account": "Hesabınızın sunduğu modelleri keşfet",
     "Less reasoning": "Daha az düşünme",

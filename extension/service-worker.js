@@ -1900,16 +1900,22 @@ const readChatBridgeVisibleText = (scope) => {
  * Explicit Native Chat clicks own discovery/selection. Read does not open UI.
  */
 async function chatBridgeModelControl({ tabId, conversationId, action = "read", choice, direction } = {}) {
+    const onNewChatHome = conversationId === null;
     if (!Number.isSafeInteger(tabId) || Number(tabId) < 1
-        || typeof conversationId !== "string" || !/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
+        || (!onNewChatHome && (typeof conversationId !== "string"
+            || !/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)))
         || !["read", "discover", "choose", "power"].includes(action)
         || (action === "choose" && (typeof choice !== "string" || choice.length > 80 || !choice.trim()))
         || (action === "power" && !["left", "right"].includes(String(direction))))
         throw new Error("ChatGPT model control arguments are invalid.");
     const tab = await chooseTab(Number(tabId));
-    if (chatGptConversationIdentity(tab)?.conversationId !== conversationId)
+    const homeUrl = onNewChatHome && typeof tab.url === "string"
+        ? new URL(tab.url) : null;
+    if (onNewChatHome
+        ? !(homeUrl?.origin === "https://chatgpt.com" && homeUrl.pathname === "/")
+        : chatGptConversationIdentity(tab)?.conversationId !== conversationId)
         throw new Error("Model control conversation changed.");
-    if (action !== "read") {
+    if (action !== "read" && !onNewChatHome) {
         const state = await readChatBridgeAttachedState(Number(tabId));
         if (state.generationActive)
             throw new Error("Wait until ChatGPT finishes the current response before changing model settings.");
@@ -2023,7 +2029,9 @@ async function chatBridgeModelControl({ tabId, conversationId, action = "read", 
         if (!value || typeof value.available !== "boolean")
             throw new Error("ChatGPT model selection returned invalid data.");
         const after = await chooseTab(Number(tabId));
-        if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
+        if (after.pendingUrl || (onNewChatHome
+            ? after.url !== tab.url
+            : chatGptConversationIdentity(after)?.conversationId !== conversationId))
             throw new Error("ChatGPT model selection conversation drifted.");
         if (action === "choose" && value.confirmed !== true)
             throw new Error("The requested model could not be confirmed in ChatGPT. Keep the current model.");
@@ -2040,6 +2048,32 @@ async function chatBridgeModelControl({ tabId, conversationId, action = "read", 
     }
     finally {
         scheduleDetach(Number(tabId), CONTINUATION_MUTATION_DETACH_MS);
+    }
+}
+/** Discover model/effort choices on an isolated, temporary home tab.
+ * New Chat composer users can pick before creating their first real turn. */
+async function discoverChatBridgeNewModel() {
+    const tabs = workerTabs();
+    if (!tabs.create || !tabs.remove)
+        throw new Error("Temporary model-discovery tabs are unavailable.");
+    let tempId = null;
+    try {
+        const created = await tabs.create({ url: "https://chatgpt.com/", active: false });
+        if (typeof created?.id !== "number" || !Number.isSafeInteger(created.id) || created.id < 1)
+            throw new Error("Chrome did not return a model-discovery tab id.");
+        tempId = created.id;
+        await waitForTab(tempId, tab => tab.status === "complete"
+            && tab.url?.startsWith("https://chatgpt.com/") === true, 10_000);
+        const model = await chatBridgeModelControl({ tabId: tempId, conversationId: null, action: "discover" });
+        if (model.available !== true || model.discovered !== true || model.closed !== true)
+            throw new Error("ChatGPT did not confirm its model options.");
+        return { ...model, tabId: null, conversationId: null, temporary: true };
+    }
+    finally {
+        if (tempId !== null) {
+            await detachTab(tempId).catch(() => { });
+            await tabs.remove(tempId).catch(() => { });
+        }
     }
 }
 /** Short-lived user-initiated history search evidence. Never durable: a
@@ -2090,7 +2124,7 @@ async function searchChatBridgeHistory({ tabId, query } = {}) {
       if(!setter)return{status:'unavailable',items:[]};
       setter.call(input,${JSON.stringify(term)});
       input.dispatchEvent(new Event('input',{bubbles:true}));
-      let rows=[],stable=0,lastSignature='',observed=false;
+      let rows=[],stable=0,lastSignature='',observed=false,confirmedEmpty=false;
       const read=()=>{
         const dialog=input.closest('[role="dialog"]');
         if(!dialog)return[];
@@ -2118,6 +2152,14 @@ async function searchChatBridgeHistory({ tabId, query } = {}) {
       for(let n=0;n<70;n++){
         if(input.value!==${JSON.stringify(term)})return{status:'changed',items:[]};
         rows=read();
+        const dialog=input.closest('[role="dialog"]');
+        const lines=String(dialog?.innerText||'').split('\n').map(x=>x.trim());
+        // A genuine provider empty state is not a transport failure.
+        // Require the explicit standalone no-results label, not a generic
+        // "no conversations" phrase embedded in a result excerpt.
+        if(!rows.length&&lines.some(line=>/^(No results|No results found|Sonuç yok|Sonuç bulunamadı)$/iu.test(line))){
+          confirmedEmpty=true;break;
+        }
         const signature=JSON.stringify(rows.map(x=>x.conversationId));
         if(rows.length){
           observed=true;
@@ -2127,8 +2169,8 @@ async function searchChatBridgeHistory({ tabId, query } = {}) {
         }
         await sleep(120);
       }
-      return{status:observed?'ready':'unconfirmed',items:rows,
-        partial:rows.length>=60||!observed,source:'provider-search-dialog'};
+      return{status:observed||confirmedEmpty?'ready':'unconfirmed',items:rows,
+        partial:rows.length>=60||!(observed||confirmedEmpty),source:'provider-search-dialog'};
     })()`, awaitPromise: true, returnByValue: true, silent: true });
         if (result?.exceptionDetails)
             throw new Error("The ChatGPT provider search dialog failed.");
@@ -8941,6 +8983,7 @@ const COMMANDS = {
     "chat_bridge.search": searchChatBridgeHistory,
     "chat_bridge.project": browseChatBridgeProject,
     "chat_bridge.model": chatBridgeModelControl,
+    "chat_bridge.model_catalog": discoverChatBridgeNewModel,
     "chat_bridge.open_history": openChatBridgeHistory,
     "chat_bridge.recent": readChatBridgeRecent,
     "chat_bridge.live": readChatBridgeLive,

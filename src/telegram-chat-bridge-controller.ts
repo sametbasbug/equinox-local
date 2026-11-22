@@ -48,7 +48,8 @@ type BridgeController = {
   deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string; requireExactTab?: boolean}) => Promise<unknown>;
   readFinal: (args?: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null}) => Promise<unknown>;
   readRecent: (args?: {binding?: Binding}) => Promise<unknown>;
-  startTaskChat: (args?: {taskId?: string; checkpointRevision?: number; initialMessage?: string}) => Promise<unknown>;
+  startTaskChat: (args?: {taskId?: string; checkpointRevision?: number; initialMessage?: string;
+    modelChoice?: string; effortLevel?: number}) => Promise<unknown>;
 };
 type CodedError = Error & {code: string; candidateTabId?: number};
 type ErrorWithCode = {code?: string};
@@ -221,12 +222,18 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
   };
 
 
-  const startTaskChat = async ({ taskId, checkpointRevision = 1, initialMessage }: {taskId?: string; checkpointRevision?: number; initialMessage?: string} = {}) => {
+  const startTaskChat = async ({ taskId, checkpointRevision = 1, initialMessage, modelChoice, effortLevel }:
+    {taskId?: string; checkpointRevision?: number; initialMessage?: string;
+      modelChoice?: string; effortLevel?: number} = {}) => {
     if (typeof taskId !== "string" || !/^task-[a-z0-9-]{6,80}$/u.test(taskId)) throw new Error("Telegram new-task id is invalid.");
     if (!Number.isInteger(checkpointRevision) || checkpointRevision < 1) throw new Error("Telegram new-task checkpoint revision is invalid.");
     if (initialMessage !== undefined && (typeof initialMessage !== "string" || !initialMessage.trim() || initialMessage.length > 1500 || /[\r\n]/u.test(initialMessage))) {
       throw new Error("Task chat initial message must be a nonempty single line of at most 1500 characters.");
     }
+    if(modelChoice!==undefined&&(typeof modelChoice!=="string"||!modelChoice.trim()||modelChoice.length>80))
+      throw new Error("New Chat requested an invalid model name.");
+    if(effortLevel!==undefined&&(!Number.isInteger(effortLevel)||effortLevel<0||effortLevel>12))
+      throw new Error("New Chat requested an invalid effort level.");
     const prompt = initialMessage ?? `Start task ${taskId} from checkpoint ${checkpointRevision}. Read the latest Task Capsule from Equinox Local and carry out its objective.`;
 
     agentControl.assertMutationAllowed("telegram_task_chat_create");
@@ -251,6 +258,50 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       const created = await callContext("user", "tabs.create", { url: "https://chatgpt.com/", active: true }, 8_000) as BrowserResult | null;
       createdTabId = Number(created?.id ?? created?.tabId);
       if (!Number.isInteger(createdTabId) || createdTabId < 1) throw new Error("ChatGPT task-chat creation did not return a tab id.");
+
+      // Apply an explicit model/effort setting on the NEW provider composer
+      // before prompt entry or the irreversible send boundary.
+      if(modelChoice!==undefined||effortLevel!==undefined){
+        try {
+          if(chatBridgeVersion(contextState)<13)
+            throw new Error("Equinox Browser does not support new-chat model selection.");
+          const discover=await callContext("user","chat_bridge.model",
+            {tabId:createdTabId,conversationId:null,action:"discover"},11_000) as any;
+          if(discover?.available!==true||discover?.discovered!==true
+            ||!Array.isArray(discover.choices))throw new Error("ChatGPT model options are unavailable.");
+          if(modelChoice!==undefined){
+            if(discover.choices.filter((item:any)=>item?.label===modelChoice).length!==1)
+              throw new Error("The requested model is not offered to this account.");
+            const changed=await callContext("user","chat_bridge.model",
+              {tabId:createdTabId,conversationId:null,action:"choose",choice:modelChoice},11_000) as any;
+            if(changed?.confirmed!==true||changed?.selectedModel!==modelChoice)
+              throw new Error("ChatGPT did not confirm the selected model.");
+          }
+          if(effortLevel!==undefined){
+            const inspected=await callContext("user","chat_bridge.model",
+              {tabId:createdTabId,conversationId:null,action:"discover"},11_000) as any;
+            let power=inspected?.power;
+            if(!power||!Number.isInteger(power.value)||!Number.isInteger(power.min)
+              ||!Number.isInteger(power.max)||effortLevel<power.min||effortLevel>power.max)
+              throw new Error("The requested effort level is not offered.");
+            for(let step=0;power.value!==effortLevel&&step<12;step++){
+              const direction=power.value<effortLevel?"right":"left";
+              const updated=await callContext("user","chat_bridge.model",
+                {tabId:createdTabId,conversationId:null,action:"power",direction},11_000) as any;
+              if(updated?.confirmed!==true||!Number.isInteger(updated?.power?.value)
+                ||Math.abs(updated.power.value-power.value)!==1)
+                throw new Error("ChatGPT did not confirm the effort change.");
+              power=updated.power;
+            }
+            if(power.value!==effortLevel)
+              throw new Error("The requested effort could not be reached in ChatGPT.");
+          }
+        } catch(error) {
+          // The user prompt has not entered the composer or been sent, so
+          // the existing definitive cleanup closes the empty new-chat tab.
+          throw taskChatNotStarted("New Chat model selection failed before submit: "+errorMessage(error).slice(0,170));
+        }
+      }
 
       let promptSubmitted = false;
       let lastComposerError: unknown = null;

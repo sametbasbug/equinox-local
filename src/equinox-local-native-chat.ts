@@ -10,7 +10,8 @@ type ChatBridge = {
   readFinal:(args:{binding:Binding;userEpoch:string;previousAssistantTurnKey:string|null})=>Promise<any>;
   readRecent?:(args:{binding:Binding})=>Promise<any>;
   readLive?:(args:{binding:Binding;userEpoch:string})=>Promise<any>;
-  startTaskChat?:(args:{taskId:string;checkpointRevision:number;initialMessage:string})=>Promise<any>;
+  startTaskChat?:(args:{taskId:string;checkpointRevision:number;initialMessage:string;
+    modelChoice?:string;effortLevel?:number})=>Promise<any>;
 };
 type TaskStore = {
   checkpoint:(args:{title:string;objective:string;completed:string[];next:string[];references:{type:string;label:string;value:string}[]})=>Promise<any>;
@@ -92,7 +93,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     catch{associatedTasks.delete(key);}
     return associatedTasks.get(key)??null;
   };
-  const createAttempts=new Map<string,{text:string;promise:Promise<unknown>}>();
+  const createAttempts=new Map<string,{text:string;modelChoice:string|null;
+    effortLevel:number|null;promise:Promise<unknown>}>();
   const attempts=new Map<string,{text:string;conversationKey:string;promise:Promise<unknown>}>();
   function appendMessage(message:Message) {
     messages.push(message);
@@ -234,8 +236,18 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       checkedAt:Date.now(),threads};
     return{projectId:choice.id,name:choice.name,threads,partial:true,source:"visible-project"};
   };
-  const model=async(value:{action:"read"|"discover"|"choose"|"power";
+  const model=async(value:{action:"read"|"discover"|"choose"|"power"|"catalog";
     choice?:string;direction?:"left"|"right"})=>{
+    if(value.action==="catalog"){
+      const instance=context();
+      if(Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)<13)
+        invalid("Equinox Browser must support Native Chat model discovery.");
+      const info=await call("chat_bridge.model_catalog",{},15_000) as any;
+      if(context()!==instance)invalid("The connected Browser changed during model discovery.");
+      if(info?.available!==true||info?.discovered!==true||!Array.isArray(info.choices))
+        invalid("ChatGPT did not confirm available new-chat models.");
+      return info;
+    }
     const target=selected;
     if(!target)return{available:false,reason:"no-conversation",choices:[]};
     if(Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)<13)
@@ -547,15 +559,21 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   const startNew=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid New Chat request.");
     const body=value as Record<string,unknown>;
-    if(Object.keys(body).length!==2||typeof body.creationId!=="string"||
+    if(Object.keys(body).some(k=>!["creationId","text","model","effort"].includes(k))
+      ||typeof body.creationId!=="string"||
       !/^nch-[a-f0-9-]{36}$/u.test(body.creationId)||typeof body.text!=="string"||
-      !body.text.trim()||body.text.length>1500||/[\r\n\0]/u.test(body.text))
+      !body.text.trim()||body.text.length>1500||/[\r\n\0]/u.test(body.text)
+      ||(body.model!==undefined&&(typeof body.model!=="string"||!body.model.trim()||body.model.length>80))
+      ||(body.effort!==undefined&&(!Number.isInteger(body.effort)||Number(body.effort)<0||Number(body.effort)>12)))
       invalid("The first Chat message must be a single line of 1–1500 characters and a unique creation id.");
     const key=body.creationId;
     const firstMessage=(body.text as string).trim();
+    const modelChoice=typeof body.model==="string"?body.model.trim():null;
+    const effortLevel=Number.isInteger(body.effort)?Number(body.effort):null;
     const prior=createAttempts.get(key);
     if(prior){
-      if(prior.text!==firstMessage)invalid("A New Chat creation id cannot be reused with different message text.");
+      if(prior.text!==firstMessage||prior.modelChoice!==modelChoice||prior.effortLevel!==effortLevel)
+        invalid("A New Chat creation id cannot be reused with different message or model settings.");
       return prior.promise;
     }
     if(creationBlocked)invalid("A previous New Chat creation is uncertain. Check Chrome before restarting the Chat session; no new conversation will be opened automatically.");
@@ -578,7 +596,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         if(typeof task?.taskId!=="string"||!/^task-[a-z0-9-]{6,80}$/u.test(task.taskId))throw new Error("New Chat Task Capsule was not persisted.");
         const newTaskId=task.taskId as string;
         taskId=newTaskId;
-        const opened=await chatBridge.startTaskChat!({taskId:newTaskId,checkpointRevision:task.checkpointRevision,initialMessage:(body.text as string).trim()});
+        const opened=await chatBridge.startTaskChat!({taskId:newTaskId,checkpointRevision:task.checkpointRevision,
+          initialMessage:firstMessage,...(modelChoice?{modelChoice}:{}),
+          ...(effortLevel!==null?{effortLevel}:{})});
         if(opened?.confirmed!==true||!opened?.binding)throw new Error("New Chat could not confirm its exact ChatGPT binding.");
         const source=opened.binding as Binding;
         if(source.browserContext!=="user"||source.browserInstanceId!==context()||
@@ -630,7 +650,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         throw error;
       }finally{creating=false;}
     })();
-    createAttempts.set(key,{text:firstMessage,promise:attempt});
+    createAttempts.set(key,{text:firstMessage,modelChoice,effortLevel,promise:attempt});
     return attempt;
   };
 

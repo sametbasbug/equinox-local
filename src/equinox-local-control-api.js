@@ -402,7 +402,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 if (typeof changeChatModel !== "function")
                     throw badRequest("Native Chat model selection is unavailable.");
                 const body = validateExactObject(await readBody(), ["action", "choice", "direction"], "Chat model selection");
-                if (!["discover", "choose", "power"].includes(String(body.action))
+                if (!["discover", "choose", "power", "catalog"].includes(String(body.action))
                     || (body.action === "choose" && (typeof body.choice !== "string" || !body.choice.trim() || body.choice.length > 80))
                     || (body.action === "power" && !["left", "right"].includes(String(body.direction)))
                     || (body.action !== "choose" && body.choice !== undefined)
@@ -429,9 +429,11 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 authorizeMutation();
                 if (typeof startNewChat !== "function")
                     throw badRequest("New Chat is unavailable.");
-                const body = validateExactObject(await readBody(), ["creationId", "text"], "Native New Chat");
+                const body = validateExactObject(await readBody(), ["creationId", "text", "model", "effort"], "Native New Chat");
                 if (typeof body.creationId !== "string" || !/^nch-[a-f0-9-]{36}$/u.test(body.creationId) ||
-                    typeof body.text !== "string" || !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text))
+                    typeof body.text !== "string" || !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
+                    || (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim() || body.model.length > 80))
+                    || (body.effort !== undefined && (!Number.isInteger(body.effort) || Number(body.effort) < 0 || Number(body.effort) > 12)))
                     throw badRequest("New Chat requires one initial line of up to 1500 characters and a unique creation id.");
                 const creation = await startNewChat(body);
                 state.mutationCount += 1;
