@@ -40,6 +40,8 @@
 
 **Checkpoint 85 response-state clarity:** In the actual signed Source Factory, a selected ChatGPT conversation actively generating a response showed a header status of **Responding...** but an empty transcript title of **Waiting for ChatGPT**, despite the observer proving active generation. The empty-state title now distinguishes generating from waiting; when generating without a readable preview, it tells the user to follow the response in the selected Chrome tab rather than implying no response is underway. The verified direct provider link already added in checkpoint 84 remains available. This does not claim a Bridge 12 full transcript is visible.
 
+**Checkpoint 86 legacy published Local interoperability:** Signed public Main snapshot `0fc8bf8` validates at most 24 `chat_bridge.recent` items, while Browser 13 had begun returning 48 by default. Older Local with the newer extension could reject real history. Browser 13 now defaults to 24 for unnegotiated callers; current Local explicitly requests 48 only if the connected extension reports Bridge 13+. No new permission or provider API. This requires installed mixed-version verification before a CWS-first rollout.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.

@@ -5245,8 +5245,16 @@ async function readChatBridgeResponseVersions({tabId,conversationId,messageId,ex
   }finally{scheduleDetach(id,CONTINUATION_MUTATION_DETACH_MS);}
 }
 
-async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conversationId?:unknown}={}) {
+async function readChatBridgeRecent({tabId,conversationId,maxItems}:{
+  tabId?:unknown;conversationId?:unknown;maxItems?:unknown;
+}={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1||typeof conversationId!=="string"||!/^[A-Za-z0-9-]{8,160}$/u.test(conversationId))throw new Error("Chat history identity is invalid.");
+  // The signed public Local rejects more than 24 items and does not send maxItems.
+  // A modern Local must explicitly negotiate the 48-item projection.
+  if(maxItems!==undefined&&maxItems!==24&&maxItems!==48)
+    throw new Error("Unsupported Chat Bridge recent-history item limit.");
+  const itemLimit=maxItems===48?48:24;
+  const turnLimit=itemLimit/2;
   const tab=await chooseTab(Number(tabId));
   if(chatGptConversationIdentity(tab)?.conversationId!==conversationId)throw new Error("Chat history conversation changed.");
   const state=await chatGptContinuationState(Number(tabId));
@@ -5279,7 +5287,7 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
         }
       }
       let remaining=96000,remainingRich=72000,ambiguousUnits=false;
-      for(const turn of turns.slice(-24))for(const role of ['user','assistant']){
+      for(const turn of turns.slice(-${turnLimit}))for(const role of ['user','assistant']){
         const units=[...turn.querySelectorAll('[data-chatgpt-search-unit-key$=":'+role+'"]')];
         if(units.length>1){ambiguousUnits=true;continue;}
         const unit=units[0];
@@ -5305,7 +5313,7 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
           ...(turnKey&&turnKey.length<=200?{turnKey}:{}),
           richText,versionsAvailable,hasRichMedia,...(attachments??{})});remaining-=limit;
       }
-      if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
+      if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-${itemLimit})){
         const role=unit.getAttribute('data-message-author-role');
         const attachments=role==='user'?readUserAttachments(unit):null;
         const raw=role==='assistant'?readChatBridgeVisibleText(unit):
@@ -5319,12 +5327,12 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
         out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText,
           hasRichMedia,...(attachments??{})});remaining-=limit;
       }
-      return{items:out.slice(-48),partial:turns.length>24||remaining<=0||ambiguousUnits||virtualizedBefore,
+      return{items:out.slice(-${itemLimit}),partial:turns.length>${turnLimit}||remaining<=0||ambiguousUnits||virtualizedBefore,
         observedTurns:turns.length};
     })()`,returnByValue:true,silent:true});
     if(result?.exceptionDetails)throw new Error("Chat history inspection failed.");
     const value=cdpObject(result?.result?.value);
-    if(!Array.isArray(value?.items)||value.items.length>48)throw new Error("Chat history payload is invalid.");
+    if(!Array.isArray(value?.items)||value.items.length>itemLimit)throw new Error("Chat history payload is invalid.");
     const items=value.items.map((item:any)=>{
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat history message is invalid.");
       if(item.turnKey!==undefined

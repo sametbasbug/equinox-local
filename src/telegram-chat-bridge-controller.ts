@@ -774,10 +774,15 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
 
   const readRecent = async ({ binding }: {binding?: Binding}={}) => {
     const {binding:target}=await inspectBinding(binding,10,{allowMissingUserEpoch:true,allowMissingAssistantTurnKey:true});
+    const bridgeVersion=chatBridgeVersion(browserBridge.snapshot()?.contexts?.[target.browserContext]);
+    // The old published Local never asks for the wider read; Bridge 12
+    // cannot negotiate it either.
+    const itemLimit=bridgeVersion>=13?48:24;
     const value=await callContext(target.browserContext,"chat_bridge.recent",{
       tabId:target.tabId,conversationId:target.conversationId,
+      ...(bridgeVersion>=13?{maxItems:48}:{}),
     },10_000) as (BrowserResult & {items?:unknown;partial?:unknown}) | null;
-    if(!Array.isArray(value?.items)||value.items.length>48)throw new Error("Chat Bridge recent transcript is invalid.");
+    if(!Array.isArray(value?.items)||value.items.length>itemLimit)throw new Error("Chat Bridge recent transcript is invalid.");
     let remainingRich = 72_000;
     const items=value.items.map((item:any)=>{
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat Bridge transcript message is invalid.");
