@@ -10495,7 +10495,7 @@ const COMMANDS = {
     "chat_bridge.conversation_action": controlChatBridgeConversation,
     "chat_bridge.edit_message": editChatBridgeMessage,
     "chat_bridge.retry_assistant": retryChatBridgeAssistant,
-    "chat_bridge.branch_new_chat": branchChatBridgeAssistant,
+    "chat_bridge.branch_new_chat": (args) => branchChatBridgeAssistant({ ...args, branchMode: "new" }),
     "chat_bridge.branch_work_chat": (args) => branchChatBridgeAssistant({ ...args, branchMode: "work" }),
     "chat_bridge.model": chatBridgeModelControl,
     "chat_bridge.model_catalog": discoverChatBridgeNewModel,
