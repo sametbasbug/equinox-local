@@ -11,6 +11,11 @@ const TR_UI = Object.freeze({
     // Native Chat workspace actions and status labels.
     "Copy": "Kopyala",
     "Copy message": "Mesajı kopyala",
+    "Attachments": "Ekler",
+    "Image attachment": "Görsel eki",
+    "Attach files…": "Dosya ekle…",
+    "You can start a chat with files and no text": "Yalnızca dosya ekleyerek yeni sohbet başlatabilirsin",
+    "First message · Up to 1,500 characters, or up to four files without text": "İlk mesaj · En fazla 1.500 karakter; istersen yalnızca dört dosyaya kadar ekle",
     "Copy code": "Kodu kopyala",
     "Code": "Kod",
     "Quote": "Alıntıla",

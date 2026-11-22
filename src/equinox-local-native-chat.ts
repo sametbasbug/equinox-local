@@ -4,7 +4,9 @@ import { chatGptConversationIdFromUrl } from "./telegram-chat-bridge-controller.
 
 type BrowserTab = {id?:number;tabId?:number;url?:string;title?:string};
 type Binding = {browserContext:"user";browserInstanceId:string;tabId:number;conversationId:string;canonicalUrl:string};
-type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"complete"|"uncertain";truncated?:boolean;richText?:string|null;versionsAvailable?:boolean};
+type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"complete"|"uncertain";
+  truncated?:boolean;richText?:string|null;versionsAvailable?:boolean;
+  attachmentFileNames?:string[];attachmentImageCount?:number};
 type BrowserBridge = {snapshot:()=>any;call:(method:string,args:object,options:{context:"user";timeoutMs:number})=>Promise<unknown>};
 type ChatBridge = {
   inspectTurnIdentity:(args:{binding:Binding})=>Promise<any>;
@@ -34,6 +36,21 @@ const MAX_DELIVERY_IDS = 2_048;
 const MAX_NEW_CHAT_IDS = 512;
 function invalid(message:string):never {const error:Error&{statusCode?:number}=new Error(message);error.statusCode=400;throw error;}
 function safeTitle(value:unknown):string {return typeof value==="string"?value.replace(/[\x00-\x1f\x7f]/gu," ").trim().slice(0,120):"ChatGPT conversation";}
+/** Display metadata comes only from the exact provider user-turn observer.
+ * The provider does not expose original image filenames after Send. */
+function providerUserAttachments(item:any):Pick<Message,"attachmentFileNames"|"attachmentImageCount">{
+  if(item?.role!=="user")return{};
+  const names=item.attachmentFileNames;
+  const images=item.attachmentImageCount;
+  if(!Array.isArray(names)||names.length>12
+    ||names.some((name:unknown)=>typeof name!=="string"||!name.trim()
+      ||name.length>255||/[\\/\x00-\x1f\x7f]/u.test(name))
+    ||new Set(names).size!==names.length
+    ||!Number.isSafeInteger(images)||images<0||images>12||names.length+images>12)
+    return{};
+  return{attachmentFileNames:names.slice(),attachmentImageCount:images};
+}
+
 /** Current-user native Chat transport. The browser remains the ChatGPT session authority. */
 export function createNativeChatController({browserBridge,chatBridge,taskStore}:{browserBridge:BrowserBridge;chatBridge:ChatBridge;taskStore?:TaskStore}) {
   let selected:Binding|null=null;
@@ -474,7 +491,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           history=value.items.slice(-24).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,
             text:String(item.text).slice(0,14000),status:"complete",truncated:item.truncated===true,
             richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=5000?item.richText:null,
-            versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true}));
+            versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
+            ...providerUserAttachments(item)}));
           historyPartial=value.partial===true;
           // Navigation may finish before ChatGPT hydrates its transcript.
           // Retry at most five subsequent normal reads without a new send.
@@ -527,6 +545,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
               status:"complete",truncated:item.truncated===true,
               richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=5000?item.richText:null,
               versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
+              ...providerUserAttachments(item),
             }));
             historyPartial=fresh.partial===true;
           }
@@ -545,6 +564,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
               richText:typeof item.richText==="string"&&item.role==="assistant"
                 &&[...item.richText].length<=5000?item.richText:null,
               versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
+              ...providerUserAttachments(item),
             }));
             historyPartial=fresh.partial===true;
             historyPendingHydration=0;

@@ -1937,6 +1937,62 @@ async function submitNativeChatNewBranch() {
         $("native-chat-branch-close").disabled = false;
     }
 }
+/** Provider-confirmed attachments have read-only cards. The browser does not
+ * expose persisted image bytes or their original names, so no fake thumbnail. */
+function nativeChatSentAttachments(message) {
+    if (message.role !== "user")
+        return null;
+    const names = Array.isArray(message.attachmentFileNames)
+        ? message.attachmentFileNames.filter(name => typeof name === "string" && name.length <= 255
+            && name.trim() && !/[/\\\x00-\x1f\x7f]/u.test(name)).slice(0, 12) : [];
+    const images = Number.isSafeInteger(message.attachmentImageCount)
+        ? Math.min(12, Math.max(0, Number(message.attachmentImageCount))) : 0;
+    if (!names.length && !images || names.length + images > 12)
+        return null;
+    const list = document.createElement("div");
+    list.className = "native-chat-sent-attachments";
+    list.setAttribute("role", "list");
+    list.setAttribute("aria-label", localizeUiText("Attachments"));
+    const add = (kind, text) => {
+        const item = document.createElement("div");
+        item.className = "native-chat-sent-attachment";
+        item.setAttribute("role", "listitem");
+        const symbol = document.createElement("span");
+        symbol.className = "native-chat-sent-attachment-kind";
+        symbol.textContent = kind === "image" ? "▧" : "▤";
+        symbol.setAttribute("aria-hidden", "true");
+        const title = document.createElement("span");
+        title.className = "native-chat-sent-attachment-name";
+        title.textContent = text;
+        title.title = text;
+        item.append(symbol, title);
+        list.append(item);
+    };
+    for (const name of names)
+        add("document", name);
+    for (let index = 0; index < images; index++) {
+        const label = localizeUiText("Image attachment");
+        add("image", images === 1 ? label : label + " " + (index + 1));
+    }
+    return list;
+}
+/** Hide only a proven leading provider document-card caption. Human prompt
+ * content is never inferred, removed or changed on an ambiguous match. */
+function nativeChatUserTextWithoutCardCaptions(message) {
+    if (message.role !== "user" || !Array.isArray(message.attachmentFileNames)
+        || !message.attachmentFileNames.length || message.attachmentFileNames.length > 12)
+        return message.text;
+    const names = message.attachmentFileNames;
+    const lines = message.text.split(/\r?\n/u);
+    if (lines.length < names.length * 2)
+        return message.text;
+    for (let index = 0; index < names.length; index++) {
+        if (lines[index * 2]?.trim() !== names[index]
+            || !/^(?:Belge|Document)$/iu.test(String(lines[index * 2 + 1] || "").trim()))
+            return message.text;
+    }
+    return lines.slice(names.length * 2).join("\n").trim();
+}
 function renderNativeChatMessage(message) {
     const article = document.createElement("article");
     article.className = "native-chat-message";
@@ -1958,7 +2014,7 @@ function renderNativeChatMessage(message) {
     body.className = "native-chat-message-text";
     if (message.role === "user" || !message.richText) {
         body.classList.add("native-chat-plain");
-        body.textContent = message.text;
+        body.textContent = nativeChatUserTextWithoutCardCaptions(message);
     }
     else {
         // Only verified v12 semantic output is parsed as Markdown. Never
@@ -1977,8 +2033,12 @@ function renderNativeChatMessage(message) {
         copy.addEventListener("click", async () => {
             showToast(await copyNativeChatText(body, message.text) ? "Message copied." : "Could not copy message.");
         });
-        actions.append(copy);
-        if (message.role === "user" && typeof message.id === "string"
+        // Provider file-only captions are represented by attachment cards,
+        // not a copyable text message; do not show a misleading Copy control.
+        if (message.role !== "user" || body.textContent?.trim())
+            actions.append(copy);
+        if (message.role === "user" && !message.attachmentFileNames?.length
+            && !message.attachmentImageCount && typeof message.id === "string"
             && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:user$/iu.test(message.id)
             && !message.truncated && chatMessageEditAllowed && !chatNewDraft
             && !chatBlocked && !chatSending && !chatSelecting
@@ -2092,7 +2152,12 @@ function renderNativeChatMessage(message) {
         }
         heading.append(actions);
     }
-    article.append(heading, body);
+    article.append(heading);
+    const attachments = nativeChatSentAttachments(message);
+    if (attachments)
+        article.append(attachments);
+    if (body.textContent?.trim() || body.hasChildNodes())
+        article.append(body);
     return article;
 }
 function updateNativeChatJumpToLatest() {
@@ -2111,7 +2176,9 @@ function renderNativeChatTranscript(items, preview) {
     const transcript = $("native-chat-messages");
     const live = $("native-chat-preview");
     const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 96;
-    const signatures = items.map(item => JSON.stringify([state.language, chatMessageEditAllowed, item.id, item.role, item.text, item.richText, item.status, item.truncated, item.versionsAvailable]));
+    const signatures = items.map(item => JSON.stringify([state.language, chatMessageEditAllowed,
+        item.id, item.role, item.text, item.richText, item.status, item.truncated, item.versionsAvailable,
+        item.attachmentFileNames, item.attachmentImageCount]));
     const previous = chatMessageSignatures;
     const keepsPrefix = !changedConversation && previous.every((signature, index) => signature === signatures[index]);
     if (!keepsPrefix)
@@ -2125,6 +2192,10 @@ function renderNativeChatTranscript(items, preview) {
             richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 14_000 ? item.richText : null,
             uncertain: item.status === "uncertain",
             versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
+            attachmentFileNames: item.role === "user" && Array.isArray(item.attachmentFileNames)
+                ? item.attachmentFileNames : undefined,
+            attachmentImageCount: item.role === "user" && Number.isSafeInteger(item.attachmentImageCount)
+                ? item.attachmentImageCount : undefined,
             truncated: item.truncated === true || text.length > 25_000,
         }));
     }

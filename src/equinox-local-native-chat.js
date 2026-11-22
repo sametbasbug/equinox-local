@@ -8,6 +8,21 @@ const MAX_DELIVERY_IDS = 2_048;
 const MAX_NEW_CHAT_IDS = 512;
 function invalid(message) { const error = new Error(message); error.statusCode = 400; throw error; }
 function safeTitle(value) { return typeof value === "string" ? value.replace(/[\x00-\x1f\x7f]/gu, " ").trim().slice(0, 120) : "ChatGPT conversation"; }
+/** Display metadata comes only from the exact provider user-turn observer.
+ * The provider does not expose original image filenames after Send. */
+function providerUserAttachments(item) {
+    if (item?.role !== "user")
+        return {};
+    const names = item.attachmentFileNames;
+    const images = item.attachmentImageCount;
+    if (!Array.isArray(names) || names.length > 12
+        || names.some((name) => typeof name !== "string" || !name.trim()
+            || name.length > 255 || /[\\/\x00-\x1f\x7f]/u.test(name))
+        || new Set(names).size !== names.length
+        || !Number.isSafeInteger(images) || images < 0 || images > 12 || names.length + images > 12)
+        return {};
+    return { attachmentFileNames: names.slice(), attachmentImageCount: images };
+}
 /** Current-user native Chat transport. The browser remains the ChatGPT session authority. */
 export function createNativeChatController({ browserBridge, chatBridge, taskStore }) {
     let selected = null;
@@ -488,7 +503,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                         history = value.items.slice(-24).map((item) => ({ id: String(item.id).slice(0, 220), role: item.role,
                             text: String(item.text).slice(0, 14000), status: "complete", truncated: item.truncated === true,
                             richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 5000 ? item.richText : null,
-                            versionsAvailable: item.role === "assistant" && item.versionsAvailable === true }));
+                            versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
+                            ...providerUserAttachments(item) }));
                         historyPartial = value.partial === true;
                         // Navigation may finish before ChatGPT hydrates its transcript.
                         // Retry at most five subsequent normal reads without a new send.
@@ -554,6 +570,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                             status: "complete", truncated: item.truncated === true,
                             richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 5000 ? item.richText : null,
                             versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
+                            ...providerUserAttachments(item),
                         }));
                         historyPartial = fresh.partial === true;
                     }
@@ -577,6 +594,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                             richText: typeof item.richText === "string" && item.role === "assistant"
                                 && [...item.richText].length <= 5000 ? item.richText : null,
                             versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
+                            ...providerUserAttachments(item),
                         }));
                         historyPartial = fresh.partial === true;
                         historyPendingHydration = 0;
