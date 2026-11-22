@@ -34,6 +34,8 @@
 
 **Checkpoint 83 native chat stylesheet repair:** A malformed stylesheet section contained nine literal \n text tokens preceding table and edit-dialog selectors, preventing intended CSS selector parsing. Replaced those tokens with actual rule separators to restore native message-table overflow and edit-field styles. No script execution or Chrome interaction was added.
 
+**Checkpoint 83 visual anchor on history prepend:** When the read-only manual history refresh inserts an earlier provider message window, the Native Chat renderer now preserves the viewport's first visible exact message ID and its vertical offset during the rebuild, rather than jumping the reader to a different paragraph. Current-conversation matching, near-bottom auto-follow and jump-to-latest semantics remain unchanged. This is a source UI correction pending installed Bridge 13 acceptance.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.

@@ -2466,6 +2466,10 @@ function nativeChatUserTextWithoutCardCaptions(message) {
 function renderNativeChatMessage(message) {
     const article = document.createElement("article");
     article.className = "native-chat-message";
+    // Preserve exact provider/local message identity for stable viewport anchoring
+    // when a read-only refresh prepends earlier, virtualized ChatGPT turns.
+    if (typeof message.id === "string" && message.id.length <= 220)
+        article.dataset.messageId = message.id;
     article.classList.toggle("is-user", message.role === "user");
     article.classList.toggle("is-uncertain", message.uncertain === true);
     article.classList.toggle("is-preview", message.live === true);
@@ -2702,6 +2706,15 @@ function renderNativeChatTranscript(items, preview) {
     const transcript = $("native-chat-messages");
     const live = $("native-chat-preview");
     const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 96;
+    const feedBounds = feed.getBoundingClientRect();
+    const feedTop = feedBounds.top;
+    const anchor = !changedConversation && !nearBottom
+        ? [...transcript.children].find(node => node instanceof HTMLElement
+            && node.dataset.messageId && node.getBoundingClientRect().bottom > feedTop + 8
+            && node.getBoundingClientRect().top < feedBounds.bottom - 8)
+        : undefined;
+    const anchorId = anchor?.dataset.messageId;
+    const anchorOffset = anchor ? anchor.getBoundingClientRect().top - feedTop : 0;
     const signatures = items.map(item => JSON.stringify([state.language, chatMessageEditAllowed,
         item.id, item.role, item.text, item.richText, item.status, item.truncated, item.versionsAvailable, item.hasRichMedia,
         item.attachmentFileNames, item.attachmentImageCount]));
@@ -2747,6 +2760,14 @@ function renderNativeChatTranscript(items, preview) {
     chatPreviewSignature = previewSignature;
     if (changedConversation || (nearBottom && (!keepsPrefix || signatures.length !== previous.length || changedPreview))) {
         feed.scrollTop = feed.scrollHeight;
+    }
+    else if (!keepsPrefix && anchorId) {
+        // Avoid jumping to a different paragraph when older items are prepended.
+        // Do not move the viewport for any message that disappeared or changed ID.
+        const restored = [...transcript.children].find(node => node instanceof HTMLElement
+            && node.dataset.messageId === anchorId);
+        if (restored)
+            feed.scrollTop += restored.getBoundingClientRect().top - feedTop - anchorOffset;
     }
     updateNativeChatJumpToLatest();
 }
