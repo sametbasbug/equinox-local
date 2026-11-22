@@ -42,6 +42,8 @@
 
 **Checkpoint 86 legacy published Local interoperability:** Signed public Main snapshot `0fc8bf8` validates at most 24 `chat_bridge.recent` items, while Browser 13 had begun returning 48 by default. Older Local with the newer extension could reject real history. Browser 13 now defaults to 24 for unnegotiated callers; current Local explicitly requests 48 only if the connected extension reports Bridge 13+. No new permission or provider API. This requires installed mixed-version verification before a CWS-first rollout.
 
+**Checkpoint 87 New Chat multiline parity:** Source New Chat first prompts now match the 4,000-character multiline existing-chat composer, including LF with Shift+Enter. During a disposable non-submitting personal Chrome Home draft, Browser fill collapsed a newline, whereas type_text preserved two separate provider ProseMirror paragraphs with the exact LF text. Only the multiline first-turn path was switched to existing type_text with no submit; authenticated exact-DOM text matching and the one-use Send boundary remain mandatory. Browser 13 and Windows installed end-to-end acceptance is outstanding. The temporary test tab was closed.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.

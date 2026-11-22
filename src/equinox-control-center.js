@@ -1782,7 +1782,7 @@ function updateNativeChatControls() {
     $("native-chat-send").disabled = !allowed || (!composer.value.trim() && !chatPickedFiles.length)
         || (!advancedBridge && (chatPickedFiles.length > 0 || Boolean(chatToolSelection)
             || (chatNewDraft && (Boolean(chatNewModelChoice) || chatNewEffortLevel !== null))))
-        || (chatNewDraft && /[\r\n]/u.test(composer.value));
+        || (chatNewDraft && /\r/u.test(composer.value));
     const stopButton = $("native-chat-stop-generation");
     const stopLabel = localizeUiText("Stop response");
     stopButton.title = stopLabel;
@@ -1809,7 +1809,7 @@ function updateNativeChatControls() {
     $("native-chat-turn").dataset.turn = turn;
     setNativeChatCopy("native-chat-turn", Object.hasOwn(NATIVE_CHAT_TURN_LABELS, turn) ? NATIVE_CHAT_TURN_LABELS[turn] : "No chat selected");
     setNativeChatCopy("native-chat-compose-hint", chatNewDraft
-        ? "First message · 1,500 characters maximum"
+        ? "First message · 4,000 characters · Shift+Enter for a new line"
         : "Enter to send · Shift+Enter for a new line");
 }
 function appendNativeChatInline(element, text) {
@@ -3149,7 +3149,7 @@ async function selectNativeChat(thread) {
         if (previousBinding)
             rememberNativeChatDraft(previousBinding, previousText);
         else if (previousWasNew) {
-            chatSavedNewPrompt = previousText.slice(0, 1500);
+            chatSavedNewPrompt = previousText.slice(0, 4000);
             if (chatSavedNewPrompt.trim() && previousNewHadChoices)
                 showToast("New Chat text saved. Choose model and tools again when you return.");
         }
@@ -3179,7 +3179,7 @@ async function selectNativeChat(thread) {
             chatNewModelChoice = null;
             chatNewEffortLevel = null;
             $("native-chat-cancel-new").hidden = false;
-            composer.maxLength = 1500;
+            composer.maxLength = 4000;
             setNativeChatCopy("native-chat-title", "New Chat");
             renderNativeChatTranscript([], null);
         }
@@ -3255,7 +3255,7 @@ function beginNewNativeChat({ quietDiscovery = false } = {}) {
     renderNativeChatThreads();
     renderNativeChatTranscript([], null);
     composer.value = chatSavedNewPrompt;
-    composer.maxLength = 1500;
+    composer.maxLength = 4000;
     setNativeChatNotice("");
     updateNativeChatControls();
     composer.focus();
@@ -3301,8 +3301,8 @@ async function sendNativeChatMessage() {
         setNativeChatNotice("Update Equinox Browser before sending attachments or using account tools.");
         return;
     }
-    if (chatNewDraft && (text.length > 1500 || /[\r\n]/u.test(composer.value))) {
-        setNativeChatNotice("The first message must be one line of at most 1,500 characters.");
+    if (chatNewDraft && (text.length > 4000 || /\r/u.test(composer.value))) {
+        setNativeChatNotice("The first message must be at most 4,000 characters.");
         return;
     }
     chatSending = true;

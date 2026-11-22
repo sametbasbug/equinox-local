@@ -1503,7 +1503,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(Object.keys(body).some(k=>!["creationId","text","model","effort","tool","file","files"].includes(k))
       ||typeof body.creationId!=="string"||
       !/^nch-[a-f0-9-]{36}$/u.test(body.creationId)||typeof body.text!=="string"||
-      (!body.text.trim()&&!body.file&&!body.files)||body.text.length>1500||/[\r\n\0]/u.test(body.text)
+      (!body.text.trim()&&!body.file&&!body.files)||body.text.length>4000||/[\r\0]/u.test(body.text)
       ||(body.model!==undefined&&(typeof body.model!=="string"||!body.model.trim()||body.model.length>80))
       ||(body.effort!==undefined&&(!Number.isInteger(body.effort)||Number(body.effort)<0||Number(body.effort)>12))
       ||(body.tool!==undefined&&(!body.tool||typeof body.tool!=="object"||Array.isArray(body.tool)

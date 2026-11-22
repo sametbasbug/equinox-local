@@ -3585,7 +3585,7 @@ async function stageChatBridgeNewComposer({
   filePaths?:unknown;fileNames?:unknown;fileSizes?:unknown;
 }={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1
-    ||typeof text!=="string"||(!text.trim()&&filePath===undefined&&filePaths===undefined)||text.length>1500||/[\r\n]/u.test(text)
+    ||typeof text!=="string"||(!text.trim()&&filePath===undefined&&filePaths===undefined)||text.length>4000||/[\r\0]/u.test(text)
     ||(toolName!==undefined&&(typeof toolName!=="string"||!toolName.trim()
       ||toolName.length>90||!["tool","app"].includes(String(toolKind))))
     ||(toolName===undefined&&toolKind!==undefined))
@@ -3840,7 +3840,11 @@ async function stageChatBridgeNewComposer({
           if(!confirmed||form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'))
             return{ready:false};
         }
-        return{ready:String(clone.textContent||'').trim()===${JSON.stringify(String(text).trim())}};
+        const paragraphs=[...clone.children];
+        const exactText=paragraphs.length&&paragraphs.every(node=>node.tagName==='P')
+          ?paragraphs.map(node=>String(node.textContent||'')).join('\\n').trim()
+          :String(clone.textContent||'').trim();
+        return{ready:exactText===${JSON.stringify(String(text).trim())}};
       })()`,returnByValue:true,silent:true});
     if(confirmed?.exceptionDetails||cdpObject(confirmed?.result?.value)?.ready!==true)
       throw new Error("The provider first message text or tool mark changed.");

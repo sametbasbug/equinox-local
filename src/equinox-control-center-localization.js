@@ -21,6 +21,8 @@ const TR_UI = Object.freeze({
     "Follow the response in the selected ChatGPT tab while it loads here.": "Yanıt burada yüklenirken seçili ChatGPT sekmesinden de takip edebilirsin.",
     "Ask ChatGPT a question, or choose an existing conversation.": "ChatGPT'ye bir soru sor veya mevcut bir sohbet seç.",
     "First message · 1,500 characters maximum": "İlk mesaj · En fazla 1.500 karakter",
+    "First message · 4,000 characters · Shift+Enter for a new line": "İlk mesaj · En fazla 4.000 karakter · Yeni satır için Shift+Enter",
+    "The first message must be at most 4,000 characters.": "İlk mesaj en fazla 4.000 karakter olabilir.",
     "First message · Up to 1,500 characters, or up to four files without text": "İlk mesaj · En fazla 1.500 karakter; istersen yalnızca dört dosyaya kadar ekle",
     "Copy code": "Kodu kopyala",
     "Code": "Kod",

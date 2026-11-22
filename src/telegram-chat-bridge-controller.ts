@@ -263,8 +263,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       files?:Array<{path:string;name:string;size:number}>} = {}) => {
     if (typeof taskId !== "string" || !/^task-[a-z0-9-]{6,80}$/u.test(taskId)) throw new Error("Telegram new-task id is invalid.");
     if (!Number.isInteger(checkpointRevision) || checkpointRevision < 1) throw new Error("Telegram new-task checkpoint revision is invalid.");
-    if (initialMessage !== undefined && (typeof initialMessage !== "string" || (!initialMessage.trim()&&!file&&!files) || initialMessage.length > 1500 || /[\r\n]/u.test(initialMessage))) {
-      throw new Error("Task chat initial message must be a single line of up to 1500 characters, or explicitly selected files.");
+    if (initialMessage !== undefined && (typeof initialMessage !== "string" || (!initialMessage.trim()&&!file&&!files) || initialMessage.length > 4000 || /[\r\0]/u.test(initialMessage))) {
+      throw new Error("Task chat initial message must be up to 4000 characters, or explicitly selected files.");
     }
     if(modelChoice!==undefined&&(typeof modelChoice!=="string"||!modelChoice.trim()||modelChoice.length>80))
       throw new Error("New Chat requested an invalid model name.");
@@ -425,11 +425,15 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                 &&fileButtons.filter(b=>String(b.getAttribute('aria-label')||'').startsWith(name+' ')
                   &&/remove|kaldır/iu.test(b.getAttribute('aria-label')||'')).length===1)
               &&!form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'));
+            const paragraphs=clone?[...clone.children]:[];
+            const exactText=clone?(paragraphs.length&&paragraphs.every(node=>node.tagName==='P')
+              ?paragraphs.map(node=>String(node.textContent||'')).join('\\n').trim()
+              :String(clone.textContent||'').trim()):'';
             return {
               present: Boolean(composer),
               validMark,
               validFile:validFiles,
-              text: clone ? String(clone.textContent || '').trim() : '',
+              text: exactText,
               generationActive: [...document.querySelectorAll('button[data-testid="stop-button"]')]
                 .some(button => button.isConnected && button.getClientRects().length > 0
                   && button.getBoundingClientRect().height > 0 && button.getBoundingClientRect().width > 0
@@ -476,14 +480,17 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
 
           let inputError: unknown = null;
           try {
-            // A long first message sent as sequential key events can outlive
-            // the IPC deadline and leave a partial draft behind. Browser fill
-            // applies one bounded contenteditable replacement without submit;
-            // inspectComposer below still verifies the exact final text.
-            await callContext("user", "fill", {
+            // Provider ProseMirror flattens line breaks when Browser fill
+            // replaces a contenteditable. For multi-line first prompts use
+            // the existing type_text path, which dispatches one Input.insertText
+            // (not Enter) and creates real paragraph nodes. Never do this
+            // unless the exact composer is confirmed empty, and always
+            // inspect the resulting paragraphs before the submit boundary.
+            const multiline = prompt.includes("\n");
+            await callContext("user", multiline ? "type_text" : "fill", {
               tabId: createdTabId,
               ref: composerRef,
-              value: prompt,
+              ...(multiline ? { text: prompt, delayMs: 0 } : { value: prompt }),
             }, 12_000);
           } catch (error) {
             inputError = error;
@@ -536,7 +543,10 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                   &&String(marks[0].getAttribute('data-prompt-link-href')||'').startsWith('app://'));
               const clone=composer?.cloneNode(true);
               clone?.querySelector('[data-inline-selection-pill],[app-mention-name]')?.remove();
-              const text = clone ? String(clone.textContent || '').trim() : '';
+              const paragraphs=clone?[...clone.children]:[];
+              const text=clone?(paragraphs.length&&paragraphs.every(node=>node.tagName==='P')
+                ?paragraphs.map(node=>String(node.textContent||'')).join('\\n').trim()
+                :String(clone.textContent||'').trim()):'';
               if (!composer) return { ready: false, reason: editors.length > 1 ? "composer_ambiguous" : "composer_missing", name: null, text };
               if(!validMark)return{ready:false,reason:"tool_changed",name:null,text};
               if(${JSON.stringify(attachments.length>0)}){
