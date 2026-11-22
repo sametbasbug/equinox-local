@@ -552,6 +552,9 @@ let chatMessageEditAllowed=false;
 let chatRetryCandidate:{messageId:string;expectedText:string;identity:string;tabId:number}|null=null;
 let chatRetryBusy=false;
 let chatRetryAttempted=false;
+let chatBranchCandidate:{messageId:string;expectedText:string;identity:string;tabId:number}|null=null;
+let chatBranchBusy=false;
+let chatBranchAttempted=false;
 
 const chatComposer = () => document.getElementById("native-chat-text") as HTMLTextAreaElement;
 
@@ -1618,6 +1621,64 @@ async function submitNativeChatAssistantRetry(){
   }
 }
 
+function openNativeChatNewBranch(message:NativeChatMessage){
+  if(chatBranchBusy||chatNewDraft||chatSending||chatSelecting||chatBlocked
+    ||!chatMessageEditAllowed||chatComposer().value.trim()||chatPickedFile
+    ||chatToolSelection||!chatActive||!["ready","complete"].includes(chatTurn)
+    ||typeof message.id!=="string"
+    ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(message.id)
+    ||message.truncated||!message.text.trim()||message.text.length>3500)return;
+  const identity=chatConversationKey(chatActive);
+  if(!identity)return;
+  chatBranchCandidate={messageId:message.id,expectedText:message.text.trim(),
+    identity,tabId:Number(chatActive.tabId)};
+  chatBranchAttempted=false;
+  setNativeChatCopy("native-chat-branch-status","");
+  const dialog=$("native-chat-branch-dialog") as HTMLDialogElement;
+  if(!dialog.open)dialog.showModal();
+  $("native-chat-branch-confirm").focus();
+}
+async function submitNativeChatNewBranch(){
+  const candidate=chatBranchCandidate;
+  const dialog=$("native-chat-branch-dialog") as HTMLDialogElement;
+  if(!candidate||!dialog.open||chatBranchBusy||chatBranchAttempted
+    ||candidate.identity!==chatConversationKey(chatActive)
+    ||candidate.tabId!==chatActive?.tabId||!chatMessageEditAllowed
+    ||chatBlocked||chatSending||chatSelecting||chatComposer().value.trim()
+    ||chatPickedFile||chatToolSelection||!["ready","complete"].includes(chatTurn))return;
+  chatBranchBusy=true;chatBranchAttempted=true;
+  $("native-chat-branch-confirm").disabled=true;
+  $("native-chat-branch-cancel").disabled=true;
+  $("native-chat-branch-close").disabled=true;
+  setNativeChatCopy("native-chat-branch-status","Creating the exact ChatGPT branch…");
+  try{
+    const result=await mutationJson("/api/v1/chat/branch_new","POST",{
+      messageId:candidate.messageId,expectedText:candidate.expectedText,
+      mutationId:"mbr-"+crypto.randomUUID()
+    });
+    if(candidate!==chatBranchCandidate)return;
+    const branch=result.branch?.branch;
+    if(result.branch?.confirmed!==true||!branch
+      ||!Number.isSafeInteger(branch.tabId)||typeof branch.conversationId!=="string"
+      ||!/^[a-zA-Z0-9-]{8,160}$/u.test(branch.conversationId))
+      throw new Error("ChatGPT did not confirm a new conversation identity.");
+    dialog.close();
+    chatThreadRefreshRequested=true;
+    // The verified new Chrome tab is now an ordinary user-selected conversation.
+    await selectNativeChat({tabId:branch.tabId,conversationId:branch.conversationId,
+      title:String(branch.title||"New branch"),opened:true});
+    showToast("New ChatGPT branch created.");
+  }catch(error){
+    if(candidate===chatBranchCandidate&&dialog.open)
+      setNativeChatCopy("native-chat-branch-status",nativeChatErrorMessage(error)+
+        " Inspect Chrome before creating another branch.");
+  }finally{
+    chatBranchBusy=false;
+    $("native-chat-branch-cancel").disabled=false;
+    $("native-chat-branch-close").disabled=false;
+  }
+}
+
 function renderNativeChatMessage(message: NativeChatMessage) {
   const article = document.createElement("article");
   article.className = "native-chat-message";
@@ -1695,6 +1756,19 @@ function renderNativeChatMessage(message: NativeChatMessage) {
       retry.setAttribute("aria-label",localizeUiText("Retry response"));
       retry.addEventListener("click",()=>openNativeChatAssistantRetry(message));
       actions.append(retry);
+    }
+    if(message.role==="assistant"&&typeof message.id==="string"
+      &&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(message.id)
+      &&!message.truncated&&chatMessageEditAllowed&&!chatNewDraft
+      &&!chatBlocked&&!chatSending&&!chatSelecting
+      &&!chatComposer().value.trim()&&!chatPickedFile&&!chatToolSelection
+      &&["ready","complete"].includes(chatTurn)){
+      const branch=document.createElement("button");
+      branch.type="button";branch.className="native-chat-message-copy";
+      branch.textContent=localizeUiText("Branch in new chat");
+      branch.setAttribute("aria-label",localizeUiText("Branch into a new chat"));
+      branch.addEventListener("click",()=>openNativeChatNewBranch(message));
+      actions.append(branch);
     }
     if (message.role === "assistant") {
       const quote = document.createElement("button");
@@ -5652,6 +5726,19 @@ function bindEvents() {
       closeNativeChatTaskPanel();
       $("native-chat-task-open").focus();
     }
+  });
+  $("native-chat-branch-confirm").addEventListener("click",()=>void submitNativeChatNewBranch());
+  for(const name of ["native-chat-branch-close","native-chat-branch-cancel"]){
+    $(name).addEventListener("click",()=>{
+      if(!chatBranchBusy)($("native-chat-branch-dialog") as HTMLDialogElement).close();
+    });
+  }
+  $("native-chat-branch-dialog").addEventListener("cancel",event=>{
+    if(chatBranchBusy)event.preventDefault();
+  });
+  $("native-chat-branch-dialog").addEventListener("close",()=>{
+    chatBranchCandidate=null;chatBranchAttempted=false;
+    $("native-chat-branch-confirm").disabled=false;
   });
   $("native-chat-retry-confirm").addEventListener("click",()=>void submitNativeChatAssistantRetry());
   for(const name of ["native-chat-retry-close","native-chat-retry-cancel"]){

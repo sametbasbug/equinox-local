@@ -3703,6 +3703,141 @@ async function retryChatBridgeAssistant({ tabId, conversationId, messageId, expe
         scheduleDetach(id, CONTINUATION_MUTATION_DETACH_MS);
     }
 }
+/** Open the provider's actual new-chat branch, never a simulated copy. */
+async function branchChatBridgeAssistant({ tabId, conversationId, messageId, expectedText, mutationId } = {}) {
+    if (!Number.isSafeInteger(tabId) || Number(tabId) < 1
+        || typeof conversationId !== "string" || !/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
+        || typeof messageId !== "string"
+        || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(messageId)
+        || typeof expectedText !== "string" || !expectedText.trim()
+        || expectedText !== expectedText.trim() || expectedText.length > 3500
+        || typeof mutationId !== "string" || !/^mbr-[a-f0-9-]{36}$/u.test(mutationId))
+        throw new Error("Branch requires one exact completed assistant reply.");
+    const id = Number(tabId), uuid = String(messageId).slice(0, -10), tabs = workerTabs();
+    const initial = await chooseTab(id);
+    if (initial.pendingUrl || chatGptConversationIdentity(initial)?.conversationId !== conversationId)
+        throw new Error("The selected ChatGPT conversation changed before Branch.");
+    const state = await chatGptContinuationState(id);
+    if (state.generationActive || !state.composerReady || !state.composerEmpty)
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, conversationId,
+            confirmed: false, notSubmitted: true, reason: "provider_busy_or_draft" };
+    const initialTabs = await tabs.query({});
+    const knownIds = new Set(initialTabs.map(t => t.id));
+    await requireDebuggableTab(id);
+    await attachTab(id);
+    let submitted = false;
+    const selector = String.raw `const matches=[...document.querySelectorAll(
+    '[data-chatgpt-search-unit-key$=":assistant"]')]
+    .filter(x=>String(x.getAttribute('data-chatgpt-search-message-ids')||'')
+      .split(/\s+/u)[0]===${JSON.stringify(uuid)});
+    const unit=matches.length===1?matches[0]:null;
+    const turn=unit?.closest('[data-turn-key]');
+    const content=unit?(unit.querySelector('[data-chatgpt-selection-message-id]')||unit):null;
+    const more=[...(turn?.querySelectorAll('button[aria-label]')||[])]
+      .filter(b=>b.getClientRects().length
+        &&/^(More actions|Diğer işlemler)$/iu.test(
+          String(b.getAttribute('aria-label')||'').trim()));`;
+    try {
+        const preflight = await send(id, "Runtime.evaluate", {
+            expression: `(()=>{
+        ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
+        ${selector}
+        return{ready:location.origin==='https://chatgpt.com'
+          &&location.pathname.split('/').at(-1)===${JSON.stringify(conversationId)}
+          &&!!unit&&!!turn&&more.length===1
+          &&readChatBridgeVisibleText(content)===${JSON.stringify(expectedText)}};
+      })()`, returnByValue: true, silent: true
+        });
+        if (preflight?.exceptionDetails || cdpObject(preflight?.result?.value)?.ready !== true)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, conversationId,
+                confirmed: false, notSubmitted: true, reason: "source_assistant_unavailable" };
+        if (!await claimChatBridgeReceipt(String(mutationId)))
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, conversationId,
+                confirmed: false, duplicatePrevented: true };
+        const latest = await chatGptContinuationState(id);
+        if (latest.generationActive || latest.conversationId !== conversationId
+            || !latest.composerReady || !latest.composerEmpty)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, conversationId,
+                confirmed: false, notSubmitted: true, reason: "provider_turn_changed" };
+        submitted = true;
+        const click = await send(id, "Runtime.evaluate", {
+            expression: `(async()=>{
+        ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
+        ${selector}
+        if(matches.length!==1||more.length!==1
+          ||location.pathname.split('/').at(-1)!==${JSON.stringify(conversationId)}
+          ||readChatBridgeVisibleText(content)!==${JSON.stringify(expectedText)})
+          return{clicked:false,stage:'source_changed'};
+        const pause=()=>new Promise(resolve=>setTimeout(resolve,85));
+        const visible=m=>m.getClientRects().length>0;
+        more[0].click();
+        let branch=null;
+        for(let n=0;n<28;n++){
+          const menus=[...document.querySelectorAll('[role="menu"]')]
+            .filter(m=>visible(m)&&m.getAttribute('aria-labelledby')===more[0].id);
+          const options=menus.length===1?[...menus[0].querySelectorAll('[role="menuitem"]')]
+            .filter(m=>visible(m)&&m.getAttribute('aria-haspopup')==='menu'
+              &&/^(Branch conversation|Konuşmayı dallandır)$/iu.test(String(m.innerText||'').trim())):[];
+          if(options.length===1){branch=options[0];break;}
+          await pause();
+        }
+        if(!branch)return{clicked:false,stage:'branch_not_offered'};
+        branch.click();
+        let target=null;
+        for(let n=0;n<28;n++){
+          const menus=[...document.querySelectorAll('[role="menu"]')]
+            .filter(m=>visible(m)&&m.getAttribute('aria-labelledby')===branch.id);
+          const options=menus.length===1?[...menus[0].querySelectorAll('[role="menuitem"]')]
+            .filter(m=>visible(m)&&m.getAttribute('aria-busy')!=='true'
+              &&/^(Branch in new chat|Yeni sohbette dallandır)$/iu.test(
+                String(m.innerText||'').trim())):[];
+          if(options.length===1){target=options[0];break;}
+          await pause();
+        }
+        if(!target)return{clicked:false,stage:'new_chat_branch_not_offered'};
+        if(location.pathname.split('/').at(-1)!==${JSON.stringify(conversationId)}
+          ||readChatBridgeVisibleText(content)!==${JSON.stringify(expectedText)})
+          return{clicked:false,stage:'source_changed_after_menu'};
+        target.click();return{clicked:true};
+      })()`, awaitPromise: true, returnByValue: true, silent: true
+        });
+        if (click?.exceptionDetails || cdpObject(click?.result?.value)?.clicked !== true)
+            return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, conversationId,
+                confirmed: false, ambiguous: true, reason: "provider_branch_click_unconfirmed" };
+        for (let n = 0; n < 75; n++) {
+            const current = await tabs.query({});
+            const changed = current.filter(tab => tab.id === id
+                && !tab.pendingUrl && chatGptConversationIdentity(tab)
+                && chatGptConversationIdentity(tab)?.conversationId !== conversationId);
+            const created = current.filter(tab => typeof tab.id === "number" && !knownIds.has(tab.id)
+                && tab.windowId === initial.windowId && !tab.pendingUrl
+                && (!tab.openerTabId || tab.openerTabId === id)
+                && chatGptConversationIdentity(tab)
+                && chatGptConversationIdentity(tab)?.conversationId !== conversationId);
+            const eligible = [...changed, ...created];
+            if (eligible.length === 1) {
+                const dest = eligible[0], destId = chatGptConversationIdentity(dest);
+                if (destId && typeof dest.id === "number")
+                    return { chatBridgeVersion: CHAT_BRIDGE_VERSION, confirmed: true,
+                        tabId: id, conversationId, messageId, mutationId,
+                        branch: { tabId: dest.id, conversationId: destId.conversationId,
+                            canonicalUrl: destId.canonicalUrl, title: destId.title } };
+            }
+            if (eligible.length > 1)
+                break;
+            await new Promise(resolve => setTimeout(resolve, 120));
+        }
+        throw new Error("New-chat branch did not yield an exact Chrome conversation identity.");
+    }
+    catch {
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, conversationId,
+            confirmed: false, ambiguous: submitted, notSubmitted: !submitted,
+            reason: submitted ? "provider_branch_uncertain" : "branch_not_submitted" };
+    }
+    finally {
+        scheduleDetach(id, CONTINUATION_MUTATION_DETACH_MS);
+    }
+}
 async function readChatBridgeRecent({ tabId, conversationId } = {}) {
     if (!Number.isSafeInteger(tabId) || Number(tabId) < 1 || typeof conversationId !== "string" || !/^[A-Za-z0-9-]{8,160}$/u.test(conversationId))
         throw new Error("Chat history identity is invalid.");
@@ -10229,6 +10364,7 @@ const COMMANDS = {
     "chat_bridge.conversation_action": controlChatBridgeConversation,
     "chat_bridge.edit_message": editChatBridgeMessage,
     "chat_bridge.retry_assistant": retryChatBridgeAssistant,
+    "chat_bridge.branch_new_chat": branchChatBridgeAssistant,
     "chat_bridge.model": chatBridgeModelControl,
     "chat_bridge.model_catalog": discoverChatBridgeNewModel,
     "chat_bridge.tools_catalog": readChatBridgeToolsCatalog,

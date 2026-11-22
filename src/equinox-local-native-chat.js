@@ -109,6 +109,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     const createAttempts = new Map();
     const attempts = new Map();
     const actionAttempts = new Map();
+    const branchAttempts = new Map();
     const retryAttempts = new Map();
     const editAttempts = new Map();
     let mutatingAction = false;
@@ -986,6 +987,93 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             tabId: binding.tabId, promise });
         return promise;
     };
+    const branchNewChat = async (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            invalid("Branch requires an exact provider assistant reply.");
+        const body = value;
+        if (Object.keys(body).some(k => !["messageId", "expectedText", "mutationId"].includes(k))
+            || typeof body.messageId !== "string"
+            || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
+            || typeof body.expectedText !== "string" || !body.expectedText.trim()
+            || body.expectedText !== body.expectedText.trim() || body.expectedText.length > 3500
+            || typeof body.mutationId !== "string" || !/^mbr-[a-f0-9-]{36}$/u.test(body.mutationId))
+            invalid("Branch needs one exact complete assistant reply and a one-use identity.");
+        const key = String(body.mutationId), fingerprint = JSON.stringify(body);
+        const prior = branchAttempts.get(key);
+        if (prior) {
+            if (prior.fingerprint !== fingerprint || !selected
+                || prior.conversationKey !== conversationKey(selected) || prior.tabId !== selected.tabId)
+                invalid("A Branch id cannot be reused for another response or conversation.");
+            return prior.promise;
+        }
+        if (branchAttempts.size >= 256)
+            invalid("This Chat session reached its bounded branch limit.");
+        if (!selected || selecting || sending || creating || pending || blocked || mutatingAction)
+            invalid("Finish pending messages before creating a conversation branch.");
+        const binding = selected, revision = selectedRevision;
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            invalid("Update Equinox Browser to branch an assistant reply.");
+        const taskId = await currentTaskId(binding);
+        if (!await messageEditPermitted(binding, taskId))
+            invalid("An active automation Task Capsule cannot change its conversation branch.");
+        if (selectedRevision !== revision || !selected || selected.tabId !== binding.tabId
+            || conversationKey(selected) !== conversationKey(binding)
+            || selecting || sending || creating || pending || blocked || mutatingAction)
+            invalid("Conversation changed while verifying Branch.");
+        const source = history.find(item => item.id === body.messageId && item.role === "assistant"
+            && item.status === "complete" && item.truncated !== true);
+        if (!source || source.text !== body.expectedText)
+            invalid("This exact assistant reply is not available in the selected provider history.");
+        mutatingAction = true;
+        const promise = (async () => {
+            try {
+                const result = await call("chat_bridge.branch_new_chat", {
+                    tabId: binding.tabId, conversationId: binding.conversationId,
+                    messageId: body.messageId, expectedText: body.expectedText,
+                    mutationId: key
+                }, 25_000);
+                const next = result?.branch;
+                if (selectedRevision !== revision || !selected
+                    || selected.tabId !== binding.tabId || conversationKey(selected) !== conversationKey(binding)
+                    || result?.tabId !== binding.tabId || result?.conversationId !== binding.conversationId)
+                    throw new Error("Branch lost the exact original conversation binding.");
+                if (result?.confirmed !== true || !next || !Number.isSafeInteger(next.tabId)
+                    || typeof next.conversationId !== "string"
+                    || !/^[a-zA-Z0-9-]{8,160}$/u.test(next.conversationId)
+                    || typeof next.canonicalUrl !== "string"
+                    || chatGptConversationIdFromUrl(next.canonicalUrl) !== next.conversationId
+                    || next.conversationId === binding.conversationId) {
+                    if (result?.notSubmitted === true) {
+                        const err = new Error("The provider did not offer New-chat Branch for this exact reply.");
+                        err.statusCode = 409;
+                        throw err;
+                    }
+                    throw new Error("ChatGPT Branch may have started. Inspect Chrome before trying again.");
+                }
+                // Preserve original Task Capsule association. The new browser branch
+                // is a separate conversation that the native UI can select directly.
+                historyNotice = "A new ChatGPT branch was created. Open it from Native Chat.";
+                return { confirmed: true, branch: {
+                        tabId: next.tabId, conversationId: next.conversationId,
+                        canonicalUrl: next.canonicalUrl,
+                        title: typeof next.title === "string" ? safeTitle(next.title) : "New branch"
+                    } };
+            }
+            catch (error) {
+                if (error?.statusCode !== 409) {
+                    blocked = true;
+                    uncertainConversations.add(conversationKey(binding));
+                }
+                throw error;
+            }
+            finally {
+                mutatingAction = false;
+            }
+        })();
+        branchAttempts.set(key, { fingerprint, conversationKey: conversationKey(binding),
+            tabId: binding.tabId, promise });
+        return promise;
+    };
     const startNew = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Invalid New Chat request.");
@@ -1139,5 +1227,5 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, toolKey, fileKey, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, search, project, conversationAction, editMessage, retryAssistant, tools, select, read, send, startNew, model });
+    return Object.freeze({ list, search, project, conversationAction, editMessage, retryAssistant, branchNewChat, tools, select, read, send, startNew, model });
 }
