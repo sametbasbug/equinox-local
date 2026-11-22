@@ -1398,7 +1398,7 @@ function paintNativeChatModelControls() {
         }) : [(() => {
                 const option = document.createElement("option");
                 option.value = "";
-                option.textContent = localizeUiText("Discover available models");
+                option.textContent = localizeUiText("Model");
                 return option;
             })()];
         picker.replaceChildren(...options);
@@ -1420,6 +1420,7 @@ function paintNativeChatModelControls() {
     const max = Number(power?.max);
     const hasPower = power && Number.isInteger(value) && Number.isInteger(min)
         && Number.isInteger(max) && min <= value && value <= max;
+    $("native-chat-model-toolbar").querySelector(".native-chat-model-power").hidden = !hasPower;
     const label = chatNewDraft
         ? hasPower && chatNewEffortLevel !== null
             ? localizeUiText("Effort") + " " + String(value - min + 1) + "/" + String(max - min + 1)
@@ -1530,7 +1531,10 @@ function paintNativeChatFileControls() {
     const ready = !chatSelecting && !chatSending && !chatServerSending && !chatBlocked && !chatFileSelectionBusy
         && chatConnection === "ready" && (chatNewDraft || (Boolean(chatActive) && ["ready", "complete"].includes(chatTurn)));
     $("native-chat-file-pick").disabled = !ready;
-    setNativeChatCopy("native-chat-file-pick", "Attach files…");
+    const attachButton = $("native-chat-file-pick");
+    const attachLabel = localizeUiText("Attach files…");
+    attachButton.title = attachLabel;
+    attachButton.setAttribute("aria-label", attachLabel);
     $("native-chat-file-remove").hidden = !chatPickedFiles.length;
     $("native-chat-file-remove").disabled = chatSending || chatSelecting || chatServerSending || chatFileSelectionBusy;
     setNativeChatCopy("native-chat-file-remove", chatPickedFiles.length > 1 ? "Remove all" : "Remove file");
@@ -6542,6 +6546,29 @@ function onNavigationShortcut(event) {
 }
 function bindEvents() {
     document.addEventListener("keydown", onNavigationShortcut);
+    document.addEventListener("keydown", event => {
+        if ($("section-chat").hidden || !(event.metaKey || event.ctrlKey) || event.altKey
+            || event.shiftKey || event.key.toLowerCase() !== "k")
+            return;
+        const search = $("native-chat-filter");
+        if (search.disabled)
+            return;
+        event.preventDefault();
+        search.focus();
+        search.select();
+    });
+    $("native-chat-filter").addEventListener("keydown", event => {
+        if (event.key !== "Escape")
+            return;
+        event.preventDefault();
+        const filter = $("native-chat-filter");
+        if (filter.value) {
+            filter.value = "";
+            filter.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        else if (!chatComposer().disabled)
+            chatComposer().focus();
+    });
     for (const button of document.querySelectorAll(".nav-item")) {
         button.addEventListener("click", () => switchSection(button.dataset.section, { remember: true }));
     }

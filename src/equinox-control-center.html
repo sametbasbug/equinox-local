@@ -634,46 +634,52 @@
           </div>
           <div class="native-chat-column native-chat-dock">
             <p id="native-chat-notice" class="native-chat-notice" role="status" hidden></p>
-            <div id="native-chat-model-toolbar" class="native-chat-model-toolbar" aria-label="ChatGPT model and reasoning settings">
-              <label for="native-chat-model-choice">Model</label>
-              <select id="native-chat-model-choice" aria-label="ChatGPT model" disabled>
-                <option value="">Discover available models</option>
-              </select>
-              <button id="native-chat-model-refresh" class="text-button" type="button" title="Discover models available to this account" disabled>Models</button>
-              <div class="native-chat-model-power" aria-label="Reasoning effort">
-                <button id="native-chat-power-less" class="icon-button" type="button" aria-label="Less reasoning" title="Less reasoning" disabled>−</button>
-                <span id="native-chat-power-label" role="status">Automatic</span>
-                <button id="native-chat-power-more" class="icon-button" type="button" aria-label="More reasoning" title="More reasoning" disabled>+</button>
-              </div>
-              <span id="native-chat-model-status" class="native-chat-model-status" role="status"></span>
-            </div>
-            <div class="native-chat-tool-toolbar" aria-label="ChatGPT account tools">
-              <label for="native-chat-tool-choice">Tool</label>
-              <select id="native-chat-tool-choice" aria-label="Choose ChatGPT tool" disabled>
-                <option value="">No tool</option>
-              </select>
-              <button id="native-chat-tool-refresh" class="text-button" type="button">Discover tools</button>
-              <span id="native-chat-tool-status" role="status" class="native-chat-tool-status"></span>
-            </div>
-            <div class="native-chat-file-stage" aria-label="Selected ChatGPT attachment">
-              <button id="native-chat-file-pick" class="text-button" type="button">Attach files…</button>
-              <span id="native-chat-file-name" class="native-chat-file-name" role="status"></span>
-              <button id="native-chat-file-remove" class="text-button" type="button" hidden>Remove file</button>
-            </div>
-            <form id="native-chat-form" class="native-chat-compose">
-              <label for="native-chat-text" class="native-chat-sr-only">Message</label>
-              <textarea id="native-chat-text" rows="1" maxlength="4000" placeholder="Write a message…" aria-describedby="native-chat-compose-hint" disabled></textarea>
+            <div class="native-chat-compose">
+              <form id="native-chat-form" class="native-chat-compose-form">
+                <label for="native-chat-text" class="native-chat-sr-only">Message</label>
+                <textarea id="native-chat-text" rows="1" maxlength="4000" placeholder="Message ChatGPT…" aria-describedby="native-chat-compose-hint" disabled></textarea>
+              </form>
               <div class="native-chat-compose-actions">
-                <span id="native-chat-compose-hint" class="native-chat-compose-hint">Enter to send · Shift+Enter for a new line</span>
+                <div class="native-chat-compose-controls">
+                  <div class="native-chat-file-stage" aria-label="ChatGPT attachments">
+                    <button id="native-chat-file-pick" class="native-chat-attach-button" type="button" title="Attach files" aria-label="Attach files">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    </button>
+                    <span id="native-chat-file-name" class="native-chat-file-name" role="status"></span>
+                    <button id="native-chat-file-remove" class="text-button" type="button" hidden>Remove all files</button>
+                  </div>
+                  <div id="native-chat-model-toolbar" class="native-chat-model-toolbar" aria-label="ChatGPT model and reasoning settings">
+                    <label for="native-chat-model-choice" class="native-chat-sr-only">Model</label>
+                    <select id="native-chat-model-choice" aria-label="ChatGPT model" disabled>
+                      <option value="">Select model</option>
+                    </select>
+                    <button id="native-chat-model-refresh" class="native-chat-discover-button" type="button" title="Discover available models" aria-label="Discover available models" disabled>↻</button>
+                    <div class="native-chat-model-power" aria-label="Reasoning effort">
+                      <button id="native-chat-power-less" class="icon-button" type="button" aria-label="Less reasoning" title="Less reasoning" disabled>−</button>
+                      <span id="native-chat-power-label" role="status">Automatic</span>
+                      <button id="native-chat-power-more" class="icon-button" type="button" aria-label="More reasoning" title="More reasoning" disabled>+</button>
+                    </div>
+                    <span id="native-chat-model-status" class="native-chat-model-status" role="status"></span>
+                  </div>
+                  <div class="native-chat-tool-toolbar" aria-label="ChatGPT account tools">
+                    <label for="native-chat-tool-choice" class="native-chat-sr-only">Tool</label>
+                    <select id="native-chat-tool-choice" aria-label="Choose ChatGPT tool" disabled>
+                      <option value="">No tool</option>
+                    </select>
+                    <button id="native-chat-tool-refresh" class="native-chat-discover-button" type="button" title="Discover available tools" aria-label="Discover available tools">↻</button>
+                    <span id="native-chat-tool-status" role="status" class="native-chat-tool-status"></span>
+                  </div>
+                </div>
                 <div class="native-chat-compose-buttons">
                   <button id="native-chat-cancel-new" class="text-button" type="button" hidden>Cancel</button>
-                  <button id="native-chat-send" class="button primary" type="submit" disabled>
-                    <span>Send</span>
+                  <button id="native-chat-send" class="button primary" form="native-chat-form" type="submit" disabled aria-label="Send message" title="Send message">
+                    <span class="native-chat-sr-only">Send</span>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg>
                   </button>
                 </div>
               </div>
-            </form>
+            </div>
+            <span id="native-chat-compose-hint" class="native-chat-compose-hint">Enter to send · Shift+Enter for a new line</span>
           </div>
         </div>
         <dialog id="native-chat-versions-dialog" class="native-chat-action-dialog native-chat-versions-dialog" aria-labelledby="native-chat-versions-title">
