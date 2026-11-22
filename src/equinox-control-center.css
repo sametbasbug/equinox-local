@@ -828,6 +828,29 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .native-chat-project-choice:hover { background: var(--surface-hover); color: var(--text); }
 .native-chat-project-choice.is-active { background: var(--accent-soft); color: var(--text); font-weight: 650; }
+.native-chat-project-settings {
+  margin: 0 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-2);
+  font-size: 11px;
+  color: var(--text-2);
+  overflow: hidden;
+}
+.native-chat-project-settings > summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  font-weight: 670;
+  color: var(--text);
+}
+.native-chat-project-settings > :not(summary) { margin: 0; padding: 5px 10px 10px; }
+.native-chat-project-settings strong { font-weight: 670; }
+.native-chat-project-settings p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.native-chat-project-settings > div {
+  max-height: 220px;
+  overflow: auto;
+}
+
 .native-chat-thread-group-heading {
   margin: 11px 12px 4px 17px;
   color: var(--muted);

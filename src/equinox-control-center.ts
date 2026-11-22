@@ -499,6 +499,7 @@ const chatActionShareKey=(thread:UiRemoteData)=>chatThreadBrowserInstanceId&&thr
 let chatProjectCatalog: UiRemoteData[] = [];
 let chatProjectId: string | null = null;
 let chatProjectName = "";
+let chatProjectSettings:{instructions:string;instructionsTruncated:boolean;memoryLabel:string}|null=null;
 let chatProjectThreads: UiRemoteData[] = [];
 let chatProjectBusy = false;
 let chatProjectError = "";
@@ -606,7 +607,7 @@ function renderNativeChatThreads() {
       String(thread.title || "ChatGPT conversation").toLocaleLowerCase(locale).includes(query));
   const signature = JSON.stringify([state.language, ready, query, searching,chatSearchError,
     chatProjectCatalog.map(p=>[p.id,p.name]),chatProjectId,chatProjectBusy,chatProjectError,
-    threads.map(thread =>
+    chatProjectSettings,threads.map(thread =>
     [thread.conversationId, thread.tabId, thread.title, thread.opened, thread.projectId,
       thread.projectName, isSelectedNativeChatThread(thread)])]);
   const list = $("native-chat-thread-list");
@@ -648,6 +649,33 @@ function renderNativeChatThreads() {
         if(focusedProject===item.id)nextFocus=button;
       }
       details.append(choices);next.append(details);
+      if(chatProjectId&&chatProjectSettings&&!chatProjectBusy){
+        const info=document.createElement("details");
+        info.className="native-chat-project-settings";
+        const summary=document.createElement("summary");
+        summary.textContent=localizeUiText("Project settings");
+        info.append(summary);
+        if(chatProjectSettings.memoryLabel){
+          const memory=document.createElement("p");
+          const label=document.createElement("strong");
+          label.textContent=localizeUiText("Memory")+": ";
+          memory.append(label,document.createTextNode(chatProjectSettings.memoryLabel));
+          info.append(memory);
+        }
+        const instructions=document.createElement("div");
+        const label=document.createElement("strong");
+        label.textContent=localizeUiText("Instructions");
+        const value=document.createElement("p");
+        value.textContent=chatProjectSettings.instructions||localizeUiText("No project instructions.");
+        instructions.append(label,value);
+        info.append(instructions);
+        if(chatProjectSettings.instructionsTruncated){
+          const more=document.createElement("small");
+          more.textContent=localizeUiText("Instructions are truncated. Open ChatGPT to view the rest.");
+          info.append(more);
+        }
+        next.append(info);
+      }
     }
     const groups = new Map<string, { title: string; rows: UiRemoteData[] }>();
     for (const thread of threads) {
@@ -744,7 +772,7 @@ function renderNativeChatThreads() {
 async function browseNativeChatProject(projectId:string|null){
   if(chatProjectBusy)return;
   if(!projectId){
-    chatProjectId=null;chatProjectName="";chatProjectThreads=[];chatProjectError="";
+    chatProjectId=null;chatProjectName="";chatProjectSettings=null;chatProjectThreads=[];chatProjectError="";
     chatProjectGeneration++;
     renderNativeChatThreads();
     return;
@@ -752,7 +780,7 @@ async function browseNativeChatProject(projectId:string|null){
   const item=chatProjectCatalog.find(project=>project.id===projectId);
   if(!item)return;
   chatProjectId=projectId;chatProjectName=String(item.name);
-  chatProjectThreads=[];chatProjectError="";chatProjectBusy=true;
+  chatProjectSettings=null;chatProjectThreads=[];chatProjectError="";chatProjectBusy=true;
   const generation=++chatProjectGeneration;
   renderNativeChatThreads();
   try{
@@ -760,6 +788,13 @@ async function browseNativeChatProject(projectId:string|null){
     if(generation!==chatProjectGeneration||chatProjectId!==projectId)return;
     chatProjectName=String(data.project?.name||item.name);
     chatProjectThreads=Array.isArray(data.project?.threads)?data.project.threads:[];
+    const source=data.project?.settings;
+    chatProjectSettings=source&&typeof source==="object"
+      &&typeof source.instructions==="string"&&source.instructions.length<=4000
+      &&typeof source.memoryLabel==="string"&&source.memoryLabel.length<=80
+      &&typeof source.instructionsTruncated==="boolean"
+      ?{instructions:source.instructions,memoryLabel:source.memoryLabel,
+        instructionsTruncated:source.instructionsTruncated}:null;
   }catch(error){
     if(generation!==chatProjectGeneration||chatProjectId!==projectId)return;
     chatProjectError=nativeChatErrorMessage(error);
@@ -2375,7 +2410,7 @@ async function selectNativeChat(thread: UiRemoteData) {
     const data = await mutationJson("/api/v1/chat/select", "POST", { tabId: thread.tabId, conversationId: thread.conversationId });
     if (selectionGeneration !== chatSelectionGeneration) return;
     renderNativeChatState(data.chat);
-    chatProjectId=null;chatProjectName="";chatProjectThreads=[];
+    chatProjectId=null;chatProjectName="";chatProjectSettings=null;chatProjectThreads=[];
     chatProjectGeneration++;
     const filter=$("native-chat-filter") as HTMLInputElement;
     if(filter.value){filter.value="";scheduleNativeChatSearch();}

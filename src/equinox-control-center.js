@@ -475,6 +475,7 @@ const chatActionShareKey = (thread) => chatThreadBrowserInstanceId && thread?.co
 let chatProjectCatalog = [];
 let chatProjectId = null;
 let chatProjectName = "";
+let chatProjectSettings = null;
 let chatProjectThreads = [];
 let chatProjectBusy = false;
 let chatProjectError = "";
@@ -575,7 +576,7 @@ function renderNativeChatThreads() {
         : browseProject ? chatProjectThreads : chatThreadList.filter(thread => String(thread.title || "ChatGPT conversation").toLocaleLowerCase(locale).includes(query));
     const signature = JSON.stringify([state.language, ready, query, searching, chatSearchError,
         chatProjectCatalog.map(p => [p.id, p.name]), chatProjectId, chatProjectBusy, chatProjectError,
-        threads.map(thread => [thread.conversationId, thread.tabId, thread.title, thread.opened, thread.projectId,
+        chatProjectSettings, threads.map(thread => [thread.conversationId, thread.tabId, thread.title, thread.opened, thread.projectId,
             thread.projectName, isSelectedNativeChatThread(thread)])]);
     const list = $("native-chat-thread-list");
     if (signature !== chatThreadRenderSignature) {
@@ -622,6 +623,33 @@ function renderNativeChatThreads() {
             }
             details.append(choices);
             next.append(details);
+            if (chatProjectId && chatProjectSettings && !chatProjectBusy) {
+                const info = document.createElement("details");
+                info.className = "native-chat-project-settings";
+                const summary = document.createElement("summary");
+                summary.textContent = localizeUiText("Project settings");
+                info.append(summary);
+                if (chatProjectSettings.memoryLabel) {
+                    const memory = document.createElement("p");
+                    const label = document.createElement("strong");
+                    label.textContent = localizeUiText("Memory") + ": ";
+                    memory.append(label, document.createTextNode(chatProjectSettings.memoryLabel));
+                    info.append(memory);
+                }
+                const instructions = document.createElement("div");
+                const label = document.createElement("strong");
+                label.textContent = localizeUiText("Instructions");
+                const value = document.createElement("p");
+                value.textContent = chatProjectSettings.instructions || localizeUiText("No project instructions.");
+                instructions.append(label, value);
+                info.append(instructions);
+                if (chatProjectSettings.instructionsTruncated) {
+                    const more = document.createElement("small");
+                    more.textContent = localizeUiText("Instructions are truncated. Open ChatGPT to view the rest.");
+                    info.append(more);
+                }
+                next.append(info);
+            }
         }
         const groups = new Map();
         for (const thread of threads) {
@@ -726,6 +754,7 @@ async function browseNativeChatProject(projectId) {
     if (!projectId) {
         chatProjectId = null;
         chatProjectName = "";
+        chatProjectSettings = null;
         chatProjectThreads = [];
         chatProjectError = "";
         chatProjectGeneration++;
@@ -737,6 +766,7 @@ async function browseNativeChatProject(projectId) {
         return;
     chatProjectId = projectId;
     chatProjectName = String(item.name);
+    chatProjectSettings = null;
     chatProjectThreads = [];
     chatProjectError = "";
     chatProjectBusy = true;
@@ -748,6 +778,13 @@ async function browseNativeChatProject(projectId) {
             return;
         chatProjectName = String(data.project?.name || item.name);
         chatProjectThreads = Array.isArray(data.project?.threads) ? data.project.threads : [];
+        const source = data.project?.settings;
+        chatProjectSettings = source && typeof source === "object"
+            && typeof source.instructions === "string" && source.instructions.length <= 4000
+            && typeof source.memoryLabel === "string" && source.memoryLabel.length <= 80
+            && typeof source.instructionsTruncated === "boolean"
+            ? { instructions: source.instructions, memoryLabel: source.memoryLabel,
+                instructionsTruncated: source.instructionsTruncated } : null;
     }
     catch (error) {
         if (generation !== chatProjectGeneration || chatProjectId !== projectId)
@@ -2496,6 +2533,7 @@ async function selectNativeChat(thread) {
         renderNativeChatState(data.chat);
         chatProjectId = null;
         chatProjectName = "";
+        chatProjectSettings = null;
         chatProjectThreads = [];
         chatProjectGeneration++;
         const filter = $("native-chat-filter");

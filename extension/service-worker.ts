@@ -2748,8 +2748,101 @@ async function browseChatBridgeProject({tabId,projectId}:{tabId?:unknown;project
     while(chatBridgeSearchTickets.size>=4)chatBridgeSearchTickets.delete(chatBridgeSearchTickets.keys().next().value!);
     const ticket=crypto.randomUUID();
     chatBridgeSearchTickets.set(ticket,{tabId:Number(tabId),sourceUrl:source.url||"",createdAt:now,links});
+    // The project page is opened only in this disposable Chrome tab.
+    // Project Settings is strictly read-only; never focus/edit/submit its form.
+    let settings:null|{instructions:string;instructionsTruncated:boolean;memoryLabel:string}=null;
+    try{
+      const projectUrl="https://chatgpt.com/g/"+projectId+"/project";
+      await send(tempId,"Page.navigate",{url:projectUrl});
+      await waitForTab(tempId,tab=>tab.status==="complete"&&tab.url===projectUrl,9_000);
+      const opener=await send(tempId,"Runtime.evaluate",{expression:`(async()=>{
+        if(location.origin!=='https://chatgpt.com'
+          ||location.pathname!==${JSON.stringify("/g/"+projectId+"/project")})
+          return{status:'unavailable'};
+        const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+        let controls=null;
+        for(let n=0;n<35;n++){
+          controls=[...document.querySelectorAll('main button[aria-label]')]
+            .filter(b=>b.getClientRects().length&&/^(?:Proje işlemleri|Project actions)$/iu.test(
+              b.getAttribute('aria-label')||''));
+          if(controls.length===1)break;
+          await sleep(100);
+        }
+        if(controls?.length!==1)return{status:'unavailable'};
+        const bounds=controls[0].getBoundingClientRect();
+        const x=bounds.x+bounds.width/2,y=bounds.y+bounds.height/2;
+        if(bounds.width<8||bounds.height<8||x<0||y<0
+          ||x>=innerWidth||y>=innerHeight
+          ||document.elementFromPoint(x,y)?.closest('button')!==controls[0])
+          return{status:'unavailable'};
+        return{status:'ready',x,y};
+      })()`,returnByValue:true,awaitPromise:true,silent:true});
+      if(opener?.exceptionDetails)throw new Error("Project menu control unavailable.");
+      const point:any=cdpObject(opener?.result?.value);
+      if(point?.status!=="ready"||typeof point.x!=="number"||typeof point.y!=="number"
+        ||!Number.isFinite(point.x)||!Number.isFinite(point.y))
+        throw new Error("Provider did not confirm the exact project menu button.");
+      // Radix project-menu trigger requires a real user-input event, not an
+      // injected element.click(). Use the transient, exact verified button.
+      await send(tempId,"Input.dispatchMouseEvent",{
+        type:"mousePressed",x:point.x,y:point.y,button:"left",clickCount:1});
+      await send(tempId,"Input.dispatchMouseEvent",{
+        type:"mouseReleased",x:point.x,y:point.y,button:"left",clickCount:1});
+      const detail=await send(tempId,"Runtime.evaluate",{expression:`(async()=>{
+        if(location.origin!=='https://chatgpt.com'
+          ||location.pathname!==${JSON.stringify("/g/"+projectId+"/project")})
+          return{status:'unavailable'};
+        const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+        let settings=null;
+        for(let n=0;n<30;n++){
+          settings=[...document.querySelectorAll('[role=menuitem]')].filter(x=>
+            x.getClientRects().length&&/^(?:Proje ayarları|Project settings)$/iu.test(
+              String(x.innerText||'').trim()));
+          if(settings.length===1)break;
+          await sleep(100);
+        }
+        if(settings?.length!==1)return{status:'unavailable'};
+        settings[0].click();
+        let dialog=null;
+        for(let n=0;n<30;n++){
+          const matches=[...document.querySelectorAll('[role=dialog]')].filter(d=>
+            d.getClientRects().length&&[...d.querySelectorAll('h2')].some(h=>
+              /^(?:Proje ayarları|Project settings)$/iu.test(String(h.innerText||'').trim())));
+          if(matches.length===1){dialog=matches[0];break}
+          await sleep(100);
+        }
+        if(!dialog)return{status:'unavailable'};
+        const title=dialog.querySelector('input[name="project-name"]');
+        const instructions=dialog.querySelector('textarea[name="project-instructions"]');
+        if(!title||!instructions||typeof title.value!=='string'
+          ||typeof instructions.value!=='string')
+          return{status:'unavailable'};
+        const memory=[...dialog.querySelectorAll('button')].filter(b=>
+          b.getClientRects().length&&/^(?:Varsayılan|Default|Yalnızca proje belleği|Project-only memory)$/iu.test(
+            String(b.innerText||'').trim()));
+        const raw=String(instructions.value);
+        return{status:'ready',title:title.value,
+          instructions:raw.slice(0,4000),instructionsTruncated:raw.length>4000,
+          memoryLabel:memory.length===1?String(memory[0].innerText||'').trim():''};
+      })()`,returnByValue:true,awaitPromise:true,silent:true});
+      if(!detail?.exceptionDetails){
+        const reported:any=cdpObject(detail?.result?.value);
+        if(reported?.status==="ready"&&reported.title===data.name
+          &&typeof reported.instructions==="string"&&reported.instructions.length<=4000
+          &&typeof reported.instructionsTruncated==="boolean"
+          &&typeof reported.memoryLabel==="string"&&reported.memoryLabel.length<=80)
+          settings={instructions:reported.instructions,
+            instructionsTruncated:reported.instructionsTruncated,memoryLabel:reported.memoryLabel};
+      }
+    }catch{
+      // Settings may be unavailable on a changed provider UI. Browsing existing
+      // project conversations remains available without fabricating settings.
+    }
+    const still=await chooseTab(Number(tabId));
+    if(still.pendingUrl||still.url!==source.url)
+      throw new Error("The source conversation changed while reading project settings.");
     return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:Number(tabId),projectId,
-      name:data.name,items,ticket,partial:true,source:"visible-project"};
+      name:data.name,items,ticket,settings,partial:true,source:"visible-project"};
   }finally{
     if(tempId!==null){
       await detachTab(tempId).catch(()=>{});

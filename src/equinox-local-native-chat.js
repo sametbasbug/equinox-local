@@ -267,7 +267,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (!observer)
             invalid("A connected ChatGPT conversation is required to browse projects.");
         const revision = selectedRevision;
-        const report = await call("chat_bridge.project", { tabId: observer, projectId: body.projectId }, 16_000);
+        const report = await call("chat_bridge.project", { tabId: observer, projectId: body.projectId }, 24_000);
         if (context() !== browserInstanceId || revision !== selectedRevision
             || report?.tabId !== observer || report?.projectId !== body.projectId
             || typeof report.ticket !== "string" || !Array.isArray(report.items))
@@ -286,7 +286,15 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         }
         browsedProject = { projectId: choice.id, tabId: observer, browserInstanceId,
             checkedAt: Date.now(), threads };
-        return { projectId: choice.id, name: choice.name, threads, partial: true, source: "visible-project" };
+        const raw = report.settings;
+        const settings = raw && typeof raw === "object" && !Array.isArray(raw)
+            && typeof raw.instructions === "string" && raw.instructions.length <= 4000
+            && typeof raw.instructionsTruncated === "boolean"
+            && typeof raw.memoryLabel === "string" && raw.memoryLabel.length <= 80
+            && Object.keys(raw).every(key => ["instructions", "instructionsTruncated", "memoryLabel"].includes(key))
+            ? { instructions: raw.instructions, instructionsTruncated: raw.instructionsTruncated,
+                memoryLabel: raw.memoryLabel } : null;
+        return { projectId: choice.id, name: choice.name, threads, settings, partial: true, source: "visible-project" };
     };
     const conversationAction = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
