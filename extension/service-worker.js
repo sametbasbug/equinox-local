@@ -3969,6 +3969,167 @@ async function branchChatBridgeAssistant({ tabId, conversationId, messageId, exp
         scheduleDetach(id, CONTINUATION_MUTATION_DETACH_MS);
     }
 }
+/** Preview actual provider response versions without changing conversation history. */
+async function readChatBridgeResponseVersions({ tabId, conversationId, messageId, expectedText } = {}) {
+    if (!Number.isSafeInteger(tabId) || Number(tabId) < 1
+        || typeof conversationId !== "string" || !/^[A-Za-z0-9-]{8,160}$/u.test(conversationId)
+        || typeof messageId !== "string"
+        || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(messageId)
+        || typeof expectedText !== "string" || !expectedText.trim()
+        || expectedText !== expectedText.trim() || expectedText.length > 3500)
+        throw new Error("Response versions require an exact, completed provider assistant reply.");
+    const id = Number(tabId), sourceId = messageId.slice(0, -10);
+    const tab = await chooseTab(id);
+    if (tab.pendingUrl || chatGptConversationIdentity(tab)?.conversationId !== conversationId)
+        throw new Error("The selected conversation changed before opening versions.");
+    const state = await chatGptContinuationState(id);
+    if (state.conversationId !== conversationId || state.generationActive
+        || !state.composerReady || !state.composerEmpty)
+        throw new Error("Finish the current response or draft before viewing versions.");
+    await requireDebuggableTab(id);
+    await attachTab(id);
+    try {
+        const result = await send(id, "Runtime.evaluate", { expression: String.raw `(async()=>{
+      ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
+      const pause=()=>new Promise(resolve=>setTimeout(resolve,75));
+      const visible=e=>e?.getClientRects().length>0;
+      const uuid=${JSON.stringify(sourceId)};
+      const conversation=${JSON.stringify(conversationId)};
+      const selected=[...document.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"]')]
+        .filter(e=>String(e.getAttribute('data-chatgpt-search-message-ids')||'')
+          .split(/\s+/u)[0]===uuid);
+      const unit=selected.length===1?selected[0]:null;
+      const turn=unit?.closest('[data-turn-key]');
+      const content=unit?(unit.querySelector('[data-chatgpt-selection-message-id]')||unit):null;
+      const controls=turn?[...turn.querySelectorAll('button[aria-label]')].filter(b=>
+        visible(b)&&/^(View versions|Sürümleri görüntüle)$/iu.test(
+          String(b.getAttribute('aria-label')||'').trim())):[];
+      const dialogs=()=>[...document.querySelectorAll('[role="dialog"]')].filter(visible);
+      if(location.origin!=='https://chatgpt.com'
+        ||location.pathname.split('/').at(-1)!==conversation||!content
+        ||readChatBridgeVisibleText(content)!==${JSON.stringify(expectedText)}
+        ||controls.length!==1||dialogs().length)
+        return{ok:false,reason:'exact_reply_or_version_control_missing'};
+      controls[0].click();
+      const providerDialog=()=>dialogs().find(d=>d.getAttribute('aria-modal')==='true'
+        &&/^(Versions|Sürümler)$/iu.test(String(d.querySelector('h2')?.textContent||'').trim()));
+      let opened=false,closed=false;
+      try{
+        for(let wait=0;wait<32&&!providerDialog();wait++)await pause();
+        const d=providerDialog();
+        if(!d||dialogs().length!==1)return{ok:false,reason:'versions_dialog_not_offered'};
+        opened=true;
+        const button=label=>[...d.querySelectorAll('button')].filter(b=>
+          visible(b)&&b.getAttribute('aria-label')===label);
+        const nav=direction=>button(direction==='previous'?'Önceki sürüm':'Sonraki sürüm')
+          .concat(button(direction==='previous'?'Previous version':'Next version'));
+        const snapshot=()=>{
+          const responses=[...d.querySelectorAll('[data-chatgpt-selection-message-id]')];
+          const prev=nav('previous'),next=nav('next');
+          if(responses.length!==1||prev.length!==1||next.length!==1)return null;
+          const responseId=responses[0].getAttribute('data-chatgpt-selection-message-id');
+          if(!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(responseId||''))return null;
+          const raw=readChatBridgeVisibleText(responses[0]);
+          if(!raw?.trim())return null;
+          const chars=[...raw];
+          return{messageId:responseId,text:chars.slice(0,3500).join(''),
+            truncated:chars.length>3500,previous:!prev[0].disabled,next:!next[0].disabled};
+        };
+        const navigate=async(direction,prior)=>{
+          const target=nav(direction);
+          if(target.length!==1||target[0].disabled)return null;
+          target[0].click();
+          for(let wait=0;wait<32;wait++){
+            await pause();
+            const after=snapshot();
+            if(after&&after.messageId!==prior.messageId)return after;
+          }
+          return null;
+        };
+        let first=snapshot();if(!first)return{ok:false,reason:'version_preview_missing'};
+        for(let n=0;n<12&&first.previous;n++){
+          first=await navigate('previous',first);
+          if(!first)return{ok:false,reason:'version_navigation_uncertain'};
+        }
+        if(first.previous)return{ok:false,reason:'version_history_exceeds_limit'};
+        const versions=[first];
+        while(versions.at(-1).next&&versions.length<=12){
+          const next=await navigate('next',versions.at(-1));
+          if(!next||versions.some(x=>x.messageId===next.messageId))
+            return{ok:false,reason:'version_navigation_uncertain'};
+          versions.push(next);
+        }
+        if(versions.length>12||versions.at(-1).next
+          ||versions.filter(x=>x.messageId===uuid).length!==1
+          ||location.pathname.split('/').at(-1)!==conversation)
+          return{ok:false,reason:'version_history_ambiguous'};
+        return{ok:true,sourceId:uuid,versions:versions.map((v,index)=>({
+          index:index+1,messageId:v.messageId,text:v.text,truncated:v.truncated,
+          current:v.messageId===uuid
+        }))};
+      }finally{
+        if(opened){
+          const d=providerDialog();
+          const close=d?[...d.querySelectorAll('button')].filter(b=>visible(b)
+            &&/^(Close dialog|İletişim kutusunu kapat)$/iu.test(
+              String(b.textContent||'').trim())):[];
+          if(close.length===1){close[0].click();for(let n=0;n<16&&providerDialog();n++)await pause();}
+          closed=!providerDialog();
+        }
+        if(opened&&!closed)throw new Error('Provider versions dialog could not close safely.');
+      }
+    })()`, awaitPromise: true, returnByValue: true, silent: true });
+        if (result?.exceptionDetails)
+            throw new Error("Provider response version inspection failed.");
+        const data = cdpObject(result?.result?.value);
+        if (data?.ok !== true || data?.sourceId !== sourceId || !Array.isArray(data.versions)
+            || data.versions.length < 2 || data.versions.length > 12)
+            throw new Error("The provider did not confirm an exact, readable version history.");
+        const seen = new Set();
+        let currentCount = 0;
+        const versions = data.versions.map((item, index) => {
+            if (!item || item.index !== index + 1
+                || typeof item.messageId !== "string"
+                || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(item.messageId)
+                || seen.has(item.messageId) || typeof item.text !== "string" || !item.text.trim()
+                || [...item.text].length > 3500 || typeof item.current !== "boolean"
+                || typeof item.truncated !== "boolean")
+                throw new Error("The provider response version payload is invalid.");
+            seen.add(item.messageId);
+            if (item.current)
+                currentCount++;
+            return { index: item.index, messageId: item.messageId, text: item.text,
+                truncated: item.truncated, current: item.current };
+        });
+        if (currentCount !== 1 || !seen.has(sourceId))
+            throw new Error("Current provider response was not found in its version history.");
+        const after = await chooseTab(id);
+        if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
+            throw new Error("Conversation changed while reading response versions.");
+        const final = await chatGptContinuationState(id);
+        if (final.conversationId !== conversationId || final.generationActive)
+            throw new Error("The provider response changed while reading versions.");
+        const stable = await send(id, "Runtime.evaluate", {
+            expression: String.raw `(()=>{
+        ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
+        const matches=[...document.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"]')]
+          .filter(e=>String(e.getAttribute('data-chatgpt-search-message-ids')||'')
+            .split(/\s+/u)[0]===${JSON.stringify(sourceId)});
+        const content=matches.length===1
+          ?(matches[0].querySelector('[data-chatgpt-selection-message-id]')||matches[0]):null;
+        return{same:location.pathname.split('/').at(-1)===${JSON.stringify(conversationId)}
+          &&!!content&&readChatBridgeVisibleText(content)===${JSON.stringify(expectedText)}
+          &&![...document.querySelectorAll('[role="dialog"]')].some(d=>d.getClientRects().length)};
+      })()`, returnByValue: true, silent: true
+        });
+        if (stable?.exceptionDetails || cdpObject(stable?.result?.value)?.same !== true)
+            throw new Error("The provider current reply or modal changed during version inspection.");
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, conversationId, messageId, versions };
+    }
+    finally {
+        scheduleDetach(id, CONTINUATION_MUTATION_DETACH_MS);
+    }
+}
 async function readChatBridgeRecent({ tabId, conversationId } = {}) {
     if (!Number.isSafeInteger(tabId) || Number(tabId) < 1 || typeof conversationId !== "string" || !/^[A-Za-z0-9-]{8,160}$/u.test(conversationId))
         throw new Error("Chat history identity is invalid.");
@@ -3998,7 +4159,11 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         const richText=role==='assistant'&&chars.length<=limit
           ?projectChatBridgeRichText(content,Math.min(5000,remainingRich)):null;
         if(richText)remainingRich-=[...richText].length;
-        out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText});remaining-=limit;
+        const versionsAvailable=role==='assistant'&&[...turn.querySelectorAll('button[aria-label]')]
+          .filter(b=>b.getClientRects().length
+            &&/^(View versions|Sürümleri görüntüle)$/iu.test(String(b.getAttribute('aria-label')||'').trim())).length===1;
+        out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,
+          richText,versionsAvailable});remaining-=limit;
       }
       if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
         const role=unit.getAttribute('data-message-author-role');
@@ -4022,7 +4187,7 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
                 throw new Error("Chat history message is invalid.");
             const validRich = item.role === "assistant" && typeof item.richText === "string" && [...item.richText].length <= 5000;
             return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true,
-                richText: validRich ? item.richText : null };
+                richText: validRich ? item.richText : null, versionsAvailable: item.role === 'assistant' && item.versionsAvailable === true };
         });
         const after = await chooseTab(Number(tabId));
         if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)
@@ -10503,6 +10668,7 @@ const COMMANDS = {
     "chat_bridge.stage_new": stageChatBridgeNewComposer,
     "chat_bridge.open_history": openChatBridgeHistory,
     "chat_bridge.recent": readChatBridgeRecent,
+    "chat_bridge.response_versions": readChatBridgeResponseVersions,
     "chat_bridge.live": readChatBridgeLive,
     "resume.create": createFreshChatResume,
     "settings.status": popupStatus,

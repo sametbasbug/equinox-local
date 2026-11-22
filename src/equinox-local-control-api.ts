@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -314,6 +314,7 @@ export function createEquinoxLocalControlApi({
   retryChatAssistant = null,
   branchChatAssistant = null,
   branchWorkAssistant = null,
+  inspectChatResponseVersions = null,
   getChatTools = null,
   selectChatThread = null,
   getChatState = null,
@@ -565,6 +566,20 @@ export function createEquinoxLocalControlApi({
           throw badRequest("Retry requires an exact response and a one-use mutation identifier.");
         const retry=await retryChatAssistant(body);
         state.mutationCount+=1;send(200,{ok:true,retry});return;
+      }
+      if(method==="POST"&&pathname==="/api/v1/chat/response_versions"){
+        authorizeMutation(); // Private user's Chrome UI modal is opened and closed for this read.
+        if(typeof inspectChatResponseVersions!=="function")
+          throw badRequest("Native Chat response versions are unavailable.");
+        const body=validateExactObject(await readBody(),
+          ["messageId","expectedText"],"Native Chat response versions");
+        if(typeof body.messageId!=="string"
+          ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
+          ||typeof body.expectedText!=="string"||!body.expectedText.trim()
+          ||body.expectedText!==body.expectedText.trim()||body.expectedText.length>3500)
+          throw badRequest("One exact assistant response is required for version history.");
+        const versions=await inspectChatResponseVersions(body);
+        send(200,{ok:true,versions});return;
       }
       if(method==="POST"&&(pathname==="/api/v1/chat/branch_new"||pathname==="/api/v1/chat/branch_work")){
         authorizeMutation();

@@ -213,6 +213,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "error-message", "toast",
   "native-chat-title", "native-chat-task", "native-chat-turn", "native-chat-list-status",
   "native-chat-empty-title", "native-chat-empty-copy", "native-chat-compose-hint",
+  "native-chat-versions-count", "native-chat-versions-status",
 ]);
 
 const staticTextEntries:UiRemoteData[] = [];
@@ -555,6 +556,10 @@ let chatRetryAttempted=false;
 let chatBranchCandidate:{messageId:string;expectedText:string;identity:string;tabId:number;mode:"new"|"work"}|null=null;
 let chatBranchBusy=false;
 let chatBranchAttempted=false;
+let chatVersionsCandidate:{messageId:string;expectedText:string;identity:string;tabId:number}|null=null;
+let chatVersionsBusy=false;
+let chatVersionsData:Array<{index:number;text:string;current:boolean;truncated:boolean}>=[];
+let chatVersionsIndex=0;
 
 const chatComposer = () => document.getElementById("native-chat-text") as HTMLTextAreaElement;
 
@@ -1270,7 +1275,7 @@ function updateNativeChatControls() {
     : "Enter to send · Shift+Enter for a new line");
 }
 
-type NativeChatMessage = { id?:string; role: "user" | "assistant"; text: string; richText?: string | null; truncated: boolean; uncertain?: boolean; live?: boolean };
+type NativeChatMessage = { id?:string; role: "user" | "assistant"; text: string; richText?: string | null; truncated: boolean; versionsAvailable?:boolean; uncertain?: boolean; live?: boolean };
 
 function appendNativeChatInline(element: HTMLElement, text: string) {
   let end = 0;
@@ -1566,6 +1571,60 @@ async function submitNativeChatMessageEdit(){
   }
 }
 
+function renderNativeChatVersionPreview(){
+  const version=chatVersionsData[chatVersionsIndex];
+  $("native-chat-versions-prev").disabled=!version||chatVersionsIndex===0;
+  $("native-chat-versions-next").disabled=!version||chatVersionsIndex>=chatVersionsData.length-1;
+  setNativeChatCopy("native-chat-versions-count",version
+    ?`Version ${chatVersionsIndex+1} of ${chatVersionsData.length}${version.current?" · Current":""}`
+    :"Loading versions…");
+  (document.getElementById("native-chat-versions-preview") as HTMLTextAreaElement).value=version?.text||"";
+  $("native-chat-versions-truncated").hidden=!version?.truncated;
+  if(version)setNativeChatCopy("native-chat-versions-status",
+    version.current?"This is the current response.":
+      "Read-only older response. To branch from it, open its version in ChatGPT Web.");
+}
+async function openNativeChatResponseVersions(message:NativeChatMessage){
+  if(chatVersionsBusy||chatVersionsCandidate||chatNewDraft||chatSending||chatSelecting||chatBlocked
+    ||chatComposer().value.trim()||chatPickedFile||chatToolSelection
+    ||!chatActive||!["ready","complete"].includes(chatTurn)
+    ||message.versionsAvailable!==true||message.truncated||!message.text.trim()
+    ||typeof message.id!=="string"
+    ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(message.id))return;
+  const identity=chatConversationKey(chatActive);
+  if(!identity)return;
+  const candidate={messageId:message.id,expectedText:message.text.trim(),
+    identity,tabId:Number(chatActive.tabId)};
+  chatVersionsCandidate=candidate;
+  chatVersionsData=[];chatVersionsIndex=0;chatVersionsBusy=true;
+  setNativeChatCopy("native-chat-versions-status","Reading the exact ChatGPT versions…");
+  renderNativeChatVersionPreview();
+  const dialog=$("native-chat-versions-dialog") as HTMLDialogElement;
+  if(!dialog.open)dialog.showModal();
+  try{
+    const result=await mutationJson("/api/v1/chat/response_versions","POST",{
+      messageId:candidate.messageId,expectedText:candidate.expectedText
+    });
+    if(candidate!==chatVersionsCandidate||candidate.identity!==chatConversationKey(chatActive)
+      ||candidate.tabId!==chatActive?.tabId||!dialog.open)return;
+    const data=result.versions;
+    if(data?.messageId!==candidate.messageId||!Array.isArray(data.versions)
+      ||data.versions.length<2||data.versions.length>12
+      ||data.versions.filter((item:UiRemoteData)=>item?.current===true).length!==1)
+      throw new Error("The provider did not confirm the exact response versions.");
+    chatVersionsData=data.versions.map((item:UiRemoteData)=>({
+      index:Number(item.index),text:String(item.text||""),
+      current:item.current===true,truncated:item.truncated===true
+    }));
+    chatVersionsIndex=chatVersionsData.findIndex(item=>item.current);
+    renderNativeChatVersionPreview();
+  }catch(error){
+    if(candidate===chatVersionsCandidate&&dialog.open)
+      setNativeChatCopy("native-chat-versions-status",nativeChatErrorMessage(error)+
+        " Check Chrome if the provider versions dialog remains open.");
+  }finally{chatVersionsBusy=false;}
+}
+
 function openNativeChatAssistantRetry(message:NativeChatMessage){
   if(chatRetryBusy||chatNewDraft||chatSending||chatSelecting||chatBlocked
     ||!chatMessageEditAllowed||chatComposer().value.trim()||chatPickedFile
@@ -1765,6 +1824,19 @@ function renderNativeChatMessage(message: NativeChatMessage) {
       });
       actions.append(markdown);
     }
+    if(message.role==="assistant"&&message.versionsAvailable===true
+      &&typeof message.id==="string"
+      &&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(message.id)
+      &&!message.truncated&&!chatNewDraft&&!chatBlocked&&!chatSending&&!chatSelecting
+      &&!chatComposer().value.trim()&&!chatPickedFile&&!chatToolSelection
+      &&["ready","complete"].includes(chatTurn)){
+      const versions=document.createElement("button");
+      versions.type="button";versions.className="native-chat-message-copy";
+      versions.textContent=localizeUiText("Versions");
+      versions.setAttribute("aria-label",localizeUiText("View response versions"));
+      versions.addEventListener("click",()=>void openNativeChatResponseVersions(message));
+      actions.append(versions);
+    }
     if(message.role==="assistant"&&typeof message.id==="string"
       &&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(message.id)
       &&!message.truncated&&chatMessageEditAllowed&&!chatNewDraft
@@ -1853,7 +1925,7 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
   const transcript = $("native-chat-messages");
   const live = $("native-chat-preview");
   const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 96;
-  const signatures = items.map(item => JSON.stringify([state.language,chatMessageEditAllowed, item.id, item.role, item.text, item.richText, item.status, item.truncated]));
+  const signatures = items.map(item => JSON.stringify([state.language,chatMessageEditAllowed, item.id, item.role, item.text, item.richText, item.status, item.truncated, item.versionsAvailable]));
   const previous = chatMessageSignatures;
   const keepsPrefix = !changedConversation && previous.every((signature, index) => signature === signatures[index]);
   if (!keepsPrefix) transcript.replaceChildren();
@@ -1865,6 +1937,7 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
       text: text.slice(0, 25_000),
       richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 14_000 ? item.richText : null,
       uncertain: item.status === "uncertain",
+      versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
       truncated: item.truncated === true || text.length > 25_000,
     }));
   }
@@ -1988,6 +2061,10 @@ function renderNativeChatState(chat: UiRemoteData) {
   if (!chat || typeof chat !== "object" || chatNewDraft) return;
   chatLastRenderedState = chat;
   chatActive = chat.selected || null;
+  if(chatVersionsCandidate&&chatVersionsCandidate.identity!==chatConversationKey(chatActive)){
+    const versionsDialog=$("native-chat-versions-dialog") as HTMLDialogElement;
+    if(versionsDialog.open)versionsDialog.close();
+  }
   chatTurn = typeof chat.turn === "string" ? chat.turn : "unbound";
   chatMessageEditAllowed=chat.messageEditAllowed===true;
   chatStateAvailable = true;
@@ -5747,6 +5824,19 @@ function bindEvents() {
       closeNativeChatTaskPanel();
       $("native-chat-task-open").focus();
     }
+  });
+  $("native-chat-versions-prev").addEventListener("click",()=>{
+    if(chatVersionsIndex>0){chatVersionsIndex--;renderNativeChatVersionPreview();}
+  });
+  $("native-chat-versions-next").addEventListener("click",()=>{
+    if(chatVersionsIndex<chatVersionsData.length-1){chatVersionsIndex++;renderNativeChatVersionPreview();}
+  });
+  for(const name of ["native-chat-versions-close","native-chat-versions-done"]){
+    $(name).addEventListener("click",()=>($("native-chat-versions-dialog") as HTMLDialogElement).close());
+  }
+  $("native-chat-versions-dialog").addEventListener("close",()=>{
+    chatVersionsCandidate=null;chatVersionsData=[];chatVersionsIndex=0;
+    (document.getElementById("native-chat-versions-preview") as HTMLTextAreaElement).value="";
   });
   $("native-chat-branch-mode").addEventListener("change",()=>{
     const mode=($("native-chat-branch-mode") as HTMLSelectElement).value;

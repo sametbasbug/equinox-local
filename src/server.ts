@@ -3156,6 +3156,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   retryChatAssistant: (value) => nativeChatController.retryAssistant(value),
   branchChatAssistant: (value) => nativeChatController.branchNewChat(value),
   branchWorkAssistant: (value) => nativeChatController.branchWorkChat(value),
+  inspectChatResponseVersions: (value) => nativeChatController.responseVersions(value),
   getChatTools: () => nativeChatController.tools(),
   selectChatThread: (value) => nativeChatController.select(value),
   getChatState: () => nativeChatController.read(),

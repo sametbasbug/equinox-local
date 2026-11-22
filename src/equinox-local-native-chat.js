@@ -487,7 +487,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     if (value && Array.isArray(value.items)) {
                         history = value.items.slice(-24).map((item) => ({ id: String(item.id).slice(0, 220), role: item.role,
                             text: String(item.text).slice(0, 14000), status: "complete", truncated: item.truncated === true,
-                            richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 5000 ? item.richText : null }));
+                            richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 5000 ? item.richText : null,
+                            versionsAvailable: item.role === "assistant" && item.versionsAvailable === true }));
                         historyPartial = value.partial === true;
                         // Navigation may finish before ChatGPT hydrates its transcript.
                         // Retry at most five subsequent normal reads without a new send.
@@ -552,6 +553,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                             id: String(item.id).slice(0, 220), role: item.role, text: String(item.text).slice(0, 14000),
                             status: "complete", truncated: item.truncated === true,
                             richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 5000 ? item.richText : null,
+                            versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
                         }));
                         historyPartial = fresh.partial === true;
                     }
@@ -574,6 +576,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                             status: "complete", truncated: item.truncated === true,
                             richText: typeof item.richText === "string" && item.role === "assistant"
                                 && [...item.richText].length <= 5000 ? item.richText : null,
+                            versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
                         }));
                         historyPartial = fresh.partial === true;
                         historyPendingHydration = 0;
@@ -997,6 +1000,60 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             tabId: binding.tabId, promise });
         return promise;
     };
+    const responseVersions = async (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            invalid("Versions require one exact provider assistant reply.");
+        const body = value;
+        if (Object.keys(body).some(k => !["messageId", "expectedText"].includes(k))
+            || typeof body.messageId !== "string"
+            || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
+            || typeof body.expectedText !== "string" || !body.expectedText.trim()
+            || body.expectedText !== body.expectedText.trim() || body.expectedText.length > 3500)
+            invalid("Versions require one complete, exact provider assistant message.");
+        if (!selected || selecting || sending || creating || pending || blocked || mutatingAction)
+            invalid("Select an idle, unblocked conversation before viewing versions.");
+        const binding = selected, revision = selectedRevision;
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            invalid("Update Equinox Browser before viewing reply versions.");
+        const reply = history.find(item => item.id === body.messageId && item.role === "assistant"
+            && item.status === "complete" && item.truncated !== true && item.versionsAvailable === true);
+        if (!reply || reply.text !== body.expectedText)
+            invalid("ChatGPT did not offer version history for this exact assistant reply.");
+        mutatingAction = true; // Guard native sends/reselection while reading provider's temporary modal.
+        try {
+            const result = await call("chat_bridge.response_versions", {
+                tabId: binding.tabId, conversationId: binding.conversationId,
+                messageId: body.messageId, expectedText: body.expectedText
+            }, 38_000);
+            if (selectedRevision !== revision || !selected
+                || selected.tabId !== binding.tabId || conversationKey(selected) !== conversationKey(binding)
+                || result?.tabId !== binding.tabId || result?.conversationId !== binding.conversationId
+                || result?.messageId !== body.messageId)
+                invalid("Conversation changed while reading provider versions.");
+            if (!Array.isArray(result.versions) || result.versions.length < 2 || result.versions.length > 12)
+                invalid("The provider did not return a bounded response version history.");
+            const ids = new Set();
+            let currentCount = 0;
+            const versions = result.versions.map((item, index) => {
+                if (!item || item.index !== index + 1 || typeof item.messageId !== "string"
+                    || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(item.messageId)
+                    || ids.has(item.messageId) || typeof item.text !== "string" || !item.text.trim()
+                    || [...item.text].length > 3500 || typeof item.current !== "boolean"
+                    || typeof item.truncated !== "boolean")
+                    invalid("The provider version response was malformed.");
+                ids.add(item.messageId);
+                if (item.current)
+                    currentCount++;
+                return { index: item.index, text: item.text, truncated: item.truncated, current: item.current };
+            });
+            if (currentCount !== 1 || !ids.has(String(body.messageId).slice(0, -10)))
+                invalid("The provider current reply was not found in its versions.");
+            return { messageId: body.messageId, versions };
+        }
+        finally {
+            mutatingAction = false;
+        }
+    };
     const branchNewChat = async (value, mode = "new") => {
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Branch requires an exact provider assistant reply.");
@@ -1242,5 +1299,5 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, toolKey, fileKey, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, search, project, conversationAction, editMessage, retryAssistant, branchNewChat, branchWorkChat: (value) => branchNewChat(value, "work"), tools, select, read, send, startNew, model });
+    return Object.freeze({ list, search, project, conversationAction, editMessage, retryAssistant, responseVersions, branchNewChat, branchWorkChat: (value) => branchNewChat(value, "work"), tools, select, read, send, startNew, model });
 }
