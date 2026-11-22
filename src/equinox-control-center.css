@@ -1142,6 +1142,27 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-empty-icon svg { width: 23px; height: 23px; }
 .native-chat-empty h3 { margin: 0 0 7px; font-size: 21px; font-weight: 650; letter-spacing: -.03em; }
 .native-chat-empty p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.native-chat-empty-web {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 630;
+  text-decoration: none;
+}
+.native-chat-empty-web svg { width: 15px; height: 15px; }
+.native-chat-empty-web:hover, .native-chat-empty-web:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.native-chat-empty-web[hidden] { display: none; }
 .native-chat-messages { display: flex; flex-direction: column; gap: 30px; }
 .native-chat-message { min-width: 0; width: 100%; font-size: 15px; line-height: 1.7; overflow-wrap: anywhere; }
 .native-chat-message.is-user { width: fit-content; max-width: min(86%, 580px); align-self: flex-end; }

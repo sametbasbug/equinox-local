@@ -648,6 +648,10 @@ function paintNativeChatWebHandoff() {
   if (url) link.href = url;
   else link.removeAttribute("href");
   link.hidden = !url;
+  const emptyLink = $("native-chat-empty-web") as HTMLAnchorElement;
+  if (url) emptyLink.href = url;
+  else emptyLink.removeAttribute("href");
+  emptyLink.hidden = !url;
   $("native-chat-copy-link").hidden = !url;
 }
 

@@ -627,6 +627,12 @@ function paintNativeChatWebHandoff() {
     else
         link.removeAttribute("href");
     link.hidden = !url;
+    const emptyLink = $("native-chat-empty-web");
+    if (url)
+        emptyLink.href = url;
+    else
+        emptyLink.removeAttribute("href");
+    emptyLink.hidden = !url;
     $("native-chat-copy-link").hidden = !url;
 }
 function isSelectedNativeChatThread(thread) {
