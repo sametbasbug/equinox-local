@@ -477,13 +477,20 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 authorizeMutation();
                 if (typeof sendChatText !== "function")
                     throw badRequest("Native chat is unavailable.");
-                const body = validateExactObject(await readBody(), ["deliveryId", "text", "tool"], "Native chat delivery");
-                if (typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || !body.text.trim() || body.text.length > 4000
+                const body = validateExactObject(await readBody(), ["deliveryId", "text", "tool", "file"], "Native chat delivery");
+                if (typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || (!body.text.trim() && !body.file) || body.text.length > 4000
                     || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
                         || Object.keys(body.tool).some(k => !["name", "kind"].includes(k))
                         || typeof body.tool.name !== "string" || !body.tool.name.trim() || body.tool.name.length > 90
                         || body.tool.kind !== "tool"
-                        || !/^(Web search|Web araması)$/iu.test(body.tool.name))))
+                        || !/^(Web search|Web araması)$/iu.test(body.tool.name)))
+                    || (body.file !== undefined && (!body.file || typeof body.file !== "object" || Array.isArray(body.file)
+                        || Object.keys(body.file).some(k => !["path", "name", "size"].includes(k))
+                        || typeof body.file.path !== "string" || body.file.path.length > 4096
+                        || typeof body.file.name !== "string" || !body.file.name.trim() || body.file.name.length > 255
+                        || !Number.isSafeInteger(body.file.size) || body.file.size < 1
+                        || body.file.size > 100 * 1024 * 1024))
+                    || (body.tool !== undefined && body.file !== undefined))
                     throw badRequest("Invalid Chat message, account tool or delivery id.");
                 const delivery = await sendChatText(body);
                 state.mutationCount += 1;

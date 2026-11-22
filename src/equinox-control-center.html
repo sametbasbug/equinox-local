@@ -654,6 +654,11 @@
               <button id="native-chat-tool-refresh" class="text-button" type="button">Discover tools</button>
               <span id="native-chat-tool-status" role="status" class="native-chat-tool-status"></span>
             </div>
+            <div class="native-chat-file-stage" aria-label="Selected ChatGPT attachment">
+              <button id="native-chat-file-pick" class="text-button" type="button">Attach file…</button>
+              <span id="native-chat-file-name" class="native-chat-file-name" role="status"></span>
+              <button id="native-chat-file-remove" class="text-button" type="button" hidden>Remove file</button>
+            </div>
             <form id="native-chat-form" class="native-chat-compose">
               <label for="native-chat-text" class="native-chat-sr-only">Message</label>
               <textarea id="native-chat-text" rows="1" maxlength="4000" placeholder="Write a message…" aria-describedby="native-chat-compose-hint" disabled></textarea>

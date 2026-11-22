@@ -10,6 +10,7 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
             return language === "tr" ? "tr" : language === "en" ? "en" : null;
         },
         pickFolder: () => ipcRenderer.invoke("equinox-shell:pick-folder"),
+        pickChatFile: () => ipcRenderer.invoke("equinox-shell:pick-chat-file"),
         getCompanionId: () => {
             const id = ipcRenderer.sendSync("equinox-shell:companion-snapshot");
             return id === "nyx" || id === "hemera" || id === "asteria" ? id : "nyx";

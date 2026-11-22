@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { chatGptConversationIdFromUrl } from "./telegram-chat-bridge-controller.js";
 const MAX_MESSAGES = 30;
 const MAX_TRANSCRIPT_CHARS = 96_000;
@@ -665,22 +667,34 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Invalid chat delivery request.");
         const body = value;
-        if (Object.keys(body).some(k => !["deliveryId", "text", "tool"].includes(k))
-            || typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || !body.text.trim() || body.text.length > 4000 || /[\0]/u.test(body.text)
+        if (Object.keys(body).some(k => !["deliveryId", "text", "tool", "file"].includes(k))
+            || typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || (!body.text.trim() && !body.file) || body.text.length > 4000 || /[\0]/u.test(body.text)
             || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
                 || Object.keys(body.tool).some(k => !["name", "kind"].includes(k))
                 || typeof body.tool.name !== "string"
                 || !body.tool.name.trim() || body.tool.name.length > 90
                 || body.tool.kind !== "tool"
-                || !/^(Web search|Web araması)$/iu.test(body.tool.name))))
-            invalid("Chat delivery requires an exact provider-offered tool and 1–4000 safe characters.");
+                || !/^(Web search|Web araması)$/iu.test(body.tool.name)))
+            || (body.file !== undefined && (!body.file || typeof body.file !== "object" || Array.isArray(body.file)
+                || Object.keys(body.file).some(k => !["path", "name", "size"].includes(k))
+                || typeof body.file.path !== "string" || body.file.path.length > 4096
+                || !path.isAbsolute(body.file.path)
+                || typeof body.file.name !== "string" || body.file.name.length > 255
+                || !Number.isSafeInteger(body.file.size) || body.file.size < 1
+                || body.file.size > 100 * 1024 * 1024
+                || path.basename(body.file.path) !== body.file.name))
+            || (body.tool !== undefined && body.file !== undefined))
+            invalid("Chat delivery requires a user-selected regular file or verified tool and 1–4000 safe characters.");
         const key = body.deliveryId;
         const message = body.text.trim();
         const selectedTool = body.tool;
         const toolKey = selectedTool ? selectedTool.kind + ":" + selectedTool.name : "";
+        const selectedFile = body.file;
+        const fileKey = selectedFile ? JSON.stringify(selectedFile) : "";
         const prior = attempts.get(key);
         if (prior) {
-            if (prior.text !== message || prior.toolKey !== toolKey || !selected || prior.conversationKey !== conversationKey(selected))
+            if (prior.text !== message || prior.toolKey !== toolKey || prior.fileKey !== fileKey
+                || !selected || prior.conversationKey !== conversationKey(selected))
                 invalid("A delivery id cannot be reused for a different conversation or message.");
             return prior.promise;
         }
@@ -707,8 +721,24 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                         throw unavailable;
                     }
                 }
+                if (selectedFile) {
+                    try {
+                        const stat = await fs.lstat(selectedFile.path);
+                        const canonical = await fs.realpath(selectedFile.path);
+                        if (!stat.isFile() || canonical !== selectedFile.path || stat.size !== selectedFile.size
+                            || stat.size > 100 * 1024 * 1024)
+                            throw new Error("Selected file moved, changed, or is no longer a regular file.");
+                    }
+                    catch (error) {
+                        const unavailable = new Error("Selected file is not ready: " +
+                            (error instanceof Error ? error.message : "File unavailable."));
+                        unavailable.code = "CHAT_BRIDGE_NOT_READY";
+                        throw unavailable;
+                    }
+                }
                 const result = await chatBridge.deliverText({ binding, deliveryId: key, text: body.text.trim(),
-                    ...(selectedTool ? { tool: selectedTool } : {}), requireExactTab: true });
+                    ...(selectedTool ? { tool: selectedTool } : {}), ...(selectedFile ? { file: selectedFile } : {}),
+                    requireExactTab: true });
                 if (result?.confirmed !== true) {
                     blocked = true;
                     uncertainConversations.add(conversationKey(binding));
@@ -740,7 +770,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 sending = false;
             }
         })();
-        attempts.set(key, { text: message, toolKey, conversationKey: conversationKey(binding), promise: attempt });
+        attempts.set(key, { text: message, toolKey, fileKey, conversationKey: conversationKey(binding), promise: attempt });
         return attempt;
     };
     // Explicit first-message creation. Reuse the existing Task Capsule + first-party

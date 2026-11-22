@@ -864,6 +864,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+.native-chat-file-stage { display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:5px 8px; }
+.native-chat-file-name { min-width:0;flex:1;overflow-wrap:anywhere;color:var(--muted);font-size:11px; }
+.native-chat-file-stage .text-button { flex:none; }
 .native-chat-tool-toolbar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 7px;
   padding: 9px 10px; margin-top: 4px;

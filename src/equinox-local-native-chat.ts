@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { chatGptConversationIdFromUrl } from "./telegram-chat-bridge-controller.js";
 
 type BrowserTab = {id?:number;tabId?:number;url?:string;title?:string};
@@ -6,7 +8,9 @@ type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"com
 type BrowserBridge = {snapshot:()=>any;call:(method:string,args:object,options:{context:"user";timeoutMs:number})=>Promise<unknown>};
 type ChatBridge = {
   inspectTurnIdentity:(args:{binding:Binding})=>Promise<any>;
-  deliverText:(args:{binding:Binding;deliveryId:string;text:string;tool?:{name:string;kind:"tool"|"app"};requireExactTab?:boolean})=>Promise<any>;
+  deliverText:(args:{binding:Binding;deliveryId:string;text:string;
+    tool?:{name:string;kind:"tool"|"app"};
+    file?:{path:string;name:string;size:number};requireExactTab?:boolean})=>Promise<any>;
   readFinal:(args:{binding:Binding;userEpoch:string;previousAssistantTurnKey:string|null})=>Promise<any>;
   readRecent?:(args:{binding:Binding})=>Promise<any>;
   readLive?:(args:{binding:Binding;userEpoch:string})=>Promise<any>;
@@ -95,7 +99,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   };
   const createAttempts=new Map<string,{text:string;modelChoice:string|null;
     effortLevel:number|null;promise:Promise<unknown>}>();
-  const attempts=new Map<string,{text:string;conversationKey:string;toolKey:string;promise:Promise<unknown>}>();
+  const attempts=new Map<string,{text:string;conversationKey:string;toolKey:string;fileKey:string;promise:Promise<unknown>}>();
   const actionAttempts=new Map<string,{fingerprint:string;promise:Promise<unknown>}>();
   let mutatingAction=false;
   function appendMessage(message:Message) {
@@ -605,22 +609,34 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   const send=async(value:unknown)=>{
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid chat delivery request.");
     const body=value as Record<string,unknown>;
-    if(Object.keys(body).some(k=>!["deliveryId","text","tool"].includes(k))
-      ||typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||!body.text.trim()||body.text.length>4000||/[\0]/u.test(body.text)
+    if(Object.keys(body).some(k=>!["deliveryId","text","tool","file"].includes(k))
+      ||typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||(!body.text.trim()&&!body.file)||body.text.length>4000||/[\0]/u.test(body.text)
       ||(body.tool!==undefined&&(!body.tool||typeof body.tool!=="object"||Array.isArray(body.tool)
         ||Object.keys(body.tool as object).some(k=>!["name","kind"].includes(k))
         ||typeof (body.tool as any).name!=="string"
         ||!(body.tool as any).name.trim()||(body.tool as any).name.length>90
         ||(body.tool as any).kind!=="tool"
-        ||!/^(Web search|Web araması)$/iu.test((body.tool as any).name))))
-      invalid("Chat delivery requires an exact provider-offered tool and 1–4000 safe characters.");
+        ||!/^(Web search|Web araması)$/iu.test((body.tool as any).name)))
+      ||(body.file!==undefined&&(!body.file||typeof body.file!=="object"||Array.isArray(body.file)
+        ||Object.keys(body.file as object).some(k=>!["path","name","size"].includes(k))
+        ||typeof (body.file as any).path!=="string"||(body.file as any).path.length>4096
+        ||!path.isAbsolute((body.file as any).path)
+        ||typeof (body.file as any).name!=="string"||(body.file as any).name.length>255
+        ||!Number.isSafeInteger((body.file as any).size)||(body.file as any).size<1
+        ||(body.file as any).size>100*1024*1024
+        ||path.basename((body.file as any).path)!==(body.file as any).name))
+      ||(body.tool!==undefined&&body.file!==undefined))
+      invalid("Chat delivery requires a user-selected regular file or verified tool and 1–4000 safe characters.");
     const key=body.deliveryId;
     const message=(body.text as string).trim();
     const selectedTool=body.tool as {name:string;kind:"tool"|"app"}|undefined;
     const toolKey=selectedTool?selectedTool.kind+":"+selectedTool.name:"";
+    const selectedFile=body.file as {path:string;name:string;size:number}|undefined;
+    const fileKey=selectedFile?JSON.stringify(selectedFile):"";
     const prior=attempts.get(key);
     if(prior){
-      if(prior.text!==message||prior.toolKey!==toolKey||!selected||prior.conversationKey!==conversationKey(selected))
+      if(prior.text!==message||prior.toolKey!==toolKey||prior.fileKey!==fileKey
+        ||!selected||prior.conversationKey!==conversationKey(selected))
         invalid("A delivery id cannot be reused for a different conversation or message.");
       return prior.promise;
     }
@@ -645,8 +661,23 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
             throw unavailable;
           }
         }
+        if(selectedFile){
+          try{
+            const stat=await fs.lstat(selectedFile.path);
+            const canonical=await fs.realpath(selectedFile.path);
+            if(!stat.isFile()||canonical!==selectedFile.path||stat.size!==selectedFile.size
+              ||stat.size>100*1024*1024)
+              throw new Error("Selected file moved, changed, or is no longer a regular file.");
+          }catch(error){
+            const unavailable:Error&{code?:string}=new Error("Selected file is not ready: "+
+              (error instanceof Error?error.message:"File unavailable."));
+            unavailable.code="CHAT_BRIDGE_NOT_READY";
+            throw unavailable;
+          }
+        }
         const result=await chatBridge.deliverText({binding,deliveryId:key,text:(body.text as string).trim(),
-          ...(selectedTool?{tool:selectedTool}:{}),requireExactTab:true});
+          ...(selectedTool?{tool:selectedTool}:{}),...(selectedFile?{file:selectedFile}:{}),
+          requireExactTab:true});
         if(result?.confirmed!==true){
           blocked=true;
           uncertainConversations.add(conversationKey(binding));
@@ -674,7 +705,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         throw error;
       }finally{sending=false;}
     })();
-    attempts.set(key,{text:message,toolKey,conversationKey:conversationKey(binding),promise:attempt});
+    attempts.set(key,{text:message,toolKey,fileKey,conversationKey:conversationKey(binding),promise:attempt});
     return attempt;
   };
   // Explicit first-message creation. Reuse the existing Task Capsule + first-party

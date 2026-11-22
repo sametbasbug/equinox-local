@@ -1570,7 +1570,7 @@ async function inspectChatBridgeState({ tabId } = {}) {
         scheduleDetach(tabId, CONTINUATION_MUTATION_DETACH_MS);
     }
 }
-async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, userEpoch, assistantTurnKey, text, toolName, toolKind, } = {}) {
+async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, userEpoch, assistantTurnKey, text, toolName, toolKind, filePath, fileName, fileSize, } = {}) {
     if (typeof deliveryId !== "string" || !/^tgb-[a-z0-9-]{6,80}$/u.test(deliveryId)) {
         throw new Error("Chat Bridge delivery id is invalid.");
     }
@@ -1586,14 +1586,24 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
         throw new Error("Chat Bridge assistant turn key is invalid.");
     }
     const message = String(text || "");
-    if (!message || message.length > 4_000 || /\0/u.test(message))
-        throw new Error("Chat Bridge prompt is invalid.");
+    if ((!message && filePath === undefined) || message.length > 4_000 || /\0/u.test(message))
+        throw new Error("Chat Bridge requires message text or a selected file.");
     if (toolName !== undefined && (typeof toolName !== "string" || !toolName.trim()
         || toolName.length > 90 || /[\x00-\x1f\x7f]/u.test(toolName)
         || !["tool", "app"].includes(String(toolKind))))
         throw new Error("Chat Bridge selected tool identity is invalid.");
     if (toolName === undefined && toolKind !== undefined)
         throw new Error("Chat Bridge tool kind requires an actual provider choice.");
+    if (filePath !== undefined && (typeof filePath !== "string" || filePath.length < 2 || filePath.length > 4096
+        || !(filePath.startsWith("/") || /^[a-z]:[\\/]/iu.test(filePath))
+        || typeof fileName !== "string" || !fileName.trim() || fileName.length > 255
+        || /[/\\\x00-\x1f\x7f]/u.test(fileName)
+        || !Number.isSafeInteger(fileSize) || Number(fileSize) < 1 || Number(fileSize) > 100 * 1024 * 1024))
+        throw new Error("Chat Bridge file selection is invalid.");
+    if (filePath === undefined && (fileName !== undefined || fileSize !== undefined))
+        throw new Error("Chat Bridge file details require an explicit local file.");
+    if (filePath !== undefined && toolName !== undefined)
+        throw new Error("Simultaneous tool mode and local file are not yet supported.");
     if (await hasChatBridgeReceipt(deliveryId)) {
         return {
             chatBridgeVersion: CHAT_BRIDGE_VERSION,
@@ -1682,6 +1692,75 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
                 throw new Error("ChatGPT did not confirm an inline selected tool before message submission.");
             stage = "tool_confirmed";
         }
+        if (typeof filePath === "string") {
+            // Obtain the one exact, user-visible ChatGPT composer form's generic
+            // hidden file input. Do not touch camera/image-only inputs.
+            const inputProbe = await send(tabId, "Runtime.evaluate", {
+                expression: `(() => {
+          const composer=${VISIBLE_CHATGPT_COMPOSER_JS};
+          const form=composer?.closest('form');
+          if(!form||String(composer.textContent||'').trim())
+            return{ready:false,reason:'composer_drifted'};
+          const inputs=[...form.querySelectorAll('input[type="file"][multiple]')]
+            .filter(x=>!x.getAttribute('accept'));
+          if(inputs.length!==1||!/^[A-Za-z0-9_-]{1,100}$/u.test(inputs[0].id||''))
+            return{ready:false,reason:'file_input_ambiguous'};
+          if(form.querySelector('span[class*="group/composer-attachment"],[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]'))
+            return{ready:false,reason:'existing_attachment'};
+          return{ready:true,id:inputs[0].id};
+        })()`, returnByValue: true, silent: true
+            });
+            const input = cdpObject(inputProbe?.result?.value);
+            if (inputProbe?.exceptionDetails || input?.ready !== true || typeof input.id !== "string")
+                throw new Error("ChatGPT file input was not uniquely confirmed.");
+            await send(tabId, "DOM.enable");
+            const document = await send(tabId, "DOM.getDocument", { depth: 1 });
+            const root = Number(document?.root?.nodeId);
+            if (!Number.isSafeInteger(root) || root < 1)
+                throw new Error("ChatGPT document is unavailable for file upload.");
+            const query = await send(tabId, "DOM.querySelector", { nodeId: root, selector: "#" + input.id });
+            const fileInputNode = Number(query?.nodeId);
+            if (!Number.isSafeInteger(fileInputNode) || fileInputNode < 1)
+                throw new Error("ChatGPT file input changed before upload.");
+            await send(tabId, "DOM.setFileInputFiles", { files: [filePath], nodeId: fileInputNode });
+            stage = "file_staged";
+            // This is a browser upload, not yet a confirmed provider attachment.
+            // Never send while the React provider is still processing the file.
+            let attached = false, stability = 0;
+            for (let n = 0; n < 100; n++) {
+                await sleep(180);
+                const observation = await send(tabId, "Runtime.evaluate", {
+                    expression: `(() => {
+            const composer=${VISIBLE_CHATGPT_COMPOSER_JS};
+            const form=composer?.closest('form');
+            if(!composer||!form||String(composer.textContent||'').trim())
+              return{ready:false,reason:'composer_changed'};
+            const named=[...form.querySelectorAll('button[aria-label]')]
+              .filter(x=>x.getClientRects().length&&x.getAttribute('aria-label')===${JSON.stringify(fileName ?? "")});
+            const removable=[...form.querySelectorAll('button[aria-label]')]
+              .filter(x=>x.getAttribute('aria-label')?.startsWith(${JSON.stringify(fileName ?? "")})
+                &&/remove|kaldır/iu.test(x.getAttribute('aria-label')||''));
+            const busy=!!form.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]');
+            return{ready:named.length===1&&removable.length===1&&!busy,
+              count:named.length,removable:removable.length,busy};
+          })()`, returnByValue: true, silent: true
+                });
+                const value = cdpObject(observation?.result?.value);
+                if (observation?.exceptionDetails)
+                    break;
+                if (value?.ready === true)
+                    stability++;
+                else
+                    stability = 0;
+                if (stability >= 4) {
+                    attached = true;
+                    break;
+                }
+            }
+            if (!attached)
+                throw new Error("ChatGPT has not confirmed the file attachment; no message was submitted.");
+            stage = "file_confirmed";
+        }
         const focusResult = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
         const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
@@ -1712,7 +1791,8 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
         if (focusResult?.exceptionDetails || cdpObject(focusResult?.result?.value)?.focused !== true) {
             throw new Error(focusResult?.exceptionDetails?.exception?.description || focusResult?.exceptionDetails?.text || "Chat Bridge could not focus the ChatGPT composer.");
         }
-        await send(tabId, "Input.insertText", { text: message });
+        if (message)
+            await send(tabId, "Input.insertText", { text: message });
         stage = "filled";
         const chatBridgeSendSelector = CHATGPT_SEND_SELECTOR;
         const submitDeadline = Date.now() + 4_000;
@@ -1725,7 +1805,8 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
           const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
           const button = document.querySelector(${JSON.stringify(chatBridgeSendSelector)});
           if (!composer) return { ready: false, reason: "composer_missing" };
-          if (!String(composer.textContent || '').trim()) return { ready: false, reason: "composer_empty" };
+          if (!String(composer.textContent || '').trim() && !${JSON.stringify(typeof filePath === "string")})
+            return { ready: false, reason: "composer_empty" };
           if (!button || !button.isConnected) return { ready: false, reason: "send_button_missing" };
           if (button.getAttribute('data-testid') === 'stop-button') return { ready: false, reason: "generation_active" };
           if (Boolean(button.disabled) || button.getAttribute('aria-disabled') === 'true') return { ready: false, reason: "send_disabled" };
@@ -1780,6 +1861,13 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
           :String(clone?.textContent||'').trim();
         if(!composer||stagedText!==${JSON.stringify(message.trim())})
           return{focused:false,reason:"composer_changed"};
+        if(${JSON.stringify(typeof filePath === "string")}){
+          const form=composer.closest('form');
+          const matches=[...(form?.querySelectorAll('button[aria-label]')||[])]
+            .filter(x=>x.getClientRects().length&&x.getAttribute('aria-label')===${JSON.stringify(fileName ?? "")});
+          const busy=!!form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]');
+          if(matches.length!==1||busy)return{focused:false,reason:"attachment_changed"};
+        }
         if (!button || !button.isConnected || button.type !== 'submit') return { focused: false, reason: "send_button_missing" };
         const form = composer.closest('form');
         if (!form || button.closest('form') !== form) return { focused: false, reason: "send_button_scope_changed" };

@@ -898,6 +898,28 @@ ipcMain.handle("equinox-shell:pick-folder", async (event) => {
         pickerPending = false;
     }
 });
+ipcMain.handle("equinox-shell:pick-chat-file", async (event) => {
+    if (!trustedSender(event))
+        throw new Error("Untrusted chat file picker request.");
+    if (pickerPending || quitting || !window)
+        throw new Error("File picker is unavailable.");
+    pickerPending = true;
+    try {
+        const result = await dialog.showOpenDialog(window, { properties: ["openFile"] });
+        if (!trustedSender(event))
+            throw new Error("File picker document changed.");
+        if (result.canceled || result.filePaths.length !== 1)
+            return { cancelled: true, path: null, name: null, size: 0 };
+        const selected = await fs.promises.realpath(result.filePaths[0]);
+        const stat = await fs.promises.stat(selected);
+        if (!stat.isFile() || stat.size < 1 || stat.size > 100 * 1024 * 1024)
+            throw new Error("Choose a regular file between 1 byte and 100 MiB.");
+        return { cancelled: false, path: selected, name: path.basename(selected), size: stat.size };
+    }
+    finally {
+        pickerPending = false;
+    }
+});
 ipcMain.handle("equinox-shell:language", (event, value) => {
     if (!trustedSender(event) || (value !== "en" && value !== "tr"))
         return;
