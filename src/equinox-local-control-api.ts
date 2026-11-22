@@ -1259,7 +1259,7 @@ export function createEquinoxLocalControlApi({
   // A second permission boundary inside the private IPC server, independent
   // of the renderer and Electron main allowlist. Keep lists synchronized.
 const UI_READ_PATHS = new Set([
-  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model",
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model", "/api/v1/chat/tools",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
   "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
@@ -1268,7 +1268,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/project_instructions", "/api/v1/chat/project_text_source", "/api/v1/chat/conversation_action",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/project_instructions", "/api/v1/chat/project_text_source", "/api/v1/chat/conversation_action", "/api/v1/chat/message_edit", "/api/v1/chat/retry_assistant", "/api/v1/chat/response_versions", "/api/v1/chat/branch_new", "/api/v1/chat/branch_work", "/api/v1/chat/branch_version",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",
