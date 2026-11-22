@@ -46,6 +46,7 @@ let refreshInFlight = false;
 let refreshRequested = false;
 let mutationPending = false;
 let pickerPending = false;
+let pickedChatFile: {path:string;name:string;size:number;expiresAt:number}|null=null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let language = "en";
 let shellPreferences: ShellPreferenceStore | null = null;
@@ -696,6 +697,28 @@ function createWindow(): void {
 
 ipcMain.handle("equinox-shell:control-request", async (event, value: unknown) => {
   if (!trustedSender(event) || quitting) throw new Error("Untrusted desktop control request.");
+  // The native picker is the only authorization for sending a local file.
+  // A renderer cannot forge an arbitrary path into the private chat API.
+  if(value&&typeof value==="object"&&!Array.isArray(value)){
+    const request=value as Record<string,unknown>;
+    if(request.path==="/api/v1/chat/send"&&request.method==="POST"&&typeof request.body==="string"){
+      let parsed:unknown;
+      try{parsed=JSON.parse(request.body);}catch{/* Backend will reject malformed JSON. */}
+      if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&"file" in parsed){
+        const file=(parsed as Record<string,unknown>).file;
+        const picked=pickedChatFile;
+        if(!picked||Date.now()>picked.expiresAt
+          ||!file||typeof file!=="object"||Array.isArray(file)
+          ||(file as Record<string,unknown>).path!==picked.path
+          ||(file as Record<string,unknown>).name!==picked.name
+          ||(file as Record<string,unknown>).size!==picked.size)
+          throw new Error("Chat was not submitted: file was not approved by the current native file picker.");
+        // Consume the one-time authorization at the transport boundary.
+        // A failed/uncertain send must not automatically replay this file.
+        pickedChatFile=null;
+      }
+    }
+  }
   return await requestUiControlJson(value as Parameters<typeof requestUiControlJson>[0]);
 });
 
@@ -717,6 +740,7 @@ ipcMain.handle("equinox-shell:pick-chat-file", async (event) => {
   if(!trustedSender(event))throw new Error("Untrusted chat file picker request.");
   if(pickerPending||quitting||!window)throw new Error("File picker is unavailable.");
   pickerPending=true;
+  pickedChatFile=null;
   try{
     const result=await dialog.showOpenDialog(window,{properties:["openFile"]});
     if(!trustedSender(event))throw new Error("File picker document changed.");
@@ -726,6 +750,8 @@ ipcMain.handle("equinox-shell:pick-chat-file", async (event) => {
     const stat=await fs.promises.stat(selected);
     if(!stat.isFile()||stat.size<1||stat.size>100*1024*1024)
       throw new Error("Choose a regular file between 1 byte and 100 MiB.");
+    pickedChatFile={path:selected,name:path.basename(selected),size:stat.size,
+      expiresAt:Date.now()+10*60_000};
     return{cancelled:false,path:selected,name:path.basename(selected),size:stat.size};
   }finally{pickerPending=false;}
 });
