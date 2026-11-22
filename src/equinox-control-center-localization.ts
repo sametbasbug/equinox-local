@@ -171,6 +171,7 @@ const TR_UI = Object.freeze({
   "Choose Models to inspect your account options": "Hesap seçenekleriniz için Modeller düğmesine basın",
   "Browser upgrade required": "Tarayıcı güncellemesi gerekli",
   "Update Equinox Browser for model controls": "Model ayarları için Equinox Browser'ı güncelleyin",
+  "This Browser connection cannot load earlier messages. Open this conversation in ChatGPT to read them.": "Bu tarayıcı bağlantısı eski mesajları yükleyemiyor. Geçmişi okumak için sohbeti ChatGPT'de açın.",
   "Filter open chats": "Açık sohbetleri filtrele",
   "Open in Chrome": "Chrome’da açık",
   "Refresh open chats": "Açık sohbetleri yenile",

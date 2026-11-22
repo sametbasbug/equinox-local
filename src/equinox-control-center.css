@@ -1511,3 +1511,53 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-stop-response:hover:not(:disabled) { opacity: .83; }
 .native-chat-stop-response[hidden] { display: none; }
 .native-chat-stop-response:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+
+/* Native Chat header shows conversation actions; global agent controls
+   remain available behind an explicit menu rather than a red stop banner. */
+.native-chat-heading-actions { gap: 6px; }
+.native-chat-heading-actions #native-chat-copy-link {
+  width: 30px;
+  min-width: 30px;
+  padding: 5px;
+}
+.native-chat-agent-menu { position: relative; flex: none; }
+.native-chat-agent-menu > summary {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-2);
+  background: transparent;
+  cursor: pointer;
+  list-style: none;
+}
+.native-chat-agent-menu > summary::-webkit-details-marker { display: none; }
+.native-chat-agent-menu > summary svg { width: 18px; height: 18px; }
+.native-chat-agent-menu > summary:hover,
+.native-chat-agent-menu[open] > summary,
+.native-chat-agent-menu > summary:focus-visible {
+  background: var(--surface-hover);
+  border-color: var(--line);
+}
+.native-chat-agent-menu-content {
+  position: absolute;
+  z-index: 45;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 154px;
+  padding: 9px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+.native-chat-agent-menu-content .button {
+  width: 100%;
+  margin: 0;
+  justify-content: center;
+}
+.native-chat-model-toolbar[hidden],
+.native-chat-tool-toolbar[hidden] { display: none; }

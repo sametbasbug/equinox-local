@@ -14,6 +14,8 @@
 
 **Delayed Stop readback:** The user turn and assistant reply share their provider `data-turn-key`; a stopped response is not considered fully rehydrated merely because the user turn appeared. Bounded read-only polls continue until a matching assistant row appears, with conservative timeout and no duplicate send. This applies to externally started generations as well. Physical Bridge 13 QA is still outstanding.
 
+**Checkpoint 79 presentation:** The Chat header now reserves primary space for the conversation, with global Emergency Stop under an accessible Agent controls menu (still available, never replaced by per-reply Stop). Model and tool selectors appear only when the connected user Browser advertises Bridge 13; existing Bridge 12 installs receive a functional basic composer rather than non-working selectors. The selected verified ChatGPT conversation retains explicit web-open and copy-link actions. When Bridge 12 cannot supply recent history, the user-facing notice identifies the authenticated web conversation as the place to read it. Source Electron renderer was visually inspected in default and narrower windows, but provider-backed features still need installed Bridge 13.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.

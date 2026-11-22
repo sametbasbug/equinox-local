@@ -1673,6 +1673,11 @@ function updateNativeChatControls() {
   paintNativeChatWebHandoff();
   paintNativeChatFileControls();
   paintNativeChatToolControls();
+  // The personal Chrome Store extension can have a newer manifest but an
+  // older Bridge. Do not show inert model/tool form controls as if supported.
+  const advancedBridge = Number(state.status?.browser?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) >= 13;
+  $("native-chat-model-toolbar").hidden = !advancedBridge;
+  $("native-chat-tool-toolbar").hidden = !advancedBridge;
   const busy = chatSelecting || chatSending || chatServerSending;
   const composer = chatComposer();
   const draftSessionValid = !chatNewDraft || (Boolean(chatNewDraftInstanceId)
@@ -2694,7 +2699,14 @@ function renderNativeChatState(chat: UiRemoteData) {
       live: true, truncated: chat.preview.truncated === true } : null;
   renderNativeChatTranscript(Array.isArray(chat.items) ? chat.items : [], preview);
   if (chatLocallyUncertain) setNativeChatNotice("Delivery is uncertain. Check this conversation in Chrome before continuing.");
-  else if (chat.notice) setNativeChatNotice(String(chat.notice).slice(0, 190));
+  else if (chat.notice) {
+    const notice=String(chat.notice).slice(0,190);
+    const oldBridge=Number(state.status?.browser?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)<13;
+    const noHistory=/^Recent (?:conversation )?history (?:unavailable|is not available)/u.test(notice);
+    setNativeChatNotice(oldBridge&&noHistory&&selectedNativeChatWebUrl()
+      ? "This Browser connection cannot load earlier messages. Open this conversation in ChatGPT to read them."
+      : notice);
+  }
   else if (chatTurn === "generating" || chatTurn === "waiting") setNativeChatNotice("Keep this conversation open in Chrome while ChatGPT responds.");
   else if (chatActive) setNativeChatNotice(chat.historyCount
     ? "Recent messages from Chrome · Earlier turns may be missing"
@@ -3076,6 +3088,7 @@ function switchSection(section: UiRemoteData, { remember = false } = {}) {
   const chatWorkspace = section === "chat";
   if (!chatWorkspace) closeNativeChatTaskPanel();
   document.body.classList.toggle("chat-workspace-active", chatWorkspace);
+  if (!chatWorkspace) ($("native-chat-agent-menu") as HTMLDetailsElement).open = false;
   const agentControl = $("agent-control-button");
   const agentActions = chatWorkspace ? $("native-chat-agent-control") : $("restart-runtime-button").parentElement;
   if (agentActions && agentControl.parentElement !== agentActions) agentActions.append(agentControl);
@@ -6763,6 +6776,18 @@ function bindEvents() {
     if(chatProjectInstructionsBusy)return;
     chatProjectInstructionsCandidate=null;chatProjectInstructionsAttempted=false;
     (document.getElementById("native-chat-project-instructions-text") as HTMLTextAreaElement).value="";
+  });
+  const agentMenu = $("native-chat-agent-menu") as HTMLDetailsElement;
+  document.addEventListener("pointerdown", event => {
+    if (agentMenu.open && event.target instanceof Node && !agentMenu.contains(event.target))
+      agentMenu.open = false;
+  });
+  agentMenu.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      agentMenu.open = false;
+      (agentMenu.querySelector("summary") as HTMLElement)?.focus();
+    }
   });
   $("native-chat-copy-link").addEventListener("click", async () => {
     const url = selectedNativeChatWebUrl();

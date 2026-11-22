@@ -613,10 +613,17 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 5h6v6M19 5l-9 9"/><path d="M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg>
                 <span>Open in ChatGPT</span>
               </a>
-              <button id="native-chat-copy-link" class="native-chat-web-action" type="button" title="Copy this conversation link" aria-label="Copy this conversation link" hidden>Copy link</button>
+              <button id="native-chat-copy-link" class="native-chat-web-action" type="button" title="Copy this conversation link" aria-label="Copy this conversation link" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+              </button>
               <button id="native-chat-task-open" class="native-chat-task-open" type="button" aria-controls="native-chat-task-panel" aria-expanded="false" hidden>Task details</button>
               <span id="native-chat-turn" class="native-chat-turn" role="status">No chat selected</span>
-              <div id="native-chat-agent-control"></div>
+              <details id="native-chat-agent-menu" class="native-chat-agent-menu">
+                <summary aria-label="Agent controls" title="Agent controls">
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+                </summary>
+                <div id="native-chat-agent-control" class="native-chat-agent-menu-content"></div>
+              </details>
             </div>
           </header>
           <div class="native-chat-feed-shell">
@@ -666,7 +673,7 @@
                     </div>
                     <span id="native-chat-model-status" class="native-chat-model-status" role="status"></span>
                   </div>
-                  <div class="native-chat-tool-toolbar" aria-label="ChatGPT account tools">
+                  <div id="native-chat-tool-toolbar" class="native-chat-tool-toolbar" aria-label="ChatGPT account tools">
                     <label for="native-chat-tool-choice" class="native-chat-sr-only">Tool</label>
                     <select id="native-chat-tool-choice" aria-label="Choose ChatGPT tool" disabled>
                       <option value="">No tool</option>
