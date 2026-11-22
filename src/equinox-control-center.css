@@ -1473,3 +1473,22 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .native-chat-source-link:hover { opacity: .8; }
 .native-chat-source-link:focus-visible { outline: 2px solid var(--focus-ring, currentColor); outline-offset: 2px; border-radius: 2px; }
+
+/* A focused, ready-to-type initial state, without developer workflow text. */
+.native-chat-main:has(#native-chat-turn[data-turn="draft"]) .native-chat-empty {
+  max-width: 480px;
+  padding-block: 5px 20px;
+}
+.native-chat-main:has(#native-chat-turn[data-turn="draft"]) .native-chat-empty-icon {
+  display: none;
+}
+.native-chat-main:has(#native-chat-turn[data-turn="draft"]) .native-chat-empty h3 {
+  font-size: clamp(23px, 2.5vw, 29px);
+  font-weight: 650;
+  letter-spacing: -.045em;
+  margin-bottom: 8px;
+}
+.native-chat-new:disabled {
+  opacity: 1;
+  cursor: default;
+}

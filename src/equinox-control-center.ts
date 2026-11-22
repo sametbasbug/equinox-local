@@ -461,6 +461,12 @@ let chatSelecting = false;
 let chatSelectionGeneration = 0;
 let chatNewDraft = false;
 let chatNewCreationId: string | null = null;
+// Session-only, exact browser-instance/tab scoped text drafts. No files or
+// account content are persisted, and a restarted app starts with empty drafts.
+const chatTextDrafts = new Map<string, string>();
+let chatInitialNewDraftOffered = false;
+let chatSavedNewPrompt = "";
+let chatNewDraftInstanceId: string | null = null;
 let chatBlocked = false;
 let chatCreationBlocked = false;
 let chatLocallyUncertain = false;
@@ -470,6 +476,24 @@ let chatServerSending = false;
 const chatUncertainConversations = new Set<string>();
 const chatConversationKey = (value: UiRemoteData) => value?.browserInstanceId && value?.conversationId
   ? String(value.browserInstanceId) + ":" + String(value.conversationId) : null;
+function nativeChatDraftKey(binding: UiRemoteData): string | null {
+  const key = chatConversationKey(binding);
+  return key && Number.isSafeInteger(binding?.tabId) && binding.tabId > 0
+    ? key + ":" + String(binding.tabId) : null;
+}
+function rememberNativeChatDraft(binding: UiRemoteData, text: string) {
+  const key = nativeChatDraftKey(binding);
+  if (!key) return;
+  chatTextDrafts.delete(key);
+  if (!text.trim()) return;
+  chatTextDrafts.set(key, text.slice(0, 4000));
+  // Bounded short-lived memory, including for users with many Chrome chats.
+  if (chatTextDrafts.size > 24) chatTextDrafts.delete(chatTextDrafts.keys().next().value!);
+}
+function restoredNativeChatDraft(binding: UiRemoteData): string {
+  const key = nativeChatDraftKey(binding);
+  return key ? chatTextDrafts.get(key) || "" : "";
+}
 function holdChatUncertainty() {
   const key = chatConversationKey(chatActive);
   if (key) chatUncertainConversations.add(key);
@@ -1388,7 +1412,8 @@ function paintNativeChatModelControls() {
   picker.value = typeof selected === "string" && rows.some((x: UiRemoteData) => x.label === selected)
     ? selected : rows[0]?.label || "";
   const busy=chatModelBusy||chatNewModelBusy||chatSelecting||chatSending||chatServerSending;
-  const canChangeDraft = chatNewDraft&&!busy&&!chatBlocked;
+  const canChangeDraft = chatNewDraft&&!busy&&!chatBlocked
+    &&Boolean(chatNewDraftInstanceId)&&chatNewDraftInstanceId===chatThreadBrowserInstanceId;
   const canChangeExisting = !chatNewDraft&&!busy&&!chatBlocked&&chatStateAvailable
     &&Boolean(chatActive)&&["ready","complete"].includes(chatTurn)
     &&!chatComposer().value.trim();
@@ -1436,8 +1461,9 @@ async function readNativeChatModel() {
   }
 }
 
-async function changeNativeChatModel(action: "discover"|"choose"|"power"|"catalog", value?: string) {
+async function changeNativeChatModel(action: "discover"|"choose"|"power"|"catalog", value?: string, quiet = false) {
   if(chatNewDraft){
+    if (!chatNewDraftInstanceId || chatNewDraftInstanceId!==chatThreadBrowserInstanceId) return;
     if(action==="choose"){
       if(!chatNewModelCatalog?.choices?.some((row:UiRemoteData)=>row.label===value))return;
       chatNewModelChoice=String(value);
@@ -1468,7 +1494,7 @@ async function changeNativeChatModel(action: "discover"|"choose"|"power"|"catalo
       if(chatNewEffortLevel!==null&&(chatNewEffortLevel<power?.min||chatNewEffortLevel>power?.max))
         chatNewEffortLevel=null;
     }catch(error){
-      if(chatNewDraft&&generation===chatSelectionGeneration)showToast(nativeChatErrorMessage(error));
+      if(chatNewDraft&&generation===chatSelectionGeneration&&!quiet)showToast(nativeChatErrorMessage(error));
     }finally{
       chatNewModelBusy=false;
       paintNativeChatModelControls();
@@ -1499,7 +1525,9 @@ async function changeNativeChatModel(action: "discover"|"choose"|"power"|"catalo
 
 function paintNativeChatFileControls(){
   const ready=!chatSelecting&&!chatSending&&!chatServerSending&&!chatBlocked&&!chatFileSelectionBusy
-    &&chatConnection==="ready"&&(chatNewDraft||(Boolean(chatActive)&&["ready","complete"].includes(chatTurn)));
+    &&chatConnection==="ready"&&(!chatNewDraft
+      || (Boolean(chatNewDraftInstanceId)&&chatNewDraftInstanceId===chatThreadBrowserInstanceId))
+    &&(chatNewDraft||(Boolean(chatActive)&&["ready","complete"].includes(chatTurn)));
   $("native-chat-file-pick").disabled=!ready;
   const attachButton = $("native-chat-file-pick");
   const attachLabel = localizeUiText("Attach files…");
@@ -1538,8 +1566,6 @@ function paintNativeChatFileControls(){
     chip.append(remove);
     list.append(chip);
   }
-  if(!chatPickedFiles.length&&chatNewDraft)
-    setNativeChatCopy("native-chat-file-name","You can start a chat with files and no text");
 }
 
 async function removeNativeChatSelectedFile(name:string){
@@ -1590,6 +1616,7 @@ function paintNativeChatToolControls(){
   const combo=$("native-chat-tool-choice") as HTMLSelectElement;
   const busy=chatSending||chatSelecting||chatToolCatalogBusy||chatServerSending;
   const canChoose=!chatBlocked&&!busy&&!chatPickedFiles.length&&chatConnection==="ready"
+    &&(!chatNewDraft || (Boolean(chatNewDraftInstanceId)&&chatNewDraftInstanceId===chatThreadBrowserInstanceId))
     &&(chatNewDraft||(Boolean(chatActive)&&["ready","complete"].includes(chatTurn)));
   const current=chatToolSelection?chatToolSelection.kind+":"+chatToolSelection.name:"";
   const offered=chatToolCatalogBrowserInstance===chatThreadBrowserInstanceId?chatToolCatalog:[];
@@ -1606,7 +1633,8 @@ function paintNativeChatToolControls(){
   combo.value=offered.some(item=>item.kind+":"+item.name===current
     &&nativeChatInlineToolSupported(item))?current:"";
   combo.disabled=!canChoose||!offered.length;
-  $("native-chat-tool-refresh").disabled=busy||(!chatNewDraft&&!chatActive);
+  $("native-chat-tool-refresh").disabled=busy||(!chatNewDraft&&!chatActive)
+    ||(chatNewDraft&&chatNewDraftInstanceId!==chatThreadBrowserInstanceId);
   setNativeChatCopy("native-chat-tool-status",
     chatToolCatalogBusy?"Tool options are loading…"
     :chatToolSelection?"ChatGPT will confirm the chosen tool before sending"
@@ -1614,7 +1642,8 @@ function paintNativeChatToolControls(){
 }
 
 async function refreshNativeChatToolCatalog(quiet=false){
-  if(chatToolCatalogBusy||(!chatNewDraft&&!chatActive))return;
+  if(chatToolCatalogBusy||(!chatNewDraft&&!chatActive)
+    ||(chatNewDraft&&chatNewDraftInstanceId!==chatThreadBrowserInstanceId))return;
   chatToolCatalogBusy=true;
   const generation=chatSelectionGeneration;
   const identity=chatConversationKey(chatActive);
@@ -1645,7 +1674,9 @@ function updateNativeChatControls() {
   paintNativeChatToolControls();
   const busy = chatSelecting || chatSending || chatServerSending;
   const composer = chatComposer();
-  const allowed = !busy && !chatFileSelectionBusy && !chatBlocked && (chatNewDraft
+  const draftSessionValid = !chatNewDraft || (Boolean(chatNewDraftInstanceId)
+    && chatNewDraftInstanceId === chatThreadBrowserInstanceId);
+  const allowed = !busy && !chatFileSelectionBusy && !chatBlocked && draftSessionValid && (chatNewDraft
     || Boolean(chatStateAvailable && chatActive && ["ready", "complete"].includes(chatTurn)));
   composer.disabled = !allowed;
   $("native-chat-send").disabled = !allowed || (!composer.value.trim()&&!chatPickedFiles.length)
@@ -1655,7 +1686,7 @@ function updateNativeChatControls() {
   $("native-chat-project-create").disabled=busy||chatProjectCreateBusy||chatProjectBusy
     ||chatConnection!=="ready"||chatCreationBlocked||chatBlocked;
   $("native-chat-cancel-new").disabled = chatSending;
-  $("native-chat-refresh").setAttribute("aria-disabled", String(chatRefreshingThreads || chatNewDraft || busy));
+  $("native-chat-refresh").setAttribute("aria-disabled", String(chatRefreshingThreads || busy));
   paintNativeChatModelControls();
   const preview = $("native-chat-preview");
   preview.hidden = !chatStateAvailable || busy || !preview.hasChildNodes();
@@ -1667,7 +1698,7 @@ function updateNativeChatControls() {
   $("native-chat-turn").dataset.turn = turn;
   setNativeChatCopy("native-chat-turn", Object.hasOwn(NATIVE_CHAT_TURN_LABELS, turn) ? NATIVE_CHAT_TURN_LABELS[turn]! : "No chat selected");
   setNativeChatCopy("native-chat-compose-hint", chatNewDraft
-    ?  "First message · Up to 1,500 characters, or up to four files without text"
+    ?  "First message · 1,500 characters maximum"
     : "Enter to send · Shift+Enter for a new line");
 }
 
@@ -2479,9 +2510,9 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
   $("native-chat-empty").hidden = Boolean(items.length || preview);
   if (!items.length && !preview) {
     const waiting = chatActive && ["generating", "waiting"].includes(chatTurn);
-    setNativeChatCopy("native-chat-empty-title", chatNewDraft ? "Start a conversation"
+    setNativeChatCopy("native-chat-empty-title", chatNewDraft ? "What are we working on?"
       : waiting ? "Waiting for ChatGPT" : chatActive ? "No messages loaded" : "Choose a conversation");
-    setNativeChatCopy("native-chat-empty-copy", chatNewDraft ? "Send your first message to open a ChatGPT conversation in Chrome and link a Task Capsule."
+    setNativeChatCopy("native-chat-empty-copy", chatNewDraft ? "Ask ChatGPT a question, or choose an existing conversation."
       : waiting ? "Keep the selected conversation open in Chrome."
       : chatActive ? "Messages from the selected Chrome conversation will appear here when available."
       : "Choose an open Chrome conversation, or select New Chat to begin one.");
@@ -2589,8 +2620,21 @@ async function loadNativeChatTaskPanel() {
 
 function renderNativeChatState(chat: UiRemoteData) {
   if (!chat || typeof chat !== "object" || chatNewDraft) return;
+  const incoming = chat.selected || null;
+  if (!chatSelecting && !chatSending && nativeChatDraftKey(incoming) !== nativeChatDraftKey(chatActive)) {
+    // Chrome can change its selected conversation independently. Never let
+    // text or one-use attachment approval from the old chat follow it.
+    rememberNativeChatDraft(chatActive, chatComposer().value);
+    chatComposer().value = restoredNativeChatDraft(incoming);
+    chatToolSelection = null;
+    if (chatPickedFiles.length) {
+      chatPickedFiles = [];
+      void window.equinoxShell?.clearChatFile?.();
+      showToast("Chrome changed conversations. Choose attachments again before sending.");
+    }
+  }
   chatLastRenderedState = chat;
-  chatActive = chat.selected || null;
+  chatActive = incoming;
   paintNativeChatWebHandoff();
   if(chatVersionsCandidate&&chatVersionsCandidate.identity!==chatConversationKey(chatActive)){
     const versionsDialog=$("native-chat-versions-dialog") as HTMLDialogElement;
@@ -2651,7 +2695,7 @@ function renderNativeChatState(chat: UiRemoteData) {
 async function refreshNativeChat(withThreads = false) {
   if (state.activeSection !== "chat" || state.setupMode) return;
   if (withThreads) chatThreadRefreshRequested = true;
-  if (chatRefreshing || chatNewDraft || chatSelecting || chatSending) return;
+  if (chatRefreshing || chatSelecting || chatSending) return;
   chatRefreshing = true;
   const selectionGeneration = chatSelectionGeneration;
   try {
@@ -2662,13 +2706,17 @@ async function refreshNativeChat(withThreads = false) {
       renderNativeChatThreads();
       updateNativeChatControls();
       const result = await requestJson("/api/v1/chat/threads", { backgroundRefresh: true });
-      if (selectionGeneration !== chatSelectionGeneration || chatNewDraft) return;
+      if (selectionGeneration !== chatSelectionGeneration) return;
       chatThreadList = Array.isArray(result.chat?.threads) ? result.chat.threads : [];
       chatProjectCatalog=Array.isArray(result.chat?.projects)?result.chat.projects:[];
       const nextInstance=typeof result.chat?.browserInstanceId === "string"
         ?result.chat.browserInstanceId:null;
       if(nextInstance!==chatThreadBrowserInstanceId){
         chatToolCatalog=[];chatToolSelection=null;chatToolCatalogBrowserInstance=null;
+        chatTextDrafts.clear();
+        chatSavedNewPrompt = "";
+        if(chatNewDraft)
+          setNativeChatNotice("Your Browser session changed. Cancel this New Chat and start again before sending.");
       }
       if(chatProjectId&&(nextInstance!==chatThreadBrowserInstanceId
         ||!chatProjectCatalog.some(project=>project.id===chatProjectId
@@ -2684,9 +2732,21 @@ async function refreshNativeChat(withThreads = false) {
       chatRefreshingThreads = false;
       renderNativeChatThreads();
     }
+    // Keep the sidebar fresh while drafting, without replacing the unsent
+    // first-message composer with a provider read of another conversation.
+    if(chatNewDraft) return;
     const result = await requestJson("/api/v1/chat/state", { backgroundRefresh: true });
     if (selectionGeneration !== chatSelectionGeneration || chatNewDraft) return;
     renderNativeChatState(result.chat);
+    // ChatGPT's home composer works without a preliminary New Chat click.
+    // This only opens a LOCAL unsent draft; no tab or Task Capsule is created
+    // until the user explicitly sends their first message.
+    if (!chatInitialNewDraftOffered && !chatActive && !chatNewDraft
+      && chatStateAvailable && chatConnection === "ready"
+      && !chatBlocked && !chatCreationBlocked) {
+      chatInitialNewDraftOffered = true;
+      beginNewNativeChat({ quietDiscovery: true });
+    }
     const instance=chatThreadBrowserInstanceId;
     if(instance&&chatActive&&!chatNewDraft&&!chatToolCatalogBusy
       &&chatToolAutoAttemptInstance!==instance){
@@ -2727,18 +2787,24 @@ async function selectNativeChat(thread: UiRemoteData) {
     void refreshNativeChat(true);
     return;
   }
-  if (chatComposer().value.trim()||chatPickedFiles.length) {
-    showToast("Clear the unsent message or remove the selected file before switching conversations.");
+  if (chatPickedFiles.length || (chatNewDraft && (chatBlocked || chatCreationBlocked))) {
+    showToast("Resolve uncertain delivery or remove selected files before switching conversations.");
     return;
   }
+  const previousWasNew = chatNewDraft;
+  const previousNewCreationId = chatNewCreationId;
+  const previousNewSession = chatNewDraftInstanceId;
+  const previousNewHadChoices = Boolean(chatNewModelChoice || chatNewEffortLevel !== null || chatToolSelection);
+  const previousBinding = chatNewDraft ? null : chatActive;
+  const previousText = chatComposer().value;
   closeNativeChatTaskPanel();
   chatTaskRelated = null;
   $("native-chat-task-open").hidden = true;
   chatNewDraft = false;
+  chatNewDraftInstanceId = null;
   chatNewCreationId = null;
   $("native-chat-cancel-new").hidden = true;
   const composer = chatComposer();
-  composer.value = "";
   composer.maxLength = 4000;
   chatModelState = null;
   chatModelIdentity = null;
@@ -2751,6 +2817,18 @@ async function selectNativeChat(thread: UiRemoteData) {
   try {
     const data = await mutationJson("/api/v1/chat/select", "POST", { tabId: thread.tabId, conversationId: thread.conversationId });
     if (selectionGeneration !== chatSelectionGeneration) return;
+    const selected = data.chat?.selected;
+    if (!selected || selected.tabId !== thread.tabId
+      || selected.conversationId !== thread.conversationId
+      || selected.browserInstanceId !== chatThreadBrowserInstanceId)
+      throw new Error("ChatGPT did not confirm the selected conversation.");
+    if (previousBinding) rememberNativeChatDraft(previousBinding, previousText);
+    else if (previousWasNew) {
+      chatSavedNewPrompt = previousText.slice(0, 1500);
+      if (chatSavedNewPrompt.trim() && previousNewHadChoices)
+        showToast("New Chat text saved. Choose model and tools again when you return.");
+    }
+    composer.value = restoredNativeChatDraft(selected);
     renderNativeChatState(data.chat);
     chatProjectId=null;chatProjectName="";chatProjectSettings=null;chatProjectSources=null;chatProjectThreads=[];
     chatProjectGeneration++;
@@ -2758,6 +2836,18 @@ async function selectNativeChat(thread: UiRemoteData) {
     if(filter.value){filter.value="";scheduleNativeChatSearch();}
     renderNativeChatThreads();
   } catch (error) {
+    if (previousWasNew) {
+      // A failed historical-selection attempt must not destroy a typed
+      // first message or its one-use creation identity.
+      chatNewDraft = true;
+      chatNewDraftInstanceId = previousNewSession;
+      chatNewCreationId = previousNewCreationId;
+      chatNewModelCatalog = null; chatNewModelChoice = null; chatNewEffortLevel = null;
+      $("native-chat-cancel-new").hidden = false;
+      composer.maxLength = 1500;
+      setNativeChatCopy("native-chat-title", "New Chat");
+      renderNativeChatTranscript([], null);
+    }
     setNativeChatNotice(nativeChatErrorMessage(error));
   } finally {
     chatSelecting = false;
@@ -2766,17 +2856,19 @@ async function selectNativeChat(thread: UiRemoteData) {
   }
 }
 
-function beginNewNativeChat() {
+function beginNewNativeChat({ quietDiscovery = false } = {}) {
   if ($("native-chat-new").disabled) return;
   const composer = chatComposer();
-  if (composer.value.trim()||chatPickedFiles.length) {
-    showToast("Clear the unsent message or remove the selected file before starting a new conversation.");
+  if (chatPickedFiles.length) {
+    showToast("Remove selected files before starting a new conversation.");
     return;
   }
+  if (!chatNewDraft) rememberNativeChatDraft(chatActive, composer.value);
   closeNativeChatTaskPanel();
   chatTaskRelated = null;
   $("native-chat-task-open").hidden = true;
   chatNewDraft = true;
+  chatNewDraftInstanceId = chatThreadBrowserInstanceId;
   chatToolSelection=null;
   chatPickedFiles=[];
   chatNewModelCatalog=null;chatNewModelChoice=null;chatNewEffortLevel=null;
@@ -2788,19 +2880,21 @@ function beginNewNativeChat() {
   $("native-chat-task").hidden = true;
   renderNativeChatThreads();
   renderNativeChatTranscript([], null);
-  composer.value = "";
+  composer.value = chatSavedNewPrompt;
   composer.maxLength = 1500;
   setNativeChatNotice("");
   updateNativeChatControls();
   composer.focus();
-  void changeNativeChatModel("catalog");
+  void changeNativeChatModel("catalog", undefined, quietDiscovery);
   if(chatToolCatalogBrowserInstance!==chatThreadBrowserInstanceId||!chatToolCatalog.length)
     void refreshNativeChatToolCatalog(true);
 }
 
 function cancelNewNativeChat() {
   if (chatSending) return;
+  chatSavedNewPrompt = "";
   chatNewDraft = false;
+  chatNewDraftInstanceId = null;
   chatNewCreationId = null;
   chatNewModelCatalog=null;chatNewModelChoice=null;chatNewEffortLevel=null;
   chatToolSelection=null;
@@ -2810,7 +2904,9 @@ function cancelNewNativeChat() {
   chatStateAvailable = false;
   $("native-chat-cancel-new").hidden = true;
   const composer = chatComposer();
-  composer.value = "";
+  // The selected Chrome conversation never changed while drafting a new
+  // first message. Restore its own text rather than losing that draft.
+  composer.value = restoredNativeChatDraft(chatActive);
   composer.maxLength = 4000;
   setNativeChatNotice("");
   updateNativeChatControls();
@@ -2852,7 +2948,9 @@ async function sendNativeChatMessage() {
       const response = await mutationJson("/api/v1/chat/new", "POST", request);
       if (response.creation?.confirmed !== true) throw new Error("New Chat creation could not be confirmed.");
       confirmed = true;
+      chatSavedNewPrompt = "";
       chatNewDraft = false;
+      chatNewDraftInstanceId = null;
       chatNewCreationId = null;
       chatNewModelCatalog=null;chatNewModelChoice=null;chatNewEffortLevel=null;
       chatToolSelection=null;chatPickedFiles=[];
@@ -2877,7 +2975,11 @@ async function sendNativeChatMessage() {
     else if(chatPickedFiles.length>1)request.files=chatPickedFiles.map(({path,name,size})=>({path,name,size}));
     const response = await mutationJson("/api/v1/chat/send", "POST",request);
     confirmed = response.delivery?.confirmed === true;
-    if (confirmed) {composer.value = "";chatToolSelection=null;chatPickedFiles=[];}
+    if (confirmed) {
+      const key = nativeChatDraftKey(chatActive);
+      if (key) chatTextDrafts.delete(key);
+      composer.value = "";chatToolSelection=null;chatPickedFiles=[];
+    }
     else holdChatUncertainty();
     const result = await requestJson("/api/v1/chat/state");
     renderNativeChatState(result.chat);
@@ -6331,13 +6433,38 @@ function bindEvents() {
   });
   $("native-chat-filter").addEventListener("keydown", event => {
     const key = event as KeyboardEvent;
-    if (key.key !== "Escape") return;
-    key.preventDefault();
-    const filter = $("native-chat-filter") as HTMLInputElement;
-    if (filter.value) {
-      filter.value = "";
-      filter.dispatchEvent(new Event("input", { bubbles: true }));
-    } else if (!chatComposer().disabled) chatComposer().focus();
+    const results = Array.from($("native-chat-thread-list").querySelectorAll<HTMLButtonElement>(".native-chat-thread"));
+    if ((key.key === "ArrowDown" || key.key === "ArrowUp") && results.length) {
+      key.preventDefault();
+      (key.key === "ArrowDown" ? results[0] : results.at(-1))?.focus();
+    } else if (key.key === "Enter" && results.length && !chatSearchBusy) {
+      key.preventDefault();
+      results[0]?.click();
+    } else if (key.key === "Escape") {
+      key.preventDefault();
+      const filter = $("native-chat-filter") as HTMLInputElement;
+      if (filter.value) {
+        filter.value = "";
+        filter.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (!chatComposer().disabled) chatComposer().focus();
+    }
+  });
+  $("native-chat-thread-list").addEventListener("keydown", event => {
+    const key = event as KeyboardEvent;
+    const target = key.target instanceof HTMLButtonElement && key.target.matches(".native-chat-thread")
+      ? key.target : null;
+    if (!target) return;
+    const rows = Array.from($("native-chat-thread-list").querySelectorAll<HTMLButtonElement>(".native-chat-thread"));
+    const current = rows.indexOf(target);
+    if (key.key === "Escape") {
+      key.preventDefault();
+      $("native-chat-filter").focus();
+    } else if ((key.key === "ArrowDown" || key.key === "ArrowUp") && current !== -1) {
+      key.preventDefault();
+      const next = current + (key.key === "ArrowDown" ? 1 : -1);
+      if (next < 0) $("native-chat-filter").focus();
+      else (rows[next] || rows.at(-1))?.focus();
+    }
   });
   for (const button of document.querySelectorAll<HTMLElement>(".nav-item")) {
     button.addEventListener("click", () => switchSection(button.dataset.section, { remember: true }));
@@ -6619,7 +6746,7 @@ function bindEvents() {
     ($("native-chat-project-create-name") as HTMLInputElement).value="";
     updateNativeChatProjectCreator();
   });
-  $("native-chat-new").addEventListener("click", beginNewNativeChat);
+  $("native-chat-new").addEventListener("click", () => beginNewNativeChat());
   $("native-chat-cancel-new").addEventListener("click", cancelNewNativeChat);
   $("native-chat-form").addEventListener("submit", event => {
     event.preventDefault();
