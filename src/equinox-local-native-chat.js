@@ -598,11 +598,20 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                             throw new Error("New Chat read another Chrome tab.");
                         const users = Array.isArray(recent?.items) ? recent.items.filter((item) => item?.role === "user") : [];
                         const observedText = String(users[0]?.text || "").trim();
-                        const fileOnlyMatches = awaiting.fileName !== null && !awaiting.text
-                            && observedText.split(/\r?\n/u)[0] === awaiting.fileName
-                            && observedText.split(/\r?\n/u).length <= 3;
+                        const lines = observedText.split(/\r?\n/u).map(line => line.trim());
+                        const documents = Array.isArray(users[0]?.attachmentFileNames)
+                            ? users[0].attachmentFileNames : [];
+                        const imageCount = Number(users[0]?.attachmentImageCount);
+                        const missing = awaiting.fileNames.filter(name => !documents.includes(name));
+                        const filesMatch = awaiting.fileNames.length > 0
+                            && documents.length + imageCount === awaiting.fileNames.length
+                            && missing.length === imageCount
+                            && documents.every(name => awaiting.fileNames.includes(name) && lines.includes(name))
+                            && missing.every(name => /\.(?:png|jpe?g|webp|gif)$/iu.test(name))
+                            && awaiting.fileNames.filter(name => documents.includes(name)).every((name, index) => name === documents[index]);
+                        const promptMatch = awaiting.text ? lines.includes(awaiting.text) : true;
                         if (recent?.partial !== true && users.length === 1
-                            && (observedText === awaiting.text || fileOnlyMatches)) {
+                            && (awaiting.fileNames.length ? filesMatch && promptMatch : observedText === awaiting.text)) {
                             pending = { userEpoch: inspected.userEpoch, previousAssistantTurnKey: null, deliveryId: awaiting.deliveryId };
                             awaitingNewChatIdentity = null;
                             awaitingFirstTurns.delete(conversationKey(selected));
@@ -1176,10 +1185,10 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Invalid New Chat request.");
         const body = value;
-        if (Object.keys(body).some(k => !["creationId", "text", "model", "effort", "tool", "file"].includes(k))
+        if (Object.keys(body).some(k => !["creationId", "text", "model", "effort", "tool", "file", "files"].includes(k))
             || typeof body.creationId !== "string" ||
             !/^nch-[a-f0-9-]{36}$/u.test(body.creationId) || typeof body.text !== "string" ||
-            (!body.text.trim() && !body.file) || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
+            (!body.text.trim() && !body.file && !body.files) || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
             || (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim() || body.model.length > 80))
             || (body.effort !== undefined && (!Number.isInteger(body.effort) || Number(body.effort) < 0 || Number(body.effort) > 12))
             || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
@@ -1196,8 +1205,18 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 || !Number.isSafeInteger(body.file.size) || body.file.size < 1
                 || body.file.size > 100 * 1024 * 1024
                 || path.basename(body.file.path) !== body.file.name))
-            || (body.tool !== undefined && body.file !== undefined))
-            invalid("The first Chat message requires a safe prompt or one explicitly selected file.");
+            || (body.files !== undefined && (!Array.isArray(body.files) || body.files.length < 2 || body.files.length > 4
+                || body.files.some((file) => !file || typeof file !== "object" || Array.isArray(file)
+                    || Object.keys(file).some(k => !["path", "name", "size"].includes(k))
+                    || typeof file.path !== "string" || file.path.length > 4096 || !path.isAbsolute(file.path)
+                    || typeof file.name !== "string" || !file.name.trim() || file.name.length > 255
+                    || path.basename(file.path) !== file.name
+                    || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 100 * 1024 * 1024)
+                || new Set(body.files.map((file) => file.name)).size !== body.files.length
+                || body.files.reduce((total, file) => total + file.size, 0) > 100 * 1024 * 1024))
+            || (body.file !== undefined && body.files !== undefined)
+            || (body.tool !== undefined && (body.file !== undefined || body.files !== undefined)))
+            invalid("The first Chat message requires a safe prompt or up to four explicitly selected files.");
         const key = body.creationId;
         const firstMessage = body.text.trim();
         const modelChoice = typeof body.model === "string" ? body.model.trim() : null;
@@ -1205,7 +1224,9 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         const selectedTool = body.tool;
         const toolKey = selectedTool ? selectedTool.kind + ":" + selectedTool.name : "";
         const selectedFile = body.file;
-        const fileKey = selectedFile ? JSON.stringify(selectedFile) : "";
+        const selectedFiles = body.files;
+        const attachments = selectedFiles ?? (selectedFile ? [selectedFile] : []);
+        const fileKey = JSON.stringify(attachments);
         const prior = createAttempts.get(key);
         if (prior) {
             if (prior.text !== firstMessage || prior.modelChoice !== modelChoice
@@ -1231,12 +1252,12 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     if (!catalog.items.some((item) => item.kind === selectedTool.kind && item.name === selectedTool.name))
                         invalid("Selected New Chat tool is no longer offered by the account.");
                 }
-                if (selectedFile) {
-                    const stat = await fs.lstat(selectedFile.path);
-                    const canonical = await fs.realpath(selectedFile.path);
-                    if (!stat.isFile() || canonical !== selectedFile.path
-                        || stat.size !== selectedFile.size || stat.size > 100 * 1024 * 1024)
-                        invalid("The file changed after explicit selection. Choose it again.");
+                for (const attachment of attachments) {
+                    const stat = await fs.lstat(attachment.path);
+                    const canonical = await fs.realpath(attachment.path);
+                    if (!stat.isFile() || canonical !== attachment.path
+                        || stat.size !== attachment.size || stat.size > 100 * 1024 * 1024)
+                        invalid("An attachment changed after explicit selection. Choose the files again.");
                 }
                 const existing = await taskStore.list({ limit: 100 });
                 if (existing.some(t => Array.isArray(t.references) && t.references.some((ref) => ref.label === "Native Chat creation ID" && ref.value === key)))
@@ -1254,7 +1275,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     initialMessage: firstMessage, ...(modelChoice ? { modelChoice } : {}),
                     ...(effortLevel !== null ? { effortLevel } : {}),
                     ...(selectedTool ? { tool: selectedTool } : {}),
-                    ...(selectedFile ? { file: selectedFile } : {}) });
+                    ...(selectedFile ? { file: selectedFile } : {}),
+                    ...(selectedFiles ? { files: selectedFiles } : {}) });
                 if (opened?.confirmed !== true || !opened?.binding)
                     throw new Error("New Chat could not confirm its exact ChatGPT binding.");
                 const source = opened.binding;
@@ -1280,8 +1302,8 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 awaitingNewChatIdentity = null;
                 const messageId = key.replace(/^nch-/u, "tgb-");
                 appendMessage({ id: messageId, role: "user",
-                    text: firstMessage || selectedFile?.name || "", status: "sent" });
-                if (typeof opened.userEpoch === "string" && opened.userEpoch) {
+                    text: firstMessage || attachments.map(item => item.name).join("\n"), status: "sent" });
+                if (typeof opened.userEpoch === "string" && opened.userEpoch && !attachments.length) {
                     pending = { userEpoch: opened.userEpoch, previousAssistantTurnKey: null, deliveryId: messageId };
                 }
                 else {
@@ -1289,7 +1311,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     // DOM epoch. Keep sends blocked, but resolve from exact read-only
                     // Browser history on a later status poll instead of locking forever.
                     awaitingNewChatIdentity = { conversationId: source.conversationId, text: firstMessage,
-                        fileName: !firstMessage && selectedFile ? selectedFile.name : null, deliveryId: messageId };
+                        fileNames: attachments.map(item => item.name), deliveryId: messageId };
                     awaitingFirstTurns.set(conversationKey(selected), awaitingNewChatIdentity);
                     blocked = true;
                     historyNotice = "New Chat opened. Waiting to verify its first turn in Chrome; no message will be resent.";

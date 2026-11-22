@@ -1167,7 +1167,7 @@ function paintNativeChatFileControls(){
   const ready=!chatSelecting&&!chatSending&&!chatServerSending&&!chatBlocked&&!chatFileSelectionBusy
     &&chatConnection==="ready"&&(chatNewDraft||(Boolean(chatActive)&&["ready","complete"].includes(chatTurn)));
   $("native-chat-file-pick").disabled=!ready;
-  setNativeChatCopy("native-chat-file-pick",chatNewDraft?"Attach file…":"Attach files…");
+  setNativeChatCopy("native-chat-file-pick","Attach files…");
   $("native-chat-file-remove").hidden=!chatPickedFiles.length;
   $("native-chat-file-remove").disabled=chatSending||chatSelecting||chatServerSending||chatFileSelectionBusy;
   setNativeChatCopy("native-chat-file-remove",chatPickedFiles.length>1?"Remove all":"Remove file");
@@ -1202,7 +1202,7 @@ function paintNativeChatFileControls(){
     list.append(chip);
   }
   if(!chatPickedFiles.length&&chatNewDraft)
-    setNativeChatCopy("native-chat-file-name","You can start a chat with one file and no text");
+    setNativeChatCopy("native-chat-file-name","You can start a chat with files and no text");
 }
 
 async function removeNativeChatSelectedFile(name:string){
@@ -1229,13 +1229,13 @@ async function pickNativeChatFile(){
     ||!window.equinoxShell?.pickChatFile)return;
   const revision=chatSelectionGeneration;
   const target=chatConversationKey(chatActive);
-  const selected=await window.equinoxShell.pickChatFile(!chatNewDraft);
+  const selected=await window.equinoxShell.pickChatFile(true);
   if(selected.cancelled)return;
   if(revision!==chatSelectionGeneration||target!==chatConversationKey(chatActive)
     ||chatSending||chatSelecting||chatBlocked)
     throw new Error("Conversation changed while the file picker was open. Select the files again.");
   const files=selected.files;
-  if(!Array.isArray(files)||files.length<1||files.length>(chatNewDraft?1:4)
+  if(!Array.isArray(files)||files.length<1||files.length>4
     ||files.some(file=>!file||!file.path||!file.name||!Number.isSafeInteger(file.size)
       ||file.size<1||file.size>100*1024*1024)
     ||new Set(files.map(file=>file.name)).size!==files.length
@@ -1327,7 +1327,7 @@ function updateNativeChatControls() {
   $("native-chat-turn").dataset.turn = turn;
   setNativeChatCopy("native-chat-turn", Object.hasOwn(NATIVE_CHAT_TURN_LABELS, turn) ? NATIVE_CHAT_TURN_LABELS[turn]! : "No chat selected");
   setNativeChatCopy("native-chat-compose-hint", chatNewDraft
-    ?  "First message · Single line up to 1,500 characters, or one file without text"
+    ?  "First message · Up to 1,500 characters, or up to four files without text"
     : "Enter to send · Shift+Enter for a new line");
 }
 
@@ -2403,6 +2403,8 @@ async function sendNativeChatMessage() {
       if(chatToolSelection)request.tool={...chatToolSelection};
       if(chatPickedFiles.length===1)request.file={
         path:chatPickedFiles[0]!.path,name:chatPickedFiles[0]!.name,size:chatPickedFiles[0]!.size};
+      else if(chatPickedFiles.length>1)
+        request.files=chatPickedFiles.map(({path,name,size})=>({path,name,size}));
       const response = await mutationJson("/api/v1/chat/new", "POST", request);
       if (response.creation?.confirmed !== true) throw new Error("New Chat creation could not be confirmed.");
       confirmed = true;

@@ -1779,13 +1779,14 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
               return{ready:false,reason:'composer_changed'};
             const names=${JSON.stringify(attachments.map(item => item.name))};
             const buttons=[...form.querySelectorAll('button[aria-label]')];
+            const cards=[...form.querySelectorAll('span[class*="group/composer-attachment"],img[alt]')]
+              .filter(item=>item.getClientRects().length);
             const confirmed=names.every(name=>
-              buttons.filter(x=>x.getClientRects().length&&x.getAttribute('aria-label')===name).length===1
+              buttons.filter(x=>x.getClientRects().length&&x.getAttribute('aria-label')===name).length
+                +cards.filter(x=>x.tagName==="IMG"&&x.getAttribute('alt')===name).length===1
               &&buttons.filter(x=>x.getClientRects().length
                 &&String(x.getAttribute('aria-label')||'').startsWith(name+' ')
                 &&/remove|kaldır/iu.test(x.getAttribute('aria-label')||'')).length===1);
-            const cards=[...form.querySelectorAll('span[class*="group/composer-attachment"],img[alt]')]
-              .filter(item=>item.getClientRects().length);
             const busy=!!form.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]');
             return{ready:confirmed&&cards.length===names.length&&!busy,
               confirmed,cardCount:cards.length,busy};
@@ -1923,14 +1924,15 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
           const form=composer.closest('form');
           const buttons=[...(form?.querySelectorAll('button[aria-label]')||[])];
           const names=${JSON.stringify(attachments.map(item => item.name))};
+          const cards=[...(form?.querySelectorAll('span[class*="group/composer-attachment"],img[alt]')||[])]
+            .filter(item=>item.getClientRects().length);
           const confirmed=names.every(name=>
             buttons.filter(x=>x.getClientRects().length
-              &&x.getAttribute('aria-label')===name).length===1
+              &&x.getAttribute('aria-label')===name).length
+              +cards.filter(x=>x.tagName==="IMG"&&x.getAttribute('alt')===name).length===1
             &&buttons.filter(x=>x.getClientRects().length
               &&String(x.getAttribute('aria-label')||'').startsWith(name+' ')
               &&/remove|kaldır/iu.test(x.getAttribute('aria-label')||'')).length===1);
-          const cards=[...(form?.querySelectorAll('span[class*="group/composer-attachment"],img[alt]')||[])]
-            .filter(item=>item.getClientRects().length);
           const busy=!!form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]');
           if(!confirmed||cards.length!==names.length||busy)
             return{focused:false,reason:"attachments_changed"};
@@ -2604,9 +2606,9 @@ async function browseChatBridgeProject({ tabId, projectId } = {}) {
  * selecting a tool, uploading a file or altering any active conversation. */
 /** Stages a provider-confirmed tool on an empty New Chat home composer.
  * Never submits, opens another tab, or accesses provider private APIs. */
-async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, filePath, fileName, fileSize, } = {}) {
+async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, filePath, fileName, fileSize, filePaths, fileNames, fileSizes, } = {}) {
     if (!Number.isSafeInteger(tabId) || Number(tabId) < 1
-        || typeof text !== "string" || (!text.trim() && filePath === undefined) || text.length > 1500 || /[\r\n]/u.test(text)
+        || typeof text !== "string" || (!text.trim() && filePath === undefined && filePaths === undefined) || text.length > 1500 || /[\r\n]/u.test(text)
         || (toolName !== undefined && (typeof toolName !== "string" || !toolName.trim()
             || toolName.length > 90 || !["tool", "app"].includes(String(toolKind))))
         || (toolName === undefined && toolKind !== undefined))
@@ -2624,10 +2626,30 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
         || /[/\\\x00-\x1f\x7f]/u.test(fileName)
         || !Number.isSafeInteger(fileSize) || Number(fileSize) < 1 || Number(fileSize) > 100 * 1024 * 1024))
         throw new Error("New Chat file selection is invalid.");
+    const batchProvided = filePaths !== undefined || fileNames !== undefined || fileSizes !== undefined;
+    if (batchProvided && (!Array.isArray(filePaths) || !Array.isArray(fileNames) || !Array.isArray(fileSizes)
+        || filePaths.length < 2 || filePaths.length > 4 || filePaths.length !== fileNames.length
+        || filePaths.length !== fileSizes.length || filePath !== undefined || fileName !== undefined
+        || fileSize !== undefined))
+        throw new Error("New Chat batch file identities are invalid.");
+    const batch = batchProvided ? filePaths.map((value, index) => ({
+        path: value, name: fileNames[index], size: fileSizes[index]
+    })) : [];
+    if (batch.some(item => typeof item.path !== "string" || item.path.length < 2 || item.path.length > 4096
+        || !(item.path.startsWith("/") || /^[a-z]:[\\/]/iu.test(item.path))
+        || typeof item.name !== "string" || !item.name.trim() || item.name.length > 255
+        || /[/\\\x00-\x1f\x7f]/u.test(item.name)
+        || !Number.isSafeInteger(item.size) || Number(item.size) < 1 || Number(item.size) > 100 * 1024 * 1024)
+        || new Set(batch.map(item => item.name)).size !== batch.length
+        || batch.reduce((sum, item) => sum + Number(item.size), 0) > 100 * 1024 * 1024)
+        throw new Error("New Chat batch includes invalid, duplicate or oversized files.");
+    const attachments = typeof filePath === "string"
+        ? [{ path: filePath, name: String(fileName), size: Number(fileSize) }] :
+        batch;
     if (filePath === undefined && (fileName !== undefined || fileSize !== undefined)
-        || filePath !== undefined && toolName !== undefined
-        || filePath === undefined && toolName === undefined)
-        throw new Error("New Chat needs exactly one provider tool or file.");
+        || attachments.length && toolName !== undefined
+        || !attachments.length && toolName === undefined)
+        throw new Error("New Chat needs a real provider tool or a selected file set.");
     const id = Number(tabId);
     const tab = await waitForTab(id, item => item.status === "complete" && !item.pendingUrl && item.url === "https://chatgpt.com/", 10_000);
     if (tab.pendingUrl || tab.url !== "https://chatgpt.com/")
@@ -2697,7 +2719,7 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
                 throw new Error("The provider did not verify the requested New Chat tool.");
         }
         const message = String(text).trim(), expectedHint = hint;
-        if (typeof filePath === "string") {
+        if (attachments.length) {
             // Obtain the one exact, user-visible ChatGPT composer form's generic
             // hidden file input. Do not touch camera/image-only inputs.
             const inputProbe = await send(id, "Runtime.evaluate", {
@@ -2718,7 +2740,7 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
             .filter(x=>!x.getAttribute('accept'));
           if(inputs.length!==1||!/^[A-Za-z0-9_-]{1,100}$/u.test(inputs[0].id||''))
             return{ready:false,reason:'file_input_ambiguous'};
-          if(form.querySelector('span[class*="group/composer-attachment"],[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"]'))
+          if(form.querySelector('span[class*="group/composer-attachment"],[data-testid*="attachment-preview"],[data-testid*="file-chip"],[data-testid*="image-preview"],img[alt]'))
             return{ready:false,reason:'existing_attachment'};
           return{ready:true,id:inputs[0].id};
         })()`, returnByValue: true, awaitPromise: true, silent: true
@@ -2735,7 +2757,7 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
             const fileInputNode = Number(query?.nodeId);
             if (!Number.isSafeInteger(fileInputNode) || fileInputNode < 1)
                 throw new Error("ChatGPT file input changed before upload.");
-            await send(id, "DOM.setFileInputFiles", { files: [filePath], nodeId: fileInputNode });
+            await send(id, "DOM.setFileInputFiles", { files: attachments.map(item => item.path), nodeId: fileInputNode });
             // This is a browser upload, not yet a confirmed provider attachment.
             // Never send while the React provider is still processing the file.
             let attached = false, stability = 0;
@@ -2747,14 +2769,18 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
             const form=composer?.closest('form');
             if(!composer||!form||String(composer.textContent||'').trim())
               return{ready:false,reason:'composer_changed'};
-            const named=[...form.querySelectorAll('button[aria-label]')]
-              .filter(x=>x.getClientRects().length&&x.getAttribute('aria-label')===${JSON.stringify(fileName ?? "")});
-            const removable=[...form.querySelectorAll('button[aria-label]')]
-              .filter(x=>x.getAttribute('aria-label')?.startsWith(${JSON.stringify(fileName ?? "")})
-                &&/remove|kaldır/iu.test(x.getAttribute('aria-label')||''));
+            const names=${JSON.stringify(attachments.map(item => item.name))};
+            const buttons=[...form.querySelectorAll('button[aria-label]')]
+              .filter(x=>x.getClientRects().length);
+            const cards=[...form.querySelectorAll('span[class*="group/composer-attachment"],img[alt]')]
+              .filter(x=>x.getClientRects().length);
+            const confirmed=cards.length===names.length&&names.every(name=>
+              buttons.filter(x=>x.getAttribute('aria-label')===name).length
+                +cards.filter(x=>x.tagName==="IMG"&&x.getAttribute('alt')===name).length===1
+              &&buttons.filter(x=>String(x.getAttribute('aria-label')||'').startsWith(name+' ')
+                &&/remove|kaldır/iu.test(x.getAttribute('aria-label')||'')).length===1);
             const busy=!!form.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]');
-            return{ready:named.length===1&&removable.length===1&&!busy,
-              count:named.length,removable:removable.length,busy};
+            return{ready:confirmed&&!busy,confirmed,cardCount:cards.length,busy};
           })()`, returnByValue: true, silent: true
                 });
                 const value = cdpObject(observation?.result?.value);
@@ -2832,16 +2858,19 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
             return{ready:false};
           mark.remove();
         }else if(marks.length)return{ready:false};
-        if(${JSON.stringify(typeof filePath === "string")}){
+        if(${JSON.stringify(attachments.length > 0)}){
           const form=composer.closest('form');
-          const named=[...(form?.querySelectorAll('button[aria-label]')||[])]
-            .filter(x=>x.getClientRects().length
-              &&x.getAttribute('aria-label')===${JSON.stringify(fileName ?? "")});
-          const remove=[...(form?.querySelectorAll('button[aria-label]')||[])]
-            .filter(x=>String(x.getAttribute('aria-label')||'').startsWith(${JSON.stringify(fileName ?? "")})
-              &&/remove|kaldır/iu.test(x.getAttribute('aria-label')||''));
-          if(named.length!==1||remove.length!==1
-            ||form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'))
+          const names=${JSON.stringify(attachments.map(item => item.name))};
+          const buttons=[...(form?.querySelectorAll('button[aria-label]')||[])]
+            .filter(x=>x.getClientRects().length);
+          const cards=[...(form?.querySelectorAll('span[class*="group/composer-attachment"],img[alt]')||[])]
+            .filter(x=>x.getClientRects().length);
+          const confirmed=cards.length===names.length&&names.every(name=>
+            buttons.filter(x=>x.getAttribute('aria-label')===name).length
+              +cards.filter(x=>x.tagName==="IMG"&&x.getAttribute('alt')===name).length===1
+            &&buttons.filter(x=>String(x.getAttribute('aria-label')||'').startsWith(name+' ')
+              &&/remove|kaldır/iu.test(x.getAttribute('aria-label')||'')).length===1);
+          if(!confirmed||form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'))
             return{ready:false};
         }
         return{ready:String(clone.textContent||'').trim()===${JSON.stringify(String(text).trim())}};
@@ -2849,7 +2878,8 @@ async function stageChatBridgeNewComposer({ tabId, text, toolName, toolKind, fil
         });
         if (confirmed?.exceptionDetails || cdpObject(confirmed?.result?.value)?.ready !== true)
             throw new Error("The provider first message text or tool mark changed.");
-        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, staged: true, tool: toolName ?? null, file: typeof filePath === "string" };
+        return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: id, staged: true, tool: toolName ?? null,
+            file: attachments.length > 0, fileCount: attachments.length };
     }
     finally {
         scheduleDetach(id, CONTINUATION_MUTATION_DETACH_MS);
@@ -4231,6 +4261,16 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         const result = await send(Number(tabId), "Runtime.evaluate", { expression: `(() => {
       ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
       const turns=[...document.querySelectorAll('[data-turn-key]')],out=[];
+      const readUserAttachments=(content)=>{
+        const documentNames=[...content.querySelectorAll('button[aria-label][class*="resource-card"]')]
+          .filter(b=>b.getClientRects().length)
+          .map(b=>String(b.getAttribute('aria-label')||'').trim())
+          .filter(Boolean);
+        const images=[...content.querySelectorAll('button[aria-haspopup="dialog"] > img[alt]')]
+          .filter(img=>img.getClientRects().length);
+        return{attachmentFileNames:documentNames.slice(0,12),
+          attachmentImageCount:Math.min(images.length,13)};
+      };
       let remaining=46000,remainingRich=46000,ambiguousUnits=false;
       for(const turn of turns.slice(-12))for(const role of ['user','assistant']){
         const units=[...turn.querySelectorAll('[data-chatgpt-search-unit-key$=":'+role+'"]')];
@@ -4238,8 +4278,10 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
         const unit=units[0];
         if(!unit||remaining<=0)continue;
         const content=unit.querySelector('[data-chatgpt-selection-message-id]')||unit;
+        const attachments=role==='user'?readUserAttachments(content):null;
         const raw=role==='assistant'?readChatBridgeVisibleText(content):
-          String(content.innerText||content.textContent||'').trim();if(!raw)continue;
+          String(content.innerText||content.textContent||'').trim();
+        if(!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount)continue;
         const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const id=String(unit.getAttribute('data-chatgpt-search-message-ids')||turn.getAttribute('data-turn-key')||'').split(/\s+/u)[0].slice(0,200);
         const richText=role==='assistant'&&chars.length<=limit
@@ -4249,17 +4291,20 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
           .filter(b=>b.getClientRects().length
             &&/^(View versions|Sürümleri görüntüle)$/iu.test(String(b.getAttribute('aria-label')||'').trim())).length===1;
         out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,
-          richText,versionsAvailable});remaining-=limit;
+          richText,versionsAvailable,...(attachments??{})});remaining-=limit;
       }
       if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
         const role=unit.getAttribute('data-message-author-role');
+        const attachments=role==='user'?readUserAttachments(unit):null;
         const raw=role==='assistant'?readChatBridgeVisibleText(unit):
           String(unit.innerText||unit.textContent||'').trim();
-        if(!raw||remaining<=0)continue;const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
+        if((!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount)||remaining<=0)continue;
+        const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const richText=role==='assistant'&&chars.length<=limit
           ?projectChatBridgeRichText(unit,Math.min(5000,remainingRich)):null;
         if(richText)remainingRich-=[...richText].length;
-        out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText});remaining-=limit;
+        out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText,
+          ...(attachments??{})});remaining-=limit;
       }
       return{items:out.slice(-24),partial:turns.length>12||remaining<=0||ambiguousUnits,observedTurns:turns.length};
     })()`, returnByValue: true, silent: true });
@@ -4272,8 +4317,16 @@ async function readChatBridgeRecent({ tabId, conversationId } = {}) {
             if (!item || !["user", "assistant"].includes(item.role) || typeof item.text !== "string" || item.text.length > 14000 || typeof item.id !== "string" || item.id.length > 220)
                 throw new Error("Chat history message is invalid.");
             const validRich = item.role === "assistant" && typeof item.richText === "string" && [...item.richText].length <= 5000;
+            const fileNames = item.role === 'user' ? item.attachmentFileNames : [];
+            const images = item.role === 'user' ? item.attachmentImageCount : 0;
+            if (!Array.isArray(fileNames) || fileNames.length > 12
+                || fileNames.some((name) => typeof name !== "string" || !name.trim() || name.length > 255)
+                || new Set(fileNames).size !== fileNames.length
+                || !Number.isInteger(images) || images < 0 || images > 12)
+                throw new Error("Chat history attachment evidence is invalid.");
             return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true,
-                richText: validRich ? item.richText : null, versionsAvailable: item.role === 'assistant' && item.versionsAvailable === true };
+                richText: validRich ? item.richText : null, versionsAvailable: item.role === 'assistant' && item.versionsAvailable === true,
+                ...(item.role === 'user' ? { attachmentFileNames: fileNames, attachmentImageCount: images } : {}) };
         });
         const after = await chooseTab(Number(tabId));
         if (after.pendingUrl || chatGptConversationIdentity(after)?.conversationId !== conversationId)

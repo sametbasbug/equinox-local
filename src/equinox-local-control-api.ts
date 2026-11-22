@@ -1,3 +1,4 @@
+import path from "node:path";
 
 import { EQUINOX_LOCAL_CONFIG_ERROR_CODES } from "./equinox-local-config.js";
 import { TASK_CAPSULE_ERROR_CODES } from "./task-capsule-store.js";
@@ -650,9 +651,9 @@ export function createEquinoxLocalControlApi({
       if (method === "POST" && pathname === "/api/v1/chat/new") {
         authorizeMutation();
         if (typeof startNewChat !== "function") throw badRequest("New Chat is unavailable.");
-        const body=validateExactObject(await readBody(),["creationId","text","model","effort","tool","file"],"Native New Chat");
+        const body=validateExactObject(await readBody(),["creationId","text","model","effort","tool","file","files"],"Native New Chat");
         if (typeof body.creationId!=="string"||!/^nch-[a-f0-9-]{36}$/u.test(body.creationId)||
-            typeof body.text!=="string"||(!body.text.trim()&&!body.file)||body.text.length>1500||/[\r\n\0]/u.test(body.text)
+            typeof body.text!=="string"||(!body.text.trim()&&!body.file&&!body.files)||body.text.length>1500||/[\r\n\0]/u.test(body.text)
             ||(body.model!==undefined&&(typeof body.model!=="string"||!body.model.trim()||body.model.length>80))
             ||(body.effort!==undefined&&(!Number.isInteger(body.effort)||Number(body.effort)<0||Number(body.effort)>12))
             ||(body.tool!==undefined&&(!body.tool||typeof body.tool!=="object"||Array.isArray(body.tool)
@@ -667,8 +668,18 @@ export function createEquinoxLocalControlApi({
               ||typeof body.file.name!=="string"||!body.file.name.trim()||body.file.name.length>255
               ||!Number.isSafeInteger(body.file.size)||body.file.size<1
               ||body.file.size>100*1024*1024))
-            ||(body.tool!==undefined&&body.file!==undefined))
-          throw badRequest("New Chat requires a prompt, or one explicitly selected file without text.");
+            ||(body.files!==undefined&&(!Array.isArray(body.files)||body.files.length<2||body.files.length>4
+              ||body.files.some((file:any)=>!file||typeof file!=="object"||Array.isArray(file)
+                ||Object.keys(file).some(k=>!["path","name","size"].includes(k))
+                ||typeof file.path!=="string"||file.path.length>4096||!path.isAbsolute(file.path)
+                ||typeof file.name!=="string"||!file.name.trim()||file.name.length>255
+                ||path.basename(file.path)!==file.name
+                ||!Number.isSafeInteger(file.size)||file.size<1||file.size>100*1024*1024)
+              ||new Set(body.files.map((file:any)=>file.name)).size!==body.files.length
+              ||body.files.reduce((total:number,file:any)=>total+file.size,0)>100*1024*1024))
+            ||(body.file!==undefined&&body.files!==undefined)
+            ||(body.tool!==undefined&&(body.file!==undefined||body.files!==undefined)))
+          throw badRequest("New Chat requires a prompt or up to four explicitly selected files without text.");
         const creation=await startNewChat(body);
         state.mutationCount+=1;send(200,{ok:true,creation});return;
       }

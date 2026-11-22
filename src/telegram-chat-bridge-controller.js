@@ -178,13 +178,13 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             throw ambiguous;
         }
     };
-    const startTaskChat = async ({ taskId, checkpointRevision = 1, initialMessage, modelChoice, effortLevel, tool, file } = {}) => {
+    const startTaskChat = async ({ taskId, checkpointRevision = 1, initialMessage, modelChoice, effortLevel, tool, file, files } = {}) => {
         if (typeof taskId !== "string" || !/^task-[a-z0-9-]{6,80}$/u.test(taskId))
             throw new Error("Telegram new-task id is invalid.");
         if (!Number.isInteger(checkpointRevision) || checkpointRevision < 1)
             throw new Error("Telegram new-task checkpoint revision is invalid.");
-        if (initialMessage !== undefined && (typeof initialMessage !== "string" || (!initialMessage.trim() && !file) || initialMessage.length > 1500 || /[\r\n]/u.test(initialMessage))) {
-            throw new Error("Task chat initial message must be a single line of up to 1500 characters, or one explicitly selected file.");
+        if (initialMessage !== undefined && (typeof initialMessage !== "string" || (!initialMessage.trim() && !file && !files) || initialMessage.length > 1500 || /[\r\n]/u.test(initialMessage))) {
+            throw new Error("Task chat initial message must be a single line of up to 1500 characters, or explicitly selected files.");
         }
         if (modelChoice !== undefined && (typeof modelChoice !== "string" || !modelChoice.trim() || modelChoice.length > 80))
             throw new Error("New Chat requested an invalid model name.");
@@ -200,6 +200,19 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             || typeof file.name !== "string" || !file.name.trim() || file.name.length > 255
             || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 100 * 1024 * 1024))
             throw new Error("New Chat requires an exact local file without an app tool.");
+        if (files && (!Array.isArray(files) || files.length < 2 || files.length > 4
+            || files.some(item => !item || typeof item.path !== "string"
+                || !(item.path.startsWith("/") || /^[a-z]:[\\/]/iu.test(item.path))
+                || item.path.length > 4096
+                || typeof item.name !== "string" || !item.name.trim() || item.name.length > 255
+                || /[/\\\x00-\x1f\x7f]/u.test(item.name)
+                || !Number.isSafeInteger(item.size) || item.size < 1 || item.size > 100 * 1024 * 1024)
+            || new Set(files.map(item => item.name)).size !== files.length
+            || files.reduce((total, item) => total + item.size, 0) > 100 * 1024 * 1024))
+            throw new Error("New Chat needs two to four distinct, bounded local files.");
+        if (files && (file || tool))
+            throw new Error("New Chat cannot combine file batches with a tool or single file.");
+        const attachments = files ?? (file ? [file] : []);
         const prompt = initialMessage ?? `Start task ${taskId} from checkpoint ${checkpointRevision}. Read the latest Task Capsule from Equinox Local and carry out its objective.`;
         agentControl.assertMutationAllowed("telegram_task_chat_create");
         const bridgeSnapshot = browserBridge.snapshot();
@@ -268,21 +281,24 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             }
             // Stage the provider's real app mention or hint after model selection,
             // before the first-message submission or any fallback text fill.
-            if (tool || file) {
+            if (tool || attachments.length) {
                 try {
                     if (chatBridgeVersion(contextState) < 13)
-                        throw new Error("New Chat selected tool needs Chat Bridge version 13.");
+                        throw new Error("New Chat selected tool or attachments need Chat Bridge version 13.");
                     const staged = await callContext("user", "chat_bridge.stage_new", {
                         tabId: createdTabId, text: prompt,
                         ...(tool ? { toolName: tool.name, toolKind: tool.kind } : {}),
                         ...(file ? { filePath: file.path, fileName: file.name, fileSize: file.size } : {}),
-                    }, file ? 75_000 : 18_000);
+                        ...(files ? { filePaths: files.map(item => item.path), fileNames: files.map(item => item.name),
+                            fileSizes: files.map(item => item.size) } : {}),
+                    }, attachments.length ? 75_000 : 18_000);
                     if (staged?.staged !== true || staged.tool !== (tool?.name ?? null)
-                        || staged.file !== Boolean(file) || staged.tabId !== createdTabId)
-                        throw new Error("ChatGPT did not confirm the requested first-message tool.");
+                        || staged.file !== Boolean(attachments.length) || staged.fileCount !== attachments.length
+                        || staged.tabId !== createdTabId)
+                        throw new Error("ChatGPT did not confirm the full first-message attachment set.");
                 }
                 catch (error) {
-                    throw taskChatNotStarted("New Chat tool preparation failed before submit: " +
+                    throw taskChatNotStarted("New Chat tool or attachment preparation failed before submit: " +
                         errorMessage(error).slice(0, 170));
                 }
             }
@@ -313,17 +329,24 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                 &&String(marks[0].getAttribute('data-prompt-link-href')||'').startsWith('app://'));
             const clone=composer?.cloneNode(true);
             clone?.querySelector('[data-inline-selection-pill],[app-mention-name]')?.remove();
+            const expectedFileNames=${JSON.stringify(attachments.map(item => item.name))};
+            const form=composer?.closest('form');
+            const fileButtons=[...(form?.querySelectorAll('button[aria-label]')||[])]
+              .filter(item=>item.getClientRects().length);
+            const fileCards=[...(form?.querySelectorAll('span[class*="group/composer-attachment"],img[alt]')||[])]
+              .filter(item=>item.getClientRects().length);
+            const validFiles=!expectedFileNames.length||(
+              fileCards.length===expectedFileNames.length
+              &&expectedFileNames.every(name=>
+                fileButtons.filter(b=>b.getAttribute('aria-label')===name).length
+                  +fileCards.filter(x=>x.tagName==="IMG"&&x.getAttribute('alt')===name).length===1
+                &&fileButtons.filter(b=>String(b.getAttribute('aria-label')||'').startsWith(name+' ')
+                  &&/remove|kaldır/iu.test(b.getAttribute('aria-label')||'')).length===1)
+              &&!form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'));
             return {
               present: Boolean(composer),
               validMark,
-              validFile:!${JSON.stringify(Boolean(file))}||(()=>{
-                const form=composer?.closest('form');
-                const named=[...(form?.querySelectorAll('button[aria-label]')||[])]
-                  .filter(x=>x.getClientRects().length
-                    &&x.getAttribute('aria-label')===${JSON.stringify(file?.name ?? "")});
-                return named.length===1&&!form?.querySelector(
-                  '[aria-busy="true"],[data-testid*="upload-progress"]');
-              })(),
+              validFile:validFiles,
               text: clone ? String(clone.textContent || '').trim() : '',
               generationActive: [...document.querySelectorAll('button[data-testid="stop-button"]')]
                 .some(button => button.isConnected && button.getClientRects().length > 0
@@ -344,8 +367,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                     throw taskChatNotStarted("ChatGPT task-chat composer contains unexpected text before submit.");
                 }
                 if (before.text !== prompt) {
-                    if (tool || file)
-                        throw taskChatNotStarted("New Chat staged prompt changed; refusing to overwrite the provider attachment.");
+                    if (tool || attachments.length)
+                        throw taskChatNotStarted("New Chat staged prompt changed; refusing to overwrite the provider attachments.");
                     let composerRef = null;
                     try {
                         const snapshotResult = await callContext("user", "snapshot", {
@@ -437,15 +460,22 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
               const text = clone ? String(clone.textContent || '').trim() : '';
               if (!composer) return { ready: false, reason: editors.length > 1 ? "composer_ambiguous" : "composer_missing", name: null, text };
               if(!validMark)return{ready:false,reason:"tool_changed",name:null,text};
-              if(${JSON.stringify(Boolean(file))}){
+              if(${JSON.stringify(attachments.length > 0)}){
                 const form=composer.closest('form');
-                const named=[...(form?.querySelectorAll('button[aria-label]')||[])]
-                  .filter(x=>x.getClientRects().length
-                    &&x.getAttribute('aria-label')===${JSON.stringify(file?.name ?? "")});
-                if(named.length!==1||form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'))
+                const buttons=[...(form?.querySelectorAll('button[aria-label]')||[])]
+                  .filter(x=>x.getClientRects().length);
+                const expected=${JSON.stringify(attachments.map(item => item.name))};
+                const cards=[...(form?.querySelectorAll('span[class*="group/composer-attachment"],img[alt]')||[])]
+                  .filter(x=>x.getClientRects().length);
+                const valid=cards.length===expected.length&&expected.every(name=>
+                  buttons.filter(x=>x.getAttribute('aria-label')===name).length
+                    +cards.filter(x=>x.tagName==="IMG"&&x.getAttribute('alt')===name).length===1
+                  &&buttons.filter(x=>String(x.getAttribute('aria-label')||'').startsWith(name+' ')
+                    &&/remove|kaldır/iu.test(x.getAttribute('aria-label')||'')).length===1);
+                if(!valid||form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'))
                   return{ready:false,reason:"attachment_changed",name:null,text};
               }
-              if (!text && !${JSON.stringify(Boolean(file))})
+              if (!text && !${JSON.stringify(attachments.length > 0)})
                 return { ready: false, reason: "composer_empty", name: null, text };
               if (text !== ${JSON.stringify(prompt)}) return { ready: false, reason: "composer_changed", name: null, text };
               if (!button) return { ready: false, reason: buttons.length > 1 ? "send_button_ambiguous" : "send_button_missing", name: null, text };
@@ -679,7 +709,15 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             const size = candidate ? [...candidate].length : 0;
             const richText = candidate && size <= remainingRich ? candidate : null;
             remainingRich -= richText ? size : 0;
-            return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true, richText };
+            const attachmentFileNames = item.role === "user" ? item.attachmentFileNames : [];
+            const attachmentImageCount = item.role === "user" ? item.attachmentImageCount : 0;
+            if (!Array.isArray(attachmentFileNames) || attachmentFileNames.length > 12
+                || attachmentFileNames.some((name) => typeof name !== "string" || !name.trim() || name.length > 255)
+                || new Set(attachmentFileNames).size !== attachmentFileNames.length
+                || !Number.isSafeInteger(attachmentImageCount) || attachmentImageCount < 0 || attachmentImageCount > 12)
+                throw new Error("Chat Bridge user-turn attachment readback is invalid.");
+            return { id: item.id, role: item.role, text: item.text, truncated: item.truncated === true, richText,
+                ...(item.role === "user" ? { attachmentFileNames, attachmentImageCount } : {}) };
         });
         return Object.freeze({ items, partial: value.partial === true, tabId: target.tabId });
     };
