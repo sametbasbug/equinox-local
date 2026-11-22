@@ -2610,7 +2610,37 @@ function renderNativeChatMessage(message) {
             });
             actions.append(quote);
         }
-        heading.append(actions);
+        // Frequent Copy/Quote actions stay visible; the less common provider
+        // mutations remain keyboard reachable without crowding each message.
+        const secondary = [...actions.querySelectorAll("button")]
+            .filter(button => button !== copy && !button.classList.contains("native-chat-quote"));
+        if (secondary.length) {
+            const disclosure = document.createElement("details");
+            disclosure.className = "native-chat-message-menu";
+            const trigger = document.createElement("summary");
+            trigger.textContent = "⋯";
+            trigger.title = localizeUiText("More message actions");
+            trigger.setAttribute("aria-label", trigger.title);
+            const content = document.createElement("div");
+            content.className = "native-chat-message-menu-content";
+            for (const button of secondary)
+                content.append(button);
+            disclosure.append(trigger, content);
+            disclosure.addEventListener("click", event => {
+                if (event.target instanceof Element && event.target.closest("button"))
+                    disclosure.open = false;
+            });
+            disclosure.addEventListener("keydown", event => {
+                if (event.key !== "Escape")
+                    return;
+                event.preventDefault();
+                disclosure.open = false;
+                trigger.focus();
+            });
+            actions.append(disclosure);
+        }
+        if (actions.childElementCount)
+            heading.append(actions);
     }
     article.append(heading);
     const attachments = nativeChatSentAttachments(message);
@@ -7171,8 +7201,14 @@ function bindEvents() {
     });
     const agentMenu = $("native-chat-agent-menu");
     document.addEventListener("pointerdown", event => {
-        if (agentMenu.open && event.target instanceof Node && !agentMenu.contains(event.target))
+        if (!(event.target instanceof Node))
+            return;
+        if (agentMenu.open && !agentMenu.contains(event.target))
             agentMenu.open = false;
+        for (const menu of document.querySelectorAll(".native-chat-message-menu[open]")) {
+            if (!menu.contains(event.target))
+                menu.open = false;
+        }
     });
     agentMenu.addEventListener("keydown", event => {
         if (event.key === "Escape") {

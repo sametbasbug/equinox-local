@@ -22,6 +22,8 @@
 
 **Checkpoint 81 longer visible answers:** The 24-turn provider DOM projection now preserves as many as 12,000 visible characters per message, capped at 96,000 aggregate plain and 72,000 aggregate rich Markdown characters across the whole read. The native bridge validates at most 14,000 characters of semantic markup per assistant message. Truncated messages display an explicit incompleteness notice and verified direct ChatGPT conversation link, never pretending the text is complete. This still does not load virtualized/older turns from the account or bypass missing Browser 13 installation.
 
+**Checkpoint 81 compact message actions:** Keep Copy and selected-text Quote visible where applicable; put only actually supported Edit/Markdown/Versions/Retry/Branch controls into an accessible per-message overflow. Existing one-use receipts, provider session identities and confirmation dialogs remain unchanged. The disclosure can close with Escape (returning focus to summary) or click-away; CSS explicitly hides closed menu content. This is a source UI refinement, not evidence of live Browser 13 provider acceptance.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.
