@@ -480,6 +480,13 @@ let chatThreadList: UiRemoteData[] = [];
 let chatThreadBrowserInstanceId: string | null = null;
 let chatDuplicateCount = 0;
 let chatHistoryPartial = false;
+let chatSearchQuery = "";
+let chatSearchResults: UiRemoteData[] = [];
+let chatSearchBusy = false;
+let chatSearchInFlight = false;
+let chatSearchError = "";
+let chatSearchGeneration = 0;
+let chatSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let chatModelState: UiRemoteData = null;
 let chatModelIdentity: string | null = null;
 let chatModelBusy = false;
@@ -529,10 +536,18 @@ function renderNativeChatThreads() {
   const filter = $("native-chat-filter");
   filter.disabled = !ready;
   const locale = localeForLanguage(state.language);
-  const query = filter.value.trim().toLocaleLowerCase(locale);
-  const threads = ready ? chatThreadList.filter(thread =>
-    String(thread.title || "ChatGPT conversation").toLocaleLowerCase(locale).includes(query)) : [];
-  const signature = JSON.stringify([state.language, ready, query, threads.map(thread =>
+  const text = filter.value.trim();
+  const query = text.toLocaleLowerCase(locale);
+  const deepSearch = ready && text.length >= 2;
+  const searching = deepSearch && (chatSearchBusy || chatSearchQuery !== text);
+  const threads = !ready ? [] : deepSearch
+    ? chatSearchQuery === text ? chatSearchResults.map(result => {
+      const known = chatThreadList.find(thread => thread.conversationId === result.conversationId);
+      return {...result,projectId:known?.projectId||null,projectName:known?.projectName||null};
+    }) : []
+    : chatThreadList.filter(thread =>
+      String(thread.title || "ChatGPT conversation").toLocaleLowerCase(locale).includes(query));
+  const signature = JSON.stringify([state.language, ready, query, searching,chatSearchError, threads.map(thread =>
     [thread.conversationId, thread.tabId, thread.title, thread.opened, thread.projectId,
       thread.projectName, isSelectedNativeChatThread(thread)])]);
   const list = $("native-chat-thread-list");
@@ -548,7 +563,8 @@ function renderNativeChatThreads() {
         ? thread.projectId : "";
       const groupKey = project || "__recent__";
       const title = project
-        ? String(thread.projectName || "ChatGPT project") : localizeUiText("Recent conversations");
+        ? String(thread.projectName || "ChatGPT project")
+        : localizeUiText(deepSearch ? "Search results" : "Recent conversations");
       if (!groups.has(groupKey)) groups.set(groupKey, { title, rows: [] });
       groups.get(groupKey)!.rows.push(thread);
     }
@@ -571,6 +587,12 @@ function renderNativeChatThreads() {
         name.className = "native-chat-thread-name";
         name.textContent = thread.title || localizeUiText("ChatGPT conversation");
         button.append(name);
+        if(deepSearch && typeof thread.excerpt === "string" && thread.excerpt) {
+          const excerpt=document.createElement("span");
+          excerpt.className="native-chat-thread-excerpt";
+          excerpt.textContent=thread.excerpt;
+          button.append(excerpt);
+        }
         if (thread.opened) {
           const mark = document.createElement("span");
           mark.className = "native-chat-thread-open";
@@ -586,8 +608,11 @@ function renderNativeChatThreads() {
     if (ready && !threads.length) {
       const empty = document.createElement("p");
       empty.className = "native-chat-list-empty";
-      empty.textContent = localizeUiText(chatThreadList.length
-        ? "No conversations match your search."
+      empty.textContent = localizeUiText(searching
+        ? "Searching your ChatGPT history…"
+        : deepSearch && chatSearchError ? chatSearchError
+        : deepSearch ? "No confirmed conversation results. Try another search."
+        : chatThreadList.length ? "No conversations match your search."
         : "Open ChatGPT in Chrome to discover your conversations.");
       next.append(empty);
     }
@@ -606,6 +631,51 @@ function renderNativeChatThreads() {
   const detail = details.map(localizeUiText).join(" ");
   setNativeChatCopy("native-chat-list-detail", detail);
   $("native-chat-list-detail").hidden = !detail;
+}
+
+function scheduleNativeChatSearch() {
+  const text=($("native-chat-filter") as HTMLInputElement).value.trim();
+  chatSearchGeneration++;
+  if(chatSearchTimer!==null){clearTimeout(chatSearchTimer);chatSearchTimer=null;}
+  chatSearchError="";
+  if(text.length<2){
+    chatSearchQuery="";
+    chatSearchResults=[];
+    chatSearchBusy=false;
+    renderNativeChatThreads();
+    return;
+  }
+  chatSearchQuery="";
+  chatSearchResults=[];
+  chatSearchBusy=true;
+  renderNativeChatThreads();
+  const generation=chatSearchGeneration;
+  chatSearchTimer=setTimeout(()=>{void runNativeChatSearch(text,generation);},350);
+}
+
+async function runNativeChatSearch(query:string,generation:number){
+  if(generation!==chatSearchGeneration)return;
+  if(chatSearchInFlight){
+    chatSearchTimer=setTimeout(()=>{void runNativeChatSearch(query,generation);},300);
+    return;
+  }
+  chatSearchInFlight=true;
+  try {
+    const data=await mutationJson("/api/v1/chat/search","POST",{query});
+    if(generation!==chatSearchGeneration)return;
+    chatSearchQuery=query;
+    chatSearchResults=Array.isArray(data.search?.threads)?data.search.threads:[];
+  }catch(error){
+    if(generation!==chatSearchGeneration)return;
+    chatSearchQuery=query;
+    chatSearchError=nativeChatErrorMessage(error);
+  }finally{
+    chatSearchInFlight=false;
+    if(generation===chatSearchGeneration){
+      chatSearchBusy=false;
+      renderNativeChatThreads();
+    }
+  }
 }
 
 const NATIVE_CHAT_TURN_LABELS: Readonly<Record<string, string>> = {
@@ -1255,6 +1325,8 @@ async function selectNativeChat(thread: UiRemoteData) {
     const data = await mutationJson("/api/v1/chat/select", "POST", { tabId: thread.tabId, conversationId: thread.conversationId });
     if (selectionGeneration !== chatSelectionGeneration) return;
     renderNativeChatState(data.chat);
+    const filter=$("native-chat-filter") as HTMLInputElement;
+    if(filter.value){filter.value="";scheduleNativeChatSearch();}
     renderNativeChatThreads();
   } catch (error) {
     setNativeChatNotice(nativeChatErrorMessage(error));
@@ -4826,7 +4898,7 @@ function bindEvents() {
       $("native-chat-task-open").focus();
     }
   });
-  $("native-chat-filter").addEventListener("input", renderNativeChatThreads);
+  $("native-chat-filter").addEventListener("input", scheduleNativeChatSearch);
   $("native-chat-new").addEventListener("click", beginNewNativeChat);
   $("native-chat-cancel-new").addEventListener("click", cancelNewNativeChat);
   $("native-chat-form").addEventListener("submit", event => {

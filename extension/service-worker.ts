@@ -2209,6 +2209,134 @@ async function chatBridgeModelControl({tabId,conversationId,action="read",choice
   }finally{scheduleDetach(Number(tabId),CONTINUATION_MUTATION_DETACH_MS);}
 }
 
+
+/** Short-lived user-initiated history search evidence. Never durable: a
+ * worker restart or an account/browser switch must require a fresh query. */
+const chatBridgeSearchTickets=new Map<string,{
+  tabId:number;sourceUrl:string;createdAt:number;links:Map<string,string>
+}>();
+const CHAT_BRIDGE_SEARCH_TTL_MS=90_000;
+
+/** Search with the provider's rendered Search dialog in one temporary,
+ * inactive user Chrome tab, not via undocumented account endpoints. */
+async function searchChatBridgeHistory({tabId,query}:{tabId?:unknown;query?:unknown}={}) {
+  if(!Number.isSafeInteger(tabId)||Number(tabId)<1||typeof query!=="string"
+    ||query.trim().length<2||[...query].length>120||/[\x00-\x1f\x7f]/u.test(query))
+    throw new Error("Chat search requires 2–120 printable characters.");
+  const term=query.trim();
+  const source=await chooseTab(Number(tabId));
+  if(source.pendingUrl||!chatGptConversationIdentity(source))
+    throw new Error("Search must begin from an exact open ChatGPT conversation.");
+  const tabs=workerTabs();
+  if(!tabs.create||!tabs.remove)throw new Error("Temporary Chrome search tabs are unavailable.");
+  let tempId:number|null=null;
+  try{
+    const created=await tabs.create({url:"https://chatgpt.com/",active:false});
+    if(typeof created?.id!=="number"||!Number.isSafeInteger(created.id)||created.id<1)
+      throw new Error("Chrome did not confirm the temporary search tab.");
+    tempId=created.id;
+    const ready=await waitForTab(tempId,
+      candidate=>candidate.status==="complete"&&candidate.url?.startsWith("https://chatgpt.com/")===true,10_000);
+    if(!ready.url||new URL(ready.url).origin!=="https://chatgpt.com")
+      throw new Error("The provider search page changed origin.");
+    await requireDebuggableTab(tempId);await attachTab(tempId);
+    const result=await send(tempId,"Runtime.evaluate",{expression:`(async()=>{
+      if(location.origin!=='https://chatgpt.com')return{status:'unavailable',items:[]};
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      const button=[...document.querySelectorAll('button')].filter(x=>
+        x.getClientRects().length&&/^(Search|Arama)$/iu.test(
+          String(x.getAttribute('aria-label')||'').trim()));
+      if(button.length!==1)return{status:'unavailable',items:[]};
+      button[0].click();
+      let input=null;
+      for(let n=0;n<30;n++){
+        input=[...document.querySelectorAll('[role="dialog"] input[role="combobox"]')]
+          .find(x=>x.getClientRects().length);
+        if(input)break;
+        await sleep(100);
+      }
+      if(!input)return{status:'unavailable',items:[]};
+      const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+      if(!setter)return{status:'unavailable',items:[]};
+      setter.call(input,${JSON.stringify(term)});
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+      let rows=[],stable=0,lastSignature='',observed=false;
+      const read=()=>{
+        const dialog=input.closest('[role="dialog"]');
+        if(!dialog)return[];
+        const matches=[];
+        for(const a of dialog.querySelectorAll('a[role="option"][href]')){
+          if(!a.getClientRects().length)continue;
+          const u=new URL(a.getAttribute('href'),location.origin);
+          if(u.origin!==location.origin||u.searchParams.get('historySearchQuery')!==${JSON.stringify(term)})continue;
+          const path=u.pathname.split('/').filter(Boolean);
+          const id=path.length===2&&path[0]==='c'?path[1]:
+            path.length===4&&path[0]==='g'&&path[1].startsWith('g-p-')
+              &&path[2]==='c'?path[3]:null;
+          if(!id||!/^[a-zA-Z0-9-]{8,160}$/u.test(id))continue;
+          const clean=String(a.innerText||a.textContent||'').trim().split('\\n');
+          const title=String(clean.shift()||'').trim().slice(0,120);
+          if(!title)continue;
+          matches.push({conversationId:id,canonicalUrl:location.origin+u.pathname,
+            title,excerpt:clean.join(' ').replace(/\\s+/gu,' ').trim().slice(0,250)});
+          if(matches.length>=60)break;
+        }
+        return matches;
+      };
+      // Search results arrive asynchronously. Do not mistake the recent-chat
+      // suggestions for a completed provider search.
+      for(let n=0;n<70;n++){
+        if(input.value!==${JSON.stringify(term)})return{status:'changed',items:[]};
+        rows=read();
+        const signature=JSON.stringify(rows.map(x=>x.conversationId));
+        if(rows.length){
+          observed=true;
+          stable=signature===lastSignature?stable+1:0;
+          if(stable>=3)break;
+          lastSignature=signature;
+        }
+        await sleep(120);
+      }
+      return{status:observed?'ready':'unconfirmed',items:rows,
+        partial:rows.length>=60||!observed,source:'provider-search-dialog'};
+    })()`,awaitPromise:true,returnByValue:true,silent:true});
+    if(result?.exceptionDetails)throw new Error("The ChatGPT provider search dialog failed.");
+    const data:any=cdpObject(result?.result?.value);
+    if(!data||!["ready","unconfirmed","unavailable","changed"].includes(data.status)
+      ||!Array.isArray(data.items)||data.items.length>60)
+      throw new Error("ChatGPT search returned an invalid result.");
+    if(data.status!=="ready")throw new Error("ChatGPT search did not confirm results; please try another query.");
+    const links=new Map<string,string>();
+    const items=data.items.map((item:any)=>{
+      if(!item||typeof item.conversationId!=="string"
+        ||typeof item.canonicalUrl!=="string"||typeof item.title!=="string"
+        ||item.title.length>120||!item.title.trim()
+        ||chatGptConversationIdentity(item.canonicalUrl)?.conversationId!==item.conversationId
+        ||typeof item.excerpt!=="string"||item.excerpt.length>250)
+        throw new Error("ChatGPT search returned an invalid conversation.");
+      links.set(item.conversationId,item.canonicalUrl);
+      return{conversationId:item.conversationId,canonicalUrl:item.canonicalUrl,
+        title:item.title,excerpt:item.excerpt};
+    });
+    const current=await chooseTab(Number(tabId));
+    if(current.pendingUrl||current.url!==source.url)
+      throw new Error("The source ChatGPT conversation moved during search.");
+    const now=Date.now();
+    for(const [key,value] of chatBridgeSearchTickets)
+      if(value.createdAt<now-CHAT_BRIDGE_SEARCH_TTL_MS)chatBridgeSearchTickets.delete(key);
+    while(chatBridgeSearchTickets.size>=4)chatBridgeSearchTickets.delete(chatBridgeSearchTickets.keys().next().value!);
+    const ticket=crypto.randomUUID();
+    chatBridgeSearchTickets.set(ticket,{tabId:Number(tabId),sourceUrl:source.url||"",createdAt:now,links});
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:Number(tabId),
+      ticket,query:term,items,partial:data.partial===true,source:"provider-search-dialog"};
+  }finally{
+    if(tempId!==null){
+      await detachTab(tempId).catch(()=>{});
+      await tabs.remove(tempId).catch(()=>{});
+    }
+  }
+}
+
 async function readChatBridgeSidebar({tabId}:{tabId?:unknown}={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1)throw new Error("Chat history tab is invalid.");
   const tab=await chooseTab(Number(tabId));
@@ -2265,8 +2393,8 @@ async function readChatBridgeSidebar({tabId}:{tabId?:unknown}={}) {
  * Never displace a generating response, existing draft, or attached file.
  * Re-prove the exact provider conversation after browser navigation.
  */
-async function openChatBridgeHistory({tabId,conversationId,canonicalUrl}:{
-  tabId?:unknown;conversationId?:unknown;canonicalUrl?:unknown
+async function openChatBridgeHistory({tabId,conversationId,canonicalUrl,searchTicket}:{
+  tabId?:unknown;conversationId?:unknown;canonicalUrl?:unknown;searchTicket?:unknown
 }) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1
     ||typeof conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
@@ -2278,6 +2406,12 @@ async function openChatBridgeHistory({tabId,conversationId,canonicalUrl}:{
   if(!chatGptConversationIdentity(tab))throw new Error("The selected browser tab is no longer a ChatGPT conversation.");
   const state=await readChatBridgeAttachedState(Number(tabId));
   if(state.generationActive)throw new Error("Wait until ChatGPT finishes generating before changing conversations.");
+  const proof=typeof searchTicket==="string"?chatBridgeSearchTickets.get(searchTicket):null;
+  const provenBySearch=!!proof&&proof.tabId===Number(tabId)
+    &&proof.sourceUrl===tab.url&&Date.now()-proof.createdAt<CHAT_BRIDGE_SEARCH_TTL_MS
+    &&proof.links.get(conversationId)===canonicalUrl;
+  if(searchTicket!==undefined&&!provenBySearch)
+    throw new Error("The provider search selection expired or changed. Search again.");
   await requireDebuggableTab(Number(tabId));await attachTab(Number(tabId));
   try{
     const check=await send(Number(tabId),"Runtime.evaluate",{expression:`(() => {
@@ -2292,7 +2426,7 @@ async function openChatBridgeHistory({tabId,conversationId,canonicalUrl}:{
       });
       const link=[...document.querySelectorAll('nav a[href],aside a[href]')].some(a=>
         a.getClientRects().length&&new URL(a.getAttribute('href')||'',location.origin).href===${JSON.stringify(canonicalUrl)});
-      return{ready:link&&!draft&&!attachments&&!stop,draft:!!draft,attachments,stop,link};
+      return{ready:(link||${JSON.stringify(provenBySearch)})&&!draft&&!attachments&&!stop,draft:!!draft,attachments,stop,link};
     })()`,returnByValue:true,silent:true});
     if(check?.exceptionDetails)throw new Error("Cannot verify whether ChatGPT is safe to navigate.");
     const value=cdpObject(check?.result?.value);
@@ -9174,6 +9308,7 @@ const COMMANDS = {
   "chat_bridge.deliver": deliverChatBridgeMessage,
   "chat_bridge.read_final": readChatBridgeFinalResponse,
   "chat_bridge.sidebar": readChatBridgeSidebar,
+  "chat_bridge.search": searchChatBridgeHistory,
   "chat_bridge.model": chatBridgeModelControl,
   "chat_bridge.open_history": openChatBridgeHistory,
   "chat_bridge.recent": readChatBridgeRecent,

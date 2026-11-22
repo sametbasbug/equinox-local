@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -307,6 +307,7 @@ export function createEquinoxLocalControlApi({
   getUpdateStatus = async () => ({}),
   getOnboardingStatus = async () => ({ available: false }),
   getChatThreads = null,
+  searchChatThreads = null,
   selectChatThread = null,
   getChatState = null,
   sendChatText = null,
@@ -477,6 +478,15 @@ export function createEquinoxLocalControlApi({
       if (method === "GET" && pathname === "/api/v1/chat/threads") {
         if (typeof getChatThreads !== "function") throw badRequest("Native chat is unavailable.");
         send(200, {ok:true,chat:await getChatThreads()});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/search") {
+        authorizeMutation();
+        if (typeof searchChatThreads !== "function") throw badRequest("ChatGPT conversation search is unavailable.");
+        const body=validateExactObject(await readBody(),["query"],"ChatGPT search");
+        if(typeof body.query!=="string"||body.query.trim().length<2
+          ||[...body.query].length>120||/[\x00-\x1f\x7f]/u.test(body.query))
+          throw badRequest("Search requires 2–120 printable characters.");
+        send(200,{ok:true,search:await searchChatThreads(body)});return;
       }
       if (method === "GET" && pathname === "/api/v1/chat/state") {
         if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");
@@ -1030,7 +1040,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

@@ -2269,6 +2269,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
     equinoxLocalControlApi = createEquinoxLocalControlApi({
         configManager: equinoxLocalConfigManager,
         getChatThreads: () => nativeChatController.list(),
+        searchChatThreads: (value) => nativeChatController.search(value),
         selectChatThread: (value) => nativeChatController.select(value),
         getChatState: () => nativeChatController.read(),
         sendChatText: (value) => nativeChatController.send(value),

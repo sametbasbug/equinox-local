@@ -43,6 +43,10 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let blocked=false;
   let creationBlocked=false;
   let selectedRevision=0;
+  let searched:{query:string;ticket:string;tabId:number;browserInstanceId:string;
+    checkedAt:number;threads:Array<{tabId:number;conversationId:string;title:string;
+      canonicalUrl:string;opened:false;projectId:null;projectName:null;excerpt:string;searchTicket:string}>}|null=null;
+
   // An ambiguous receipt belongs to the exact conversation; sidebar navigation
   // must never reset its send fence or permit a second uncertain message.
   const uncertainConversations=new Set<string>();
@@ -152,6 +156,42 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       threads:[...ordered.values()].slice(0,100).map(t=>({...t,
         selected:selected?.conversationId===t.conversationId&&selected?.tabId===t.tabId}))};
   };
+  const search=async(value:unknown)=>{
+    if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid chat search.");
+    const body=value as Record<string,unknown>;
+    if(Object.keys(body).length!==1||typeof body.query!=="string"
+      ||body.query.trim().length<2||[...body.query].length>120
+      ||/[\x00-\x1f\x7f]/u.test(body.query))invalid("Chat search requires 2–120 characters.");
+    const browserInstanceId=context();
+    if(Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)<13)
+      invalid("Update Equinox Browser to use full conversation search.");
+    const current=selected;
+    const observer=current?.tabId??(await list()).threads.find(thread=>thread.opened)?.tabId;
+    if(!observer)invalid("Open ChatGPT in Chrome before searching your conversations.");
+    const revision=selectedRevision;
+    const report=await call("chat_bridge.search",{tabId:observer,query:body.query.trim()},20_000) as any;
+    if(context()!==browserInstanceId||revision!==selectedRevision
+      ||(current&&selected?.tabId!==current.tabId))
+      invalid("The ChatGPT browser session or selected conversation changed during search.");
+    if(report?.tabId!==observer||typeof report.ticket!=="string"
+      ||!Array.isArray(report.items)||report.items.length>60)
+      invalid("The provider did not confirm the current search result.");
+    const threads:Array<{tabId:number;conversationId:string;title:string;canonicalUrl:string;
+      opened:false;projectId:null;projectName:null;excerpt:string;searchTicket:string}>=[];
+    const unique=new Set<string>();
+    for(const item of report.items){
+      if(typeof item?.conversationId!=="string"||typeof item?.canonicalUrl!=="string"
+        ||chatGptConversationIdFromUrl(item.canonicalUrl)!==item.conversationId
+        ||typeof item.title!=="string"||unique.has(item.conversationId))continue;
+      unique.add(item.conversationId);
+      threads.push({tabId:observer,conversationId:item.conversationId,title:safeTitle(item.title),
+        canonicalUrl:item.canonicalUrl,opened:false,projectId:null,projectName:null,
+        excerpt:typeof item.excerpt==="string"?item.excerpt.slice(0,250):"",searchTicket:report.ticket});
+    }
+    searched={query:body.query.trim(),ticket:report.ticket,tabId:observer,
+      browserInstanceId,checkedAt:Date.now(),threads};
+    return{query:searched.query,threads,partial:true,source:"provider-search-dialog"};
+  };
   const model=async(value:{action:"read"|"discover"|"choose"|"power";
     choice?:string;direction?:"left"|"right"})=>{
     const target=selected;
@@ -178,14 +218,19 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     selecting=true;
     try{
     const available=await list();
-    const tab=available.threads.find(t=>t.tabId===object.tabId&&t.conversationId===object.conversationId);
-    if(!tab)invalid("This ChatGPT conversation is no longer available in Your Browser.");
+    const tab=available.threads.find(t=>t.tabId===object.tabId&&t.conversationId===object.conversationId)
+      ||(searched&&Date.now()-searched.checkedAt<90_000
+        &&searched.browserInstanceId===available.browserInstanceId
+        ?searched.threads.find(t=>t.tabId===object.tabId&&t.conversationId===object.conversationId)
+        :null);
+    if(!tab)invalid("This ChatGPT conversation is no longer in recent history or the current search.");
     // For a historical sidebar row, navigate the one verified user browser
     // tab only after the bridge proves the exact link, no active generation and
     // no unsent Chrome draft/attachments. Never reuse another thread's state.
     if(!tab.opened){
       const result=await call("chat_bridge.open_history",
-        {tabId:tab.tabId,conversationId:tab.conversationId,canonicalUrl:tab.canonicalUrl},18_000) as any;
+        {tabId:tab.tabId,conversationId:tab.conversationId,canonicalUrl:tab.canonicalUrl,
+          searchTicket:"searchTicket" in tab?tab.searchTicket:undefined},18_000) as any;
       if(result?.tabId!==tab.tabId||result?.conversationId!==tab.conversationId
         ||result?.canonicalUrl!==tab.canonicalUrl)
         invalid("ChatGPT did not confirm the selected historical conversation.");
@@ -543,5 +588,5 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     return attempt;
   };
 
-  return Object.freeze({list,select,read,send,startNew,model});
+  return Object.freeze({list,search,select,read,send,startNew,model});
 }

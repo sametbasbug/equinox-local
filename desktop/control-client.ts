@@ -60,7 +60,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",
