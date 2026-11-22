@@ -2751,10 +2751,81 @@ async function browseChatBridgeProject({tabId,projectId}:{tabId?:unknown;project
     // The project page is opened only in this disposable Chrome tab.
     // Project Settings is strictly read-only; never focus/edit/submit its form.
     let settings:null|{instructions:string;instructionsTruncated:boolean;memoryLabel:string}=null;
+    let sources:null|{items:Array<{name:string;kind:string}>;partial:true;confirmedEmpty:boolean}=null;
     try{
       const projectUrl="https://chatgpt.com/g/"+projectId+"/project";
       await send(tempId,"Page.navigate",{url:projectUrl});
       await waitForTab(tempId,tab=>tab.status==="complete"&&tab.url===projectUrl,9_000);
+      try{
+        // Project Sources is a distinct provider tab from chat attachments.
+        // Only visible cards are read, never underlying file bytes or URLs.
+        const observed=await send(tempId,"Runtime.evaluate",{expression:`(async()=>{
+          if(location.origin!=="https://chatgpt.com"
+            ||location.pathname!==${JSON.stringify("/g/"+projectId+"/project")})
+            return{status:"unavailable"};
+          const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+          let tab=null;
+          for(let n=0;n<35;n++){
+            const matches=[...document.querySelectorAll('button[role="tab"]')].filter(b=>
+              b.getClientRects().length&&/^(?:Kaynaklar|Sources)$/iu.test(
+                String(b.innerText||"").trim()));
+            const exactSidebar=[...document.querySelectorAll(
+              '[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]')].filter(x=>
+              x.getClientRects().length
+              &&x.getAttribute("data-app-action-sidebar-project-id")===${JSON.stringify(projectId)}
+              &&x.getAttribute("data-app-action-sidebar-project-label")===${JSON.stringify(data.name)});
+            if(matches.length===1&&exactSidebar.length===1){tab=matches[0];break}
+            await sleep(100);
+          }
+          if(!tab)return{status:"unavailable"};
+          tab.click();
+          let last="",stable=0;
+          for(let n=0;n<30;n++){
+            const panel=[...document.querySelectorAll('[role="tabpanel"][id$="-sources"]')].filter(x=>
+              x.getClientRects().length);
+            if(tab.getAttribute("aria-selected")!=="true"||panel.length!==1){
+              await sleep(100);continue;
+            }
+            const list=[...panel[0].querySelectorAll('ul li[class*="project-source"]')];
+            const items=[];
+            for(const li of list.slice(0,40)){
+              if(!li.getClientRects().length)continue;
+              const title=li.querySelector('div[title]');
+              const name=String(title?.getAttribute("title")||"").trim();
+              const kind=String(title?.nextElementSibling?.textContent||"").trim();
+              if(!name||name.length>200||kind.length>70)continue;
+              const labels=[...li.querySelectorAll('button[aria-label]')].map(b=>
+                String(b.getAttribute("aria-label")||""));
+              if(!labels.some(x=>x.includes(name)&&/(?:önizleme|preview)/iu.test(x))
+                ||!labels.some(x=>x.includes(name)&&/(?:işlemler|actions)/iu.test(x)))
+                continue;
+              items.push({name,kind:kind.slice(0,70)});
+            }
+            const empty=list.length===0&&[...panel[0].querySelectorAll("h3")].some(h=>
+              /^(?:ChatGPT'ye daha fazla bağlam ver|Give ChatGPT more context)$/iu.test(
+                String(h.innerText||"").trim()));
+            if(!empty&&!list.length){await sleep(100);continue}
+            if(list.length&&!items.length)return{status:"unavailable"};
+            const sig=JSON.stringify(items);
+            stable=sig===last?stable+1:0;
+            last=sig;
+            if(stable>=2)return{status:"ready",items,partial:true,confirmedEmpty:empty};
+            await sleep(100);
+          }
+          return{status:"unavailable"};
+        })()`,returnByValue:true,awaitPromise:true,silent:true});
+        const dataSources:any=observed?.exceptionDetails?null:cdpObject(observed?.result?.value);
+        if(dataSources?.status==="ready"&&Array.isArray(dataSources.items)
+          &&dataSources.items.length<=40&&dataSources.partial===true
+          &&typeof dataSources.confirmedEmpty==="boolean"
+          &&dataSources.items.every((v:any)=>v&&typeof v.name==="string"
+            &&v.name.length>=1&&v.name.length<=200
+            &&typeof v.kind==="string"&&v.kind.length<=70))
+          sources={items:dataSources.items.map((v:any)=>({name:v.name,kind:v.kind})),
+            partial:true,confirmedEmpty:dataSources.confirmedEmpty};
+      }catch{
+        // A changed provider Sources tab is not an invented empty project.
+      }
       const opener=await send(tempId,"Runtime.evaluate",{expression:`(async()=>{
         if(location.origin!=='https://chatgpt.com'
           ||location.pathname!==${JSON.stringify("/g/"+projectId+"/project")})
@@ -2842,7 +2913,7 @@ async function browseChatBridgeProject({tabId,projectId}:{tabId?:unknown;project
     if(still.pendingUrl||still.url!==source.url)
       throw new Error("The source conversation changed while reading project settings.");
     return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:Number(tabId),projectId,
-      name:data.name,items,ticket,settings,partial:true,source:"visible-project"};
+      name:data.name,items,ticket,settings,sources,partial:true,source:"visible-project"};
   }finally{
     if(tempId!==null){
       await detachTab(tempId).catch(()=>{});

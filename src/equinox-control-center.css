@@ -857,6 +857,42 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   padding:5px 8px;
   font-size:11px;
 }
+.native-chat-project-sources {
+  margin:0 5px 9px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:var(--surface-2);
+  color:var(--text-2);
+  font-size:11px;
+  overflow:hidden;
+}
+.native-chat-project-sources > summary {
+  cursor:pointer;
+  padding:8px 10px;
+  color:var(--text);
+  font-weight:670;
+}
+.native-chat-project-sources > p { padding:5px 10px 10px; margin:0; }
+.native-chat-project-source {
+  display:flex;
+  align-items:flex-start;
+  flex-direction:column;
+  gap:2px;
+  padding:7px 10px;
+  border-top:1px solid var(--line);
+  min-width:0;
+}
+.native-chat-project-source-name {
+  display:block;
+  width:100%;
+  font-weight:570;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.native-chat-project-source-kind { color:var(--muted); }
+
 
 .native-chat-thread-group-heading {
   margin: 11px 12px 4px 17px;
