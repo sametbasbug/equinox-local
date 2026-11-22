@@ -5275,8 +5275,12 @@ async function readChatBridgeRecent({tabId,conversationId,maxItems}:{
           .filter(Boolean);
         const images=[...content.querySelectorAll('button[aria-haspopup="dialog"] > img[alt]')]
           .filter(img=>img.getClientRects().length);
-        return{attachmentFileNames:documentNames.slice(0,12),
-          attachmentImageCount:Math.min(images.length,13)};
+        // Local and the native cards admit at most 12 attachments combined.
+        // An oversized visible provider turn must not invalidate the entire
+        // recent-history response or cause its attachment cards to disappear.
+        const fileNames=documentNames.slice(0,12);
+        return{attachmentFileNames:fileNames,
+          attachmentImageCount:Math.min(images.length,12-fileNames.length)};
       };
       // ChatGPT virtualizes older turns. A large inline top spacer above the
       // first rendered turn proves prior turns are NOT present in this DOM,
