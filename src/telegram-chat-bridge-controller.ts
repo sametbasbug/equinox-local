@@ -175,7 +175,21 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       throw new Error("Chat Bridge delivery requires text or an explicitly selected file.");
     if (typeof deliveryId !== "string" || !/^tgb-[a-z0-9-]{6,80}$/u.test(deliveryId)) throw new Error("Telegram Chat Bridge delivery id is invalid.");
     agentControl.assertMutationAllowed("telegram_chat_bridge_delivery");
-    const { binding: target, state } = await inspectBinding(binding);
+    // Browser 12's text-only deliver operation may ignore newer attachment
+    // or tool fields. Reject BEFORE a send rather than silently sending text.
+    // Any binding/Bridge rejection here precedes the irreversible send and
+    // must be reported as a definitive refusal, never an ambiguous delivery.
+    let inspected: Inspection;
+    try {
+      inspected = await inspectBinding(binding,
+        tool||file||files ? 13 : REQUIRED_CHAT_BRIDGE_VERSION);
+    } catch (error) {
+      const notReady = new Error("Chat Bridge preflight refused delivery: "+
+        errorMessage(error).slice(0,220)) as CodedError;
+      notReady.code = "CHAT_BRIDGE_NOT_READY";
+      throw notReady;
+    }
+    const { binding: target, state } = inspected;
     if (requireExactTab && target.tabId !== binding?.tabId) {
       // Native Chat is explicitly tab-bound. Telegram can continue using
       // documented re-acquisition, but native sends must never silently jump

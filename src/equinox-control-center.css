@@ -1386,6 +1386,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .native-chat-attach-button svg { width: 18px; height: 18px; }
 .native-chat-attach-button:hover { background: var(--surface-hover); }
+.native-chat-attach-button[hidden] { display: none; }
 .native-chat-model-toolbar, .native-chat-tool-toolbar {
   display: inline-flex;
   flex: 0 1 auto;

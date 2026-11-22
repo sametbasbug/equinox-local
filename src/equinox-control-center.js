@@ -1596,13 +1596,18 @@ async function changeNativeChatModel(action, value, quiet = false) {
         paintNativeChatModelControls();
     }
 }
+function nativeChatAdvancedBridgeReady() {
+    return Number(state.status?.browser?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) >= 13;
+}
 function paintNativeChatFileControls() {
-    const ready = !chatSelecting && !chatSending && !chatServerSending && !chatBlocked && !chatFileSelectionBusy
+    const advancedBridge = nativeChatAdvancedBridgeReady();
+    const ready = advancedBridge && !chatSelecting && !chatSending && !chatServerSending && !chatBlocked && !chatFileSelectionBusy
         && chatConnection === "ready" && (!chatNewDraft
         || (Boolean(chatNewDraftInstanceId) && chatNewDraftInstanceId === chatThreadBrowserInstanceId))
         && (chatNewDraft || (Boolean(chatActive) && ["ready", "complete"].includes(chatTurn)));
     $("native-chat-file-pick").disabled = !ready;
     const attachButton = $("native-chat-file-pick");
+    attachButton.hidden = !advancedBridge;
     const attachLabel = localizeUiText("Attach files…");
     attachButton.title = attachLabel;
     attachButton.setAttribute("aria-label", attachLabel);
@@ -1666,7 +1671,7 @@ async function removeNativeChatSelectedFile(name) {
     }
 }
 async function pickNativeChatFile() {
-    if (chatSending || chatSelecting || chatBlocked || chatFileSelectionBusy || (!chatNewDraft && !chatActive)
+    if (!nativeChatAdvancedBridgeReady() || chatSending || chatSelecting || chatBlocked || chatFileSelectionBusy || (!chatNewDraft && !chatActive)
         || !window.equinoxShell?.pickChatFile)
         return;
     const revision = chatSelectionGeneration;
@@ -1675,8 +1680,10 @@ async function pickNativeChatFile() {
     if (selected.cancelled)
         return;
     if (revision !== chatSelectionGeneration || target !== chatConversationKey(chatActive)
-        || chatSending || chatSelecting || chatBlocked)
-        throw new Error("Conversation changed while the file picker was open. Select the files again.");
+        || chatSending || chatSelecting || chatBlocked || !nativeChatAdvancedBridgeReady()) {
+        void window.equinoxShell?.clearChatFile?.();
+        throw new Error("Conversation or Browser capability changed while selecting files. Select the files again.");
+    }
     const files = selected.files;
     if (!Array.isArray(files) || files.length < 1 || files.length > 4
         || files.some(file => !file || !file.path || !file.name || !Number.isSafeInteger(file.size)
@@ -1755,7 +1762,7 @@ function updateNativeChatControls() {
     paintNativeChatToolControls();
     // The personal Chrome Store extension can have a newer manifest but an
     // older Bridge. Do not show inert model/tool form controls as if supported.
-    const advancedBridge = Number(state.status?.browser?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) >= 13;
+    const advancedBridge = nativeChatAdvancedBridgeReady();
     $("native-chat-model-toolbar").hidden = !advancedBridge;
     $("native-chat-tool-toolbar").hidden = !advancedBridge;
     const busy = chatSelecting || chatSending || chatServerSending;
@@ -1766,6 +1773,8 @@ function updateNativeChatControls() {
         || Boolean(chatStateAvailable && chatActive && ["ready", "complete"].includes(chatTurn)));
     composer.disabled = !allowed;
     $("native-chat-send").disabled = !allowed || (!composer.value.trim() && !chatPickedFiles.length)
+        || (!advancedBridge && (chatPickedFiles.length > 0 || Boolean(chatToolSelection)
+            || (chatNewDraft && (Boolean(chatNewModelChoice) || chatNewEffortLevel !== null))))
         || (chatNewDraft && /[\r\n]/u.test(composer.value));
     const stopButton = $("native-chat-stop-generation");
     const stopLabel = localizeUiText("Stop response");
@@ -3225,6 +3234,12 @@ async function sendNativeChatMessage() {
     if (composer.disabled || chatSending || chatSelecting || chatFileSelectionBusy || chatBlocked || (!chatActive && !chatNewDraft)
         || (!text && !chatPickedFiles.length) || text.length > 4000)
         return;
+    if (!nativeChatAdvancedBridgeReady()
+        && (chatPickedFiles.length > 0 || Boolean(chatToolSelection)
+            || (chatNewDraft && (Boolean(chatNewModelChoice) || chatNewEffortLevel !== null)))) {
+        setNativeChatNotice("Update Equinox Browser before sending attachments or using account tools.");
+        return;
+    }
     if (chatNewDraft && (text.length > 1500 || /[\r\n]/u.test(composer.value))) {
         setNativeChatNotice("The first message must be one line of at most 1,500 characters.");
         return;

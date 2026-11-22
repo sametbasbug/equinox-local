@@ -24,6 +24,8 @@
 
 **Checkpoint 81 compact message actions:** Keep Copy and selected-text Quote visible where applicable; put only actually supported Edit/Markdown/Versions/Retry/Branch controls into an accessible per-message overflow. Existing one-use receipts, provider session identities and confirmation dialogs remain unchanged. The disclosure can close with Escape (returning focus to summary) or click-away; CSS explicitly hides closed menu content. This is a source UI refinement, not evidence of live Browser 13 provider acceptance.
 
+**Checkpoint 81 attachment/tool send fence:** First-party Native Chat no longer offers an attachment picker while the connected personal Chrome reports Bridge 12. The same capability guard disables any stale staged file/tool/model selection after a browser downgrade. Server-side Bridge send preflight now **requires version 13** for files and tool mentions, avoiding silent text-only downgrades by older installed extensions; inspection rejection receives the definite `CHAT_BRIDGE_NOT_READY` classification before any Chrome send. Plain text Bridge 9+ transport remains intact. Browser13 provider files/tools still need physical acceptance.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.
