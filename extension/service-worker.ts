@@ -2198,6 +2198,7 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
       // Literal Markdown-shaped prose would be reinterpreted by the renderer.
       // Refuse semantic projection rather than misrepresent source content.
       if (!literalCode && (text.includes(tick) || text.includes('*')
+        || /\[[^\]\n]{1,180}\]\(https?:\/\/[^)\s]+\)/u.test(text)
         || /(?:^|\n)\s*(?:#{1,6}\s|[-+*]\s|>\s|---\s*$)/m.test(text))) overflow=true;
       return text;
     }
@@ -2216,7 +2217,24 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
     }
     if (tag==='STRONG'||tag==='B') { semantic++; return '**'+text+'**'; }
     if (tag==='EM'||tag==='I') { semantic++; return '*'+text+'*'; }
-    // Hyperlinks retain displayed labels only; never transmit href.
+    // Transmit only the public HTTPS destination of a real visible anchor.
+    // The native renderer offers an explicit Copy link action, not silent
+    // navigation or a generic URL proxy. Ambiguous URLs stay plain labels.
+    if (tag==='A') {
+      let target=null;
+      try {
+        const raw=node.getAttribute('href');
+        if(raw)target=new URL(raw,location.href);
+      }catch{}
+      if(target&&target.protocol==='https:'&&!target.username&&!target.password
+        &&!target.port&&target.hostname&&target.href.length<=2048
+        &&!/[()[\]\n|]/.test(text)&&text.length<=180
+        &&!/[()\s]/.test(target.href)
+        &&!(target.hostname==='chatgpt.com'&&/^\/backend-api(?:\/|$)/u.test(target.pathname))) {
+        semantic++;
+        return '['+text+']('+target.href+')';
+      }
+    }
     return text;
   };
   const blocks=[];
@@ -2292,6 +2310,7 @@ const CHAT_BRIDGE_RICH_CONTENT_SCRIPT = String.raw`const projectChatBridgeRichTe
   const formatted=blocks.join('\n\n').trim();
   if (!formatted||[...formatted].length>maxChars) return null;
   const normalize=value=>value.replace(/^\s*\|(?:\s*:?-{3,}:?\s*\|){2,}\s*$/gm,'')
+    .replace(/\[([^\]\n]{1,180})\]\(https:\/\/[^)\s]{1,2048}\)/g,'$1')
     .replace(/\|/g,'').replace(/[\x60*_#>]/g,'')
     .replace(/^\s*(?:\d+[.)]|[-+])\s+/gm,'').replace(/\s+/g,' ').trim();
   const actual=normalize(String(root.innerText||'')), projected=normalize(formatted);

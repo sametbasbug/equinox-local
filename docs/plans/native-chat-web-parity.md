@@ -4,6 +4,8 @@
 
 **Current UX direction:** One compact composer hosts the existing model/effort, tool, attachment and send controls without duplicating form panels. Only the textarea and explicit Send belong to the submit form, so Enter while choosing options cannot send a draft. Never display unverified feature availability as a promise of parity: Browser 13 installation and physical QA remain separate gates. Conversation search supports `Cmd/Ctrl+K` and Escape. Rich interactive ChatGPT components and the full account history are still outside verified Native Chat parity.
 
+**Source link/navigation update:** Native Chat displays explicit user-clicked **Open in ChatGPT** and **Copy link** only for a provider-confirmed selected conversation URL, with exact browser session/UUID/path checks; no invented addresses. Browser 13 source now preserves verified visible HTTPS anchor destinations in semantic rich replies, and the native text renderer offers copyable source labels (not automatic URL navigation). Real Chrome detached-DOM source validation accepted a valid HTTPS anchor and rejected raw Markdown impersonation/unsafe schemes. Production Browser 13 acceptance is still pending; broad link/media/widgets parity remains incomplete.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.

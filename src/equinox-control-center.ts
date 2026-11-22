@@ -592,6 +592,39 @@ function nativeChatErrorMessage(error: unknown): string {
   return text;
 }
 
+// Only offer a browser handoff for an exact URL observed by the signed-in
+// provider thread list. Never guess a ChatGPT conversation address.
+function selectedNativeChatWebUrl(): string | null {
+  if (chatNewDraft || chatSelecting || !chatActive
+    || chatThreadBrowserInstanceId !== chatActive.browserInstanceId) return null;
+  for (const threads of [chatThreadList, chatSearchResults, chatProjectThreads]) {
+    const thread = threads.find((item: UiRemoteData) => item.conversationId === chatActive?.conversationId
+      && item.tabId === chatActive?.tabId);
+    if (!thread || typeof thread.canonicalUrl !== "string") continue;
+    try {
+      const url = new URL(thread.canonicalUrl);
+      const parts = url.pathname.split("/").filter(Boolean);
+      const validPath = (parts.length === 2 && parts[0] === "c")
+        || (parts.length === 4 && parts[0] === "g"
+          && /^g-p-[a-zA-Z0-9-]{8,100}$/u.test(parts[1]!) && parts[2] === "c");
+      if (url.origin === "https://chatgpt.com" && !url.username && !url.password
+        && !url.search && !url.hash && validPath
+        && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(parts.at(-1) || "")
+        && parts.at(-1) === chatActive.conversationId) return url.href;
+    } catch { /* Unsupported provider URL remains unavailable. */ }
+  }
+  return null;
+}
+
+function paintNativeChatWebHandoff() {
+  const url = selectedNativeChatWebUrl();
+  const link = $("native-chat-open-web") as HTMLAnchorElement;
+  if (url) link.href = url;
+  else link.removeAttribute("href");
+  link.hidden = !url;
+  $("native-chat-copy-link").hidden = !url;
+}
+
 function isSelectedNativeChatThread(thread: UiRemoteData) {
   return !chatNewDraft && chatActive && chatThreadBrowserInstanceId === chatActive.browserInstanceId
     && thread.conversationId === chatActive.conversationId && thread.tabId === chatActive.tabId;
@@ -819,6 +852,7 @@ function renderNativeChatThreads() {
     list.replaceChildren(next);
     nextFocus?.focus({ preventScroll: true });
   }
+  paintNativeChatWebHandoff();
   $("native-chat-list-status").dataset.connection = chatConnection;
   setNativeChatCopy("native-chat-list-status", chatRefreshingThreads ? "Refreshing open chats…"
     : ready ? "Your Browser connected"
@@ -1346,7 +1380,7 @@ function paintNativeChatModelControls() {
     }) : [(() => {
       const option = document.createElement("option");
       option.value = "";
-      option.textContent = localizeUiText("Discover available models");
+      option.textContent = localizeUiText("Model");
       return option;
     })()];
     picker.replaceChildren(...options);
@@ -1368,6 +1402,7 @@ function paintNativeChatModelControls() {
   const max = Number(power?.max);
   const hasPower = power && Number.isInteger(value)&&Number.isInteger(min)
     &&Number.isInteger(max)&&min<=value&&value<=max;
+  ($("native-chat-model-toolbar").querySelector(".native-chat-model-power") as HTMLElement).hidden = !hasPower;
   const label = chatNewDraft
     ?hasPower&&chatNewEffortLevel!==null
       ?localizeUiText("Effort") + " " + String(value-min+1) + "/" + String(max-min+1)
@@ -1466,7 +1501,10 @@ function paintNativeChatFileControls(){
   const ready=!chatSelecting&&!chatSending&&!chatServerSending&&!chatBlocked&&!chatFileSelectionBusy
     &&chatConnection==="ready"&&(chatNewDraft||(Boolean(chatActive)&&["ready","complete"].includes(chatTurn)));
   $("native-chat-file-pick").disabled=!ready;
-  setNativeChatCopy("native-chat-file-pick","Attach files…");
+  const attachButton = $("native-chat-file-pick");
+  const attachLabel = localizeUiText("Attach files…");
+  attachButton.title = attachLabel;
+  attachButton.setAttribute("aria-label", attachLabel);
   $("native-chat-file-remove").hidden=!chatPickedFiles.length;
   $("native-chat-file-remove").disabled=chatSending||chatSelecting||chatServerSending||chatFileSelectionBusy;
   setNativeChatCopy("native-chat-file-remove",chatPickedFiles.length>1?"Remove all":"Remove file");
@@ -1602,6 +1640,7 @@ async function refreshNativeChatToolCatalog(quiet=false){
 }
 
 function updateNativeChatControls() {
+  paintNativeChatWebHandoff();
   paintNativeChatFileControls();
   paintNativeChatToolControls();
   const busy = chatSelecting || chatSending || chatServerSending;
@@ -1638,11 +1677,39 @@ type NativeChatMessage = { id?:string; role: "user" | "assistant"; text: string;
 
 function appendNativeChatInline(element: HTMLElement, text: string) {
   let end = 0;
-  for (const match of text.matchAll(/(\x60+)([^\x60\n]+)\1|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/gu)) {
+  // The provider's semantic projection supplies links only from actual
+  // visible HTTPS anchors. Unknown Markdown-shaped text stays literal.
+  const pattern = /\[([^\]\n]{1,180})\]\((https:\/\/[^)\s]{1,2048})\)|(\x60+)([^\x60\n]+)\3|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/gu;
+  for (const match of text.matchAll(pattern)) {
     element.append(text.slice(end, match.index));
-    const inline = document.createElement(match[1] ? "code" : match[3] ? "strong" : "em");
-    inline.textContent = match[2] ?? match[3] ?? match[4]!;
-    element.append(inline);
+    if (match[1] && match[2]) {
+      let url: URL | null = null;
+      try {
+        const candidate = new URL(match[2]);
+        if (candidate.protocol === "https:" && candidate.hostname
+          && !candidate.username && !candidate.password && !candidate.port
+          && !/[()\s]/u.test(candidate.href) && candidate.href === match[2])
+          url = candidate;
+      } catch { /* Unknown link syntax stays literal. */ }
+      if (url) {
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = "native-chat-source-link";
+        link.textContent = match[1];
+        link.title = localizeUiText("Copy source link") + " · " + url.hostname;
+        link.setAttribute("aria-label", link.title);
+        const linkUrl = url.href;
+        link.addEventListener("click", async () => {
+          showToast(await copyNativeChatMarkdown(linkUrl)
+            ? "Source link copied." : "Could not copy source link.");
+        });
+        element.append(link);
+      } else element.append(match[0]);
+    } else {
+      const inline = document.createElement(match[3] ? "code" : match[5] ? "strong" : "em");
+      inline.textContent = match[4] ?? match[5] ?? match[6]!;
+      element.append(inline);
+    }
     end = match.index + match[0].length;
   }
   element.append(text.slice(end));
@@ -2524,6 +2591,7 @@ function renderNativeChatState(chat: UiRemoteData) {
   if (!chat || typeof chat !== "object" || chatNewDraft) return;
   chatLastRenderedState = chat;
   chatActive = chat.selected || null;
+  paintNativeChatWebHandoff();
   if(chatVersionsCandidate&&chatVersionsCandidate.identity!==chatConversationKey(chatActive)){
     const versionsDialog=$("native-chat-versions-dialog") as HTMLDialogElement;
     if(versionsDialog.open)versionsDialog.close();
@@ -6252,6 +6320,25 @@ function onNavigationShortcut(event: UiRemoteData) {
 
 function bindEvents() {
   document.addEventListener("keydown", onNavigationShortcut);
+  document.addEventListener("keydown", event => {
+    if ($("section-chat").hidden || !(event.metaKey || event.ctrlKey) || event.altKey
+      || event.shiftKey || event.key.toLowerCase() !== "k") return;
+    const search = $("native-chat-filter") as HTMLInputElement;
+    if (search.disabled) return;
+    event.preventDefault();
+    search.focus();
+    search.select();
+  });
+  $("native-chat-filter").addEventListener("keydown", event => {
+    const key = event as KeyboardEvent;
+    if (key.key !== "Escape") return;
+    key.preventDefault();
+    const filter = $("native-chat-filter") as HTMLInputElement;
+    if (filter.value) {
+      filter.value = "";
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+    } else if (!chatComposer().disabled) chatComposer().focus();
+  });
   for (const button of document.querySelectorAll<HTMLElement>(".nav-item")) {
     button.addEventListener("click", () => switchSection(button.dataset.section, { remember: true }));
   }
@@ -6507,6 +6594,12 @@ function bindEvents() {
     if(chatProjectInstructionsBusy)return;
     chatProjectInstructionsCandidate=null;chatProjectInstructionsAttempted=false;
     (document.getElementById("native-chat-project-instructions-text") as HTMLTextAreaElement).value="";
+  });
+  $("native-chat-copy-link").addEventListener("click", async () => {
+    const url = selectedNativeChatWebUrl();
+    if (!url) return;
+    showToast(await copyNativeChatMarkdown(url)
+      ? "Conversation link copied." : "Could not copy conversation link.");
   });
   $("native-chat-project-create").addEventListener("click",openNativeChatProjectCreator);
   $("native-chat-project-create-name").addEventListener("input",updateNativeChatProjectCreator);
