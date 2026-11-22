@@ -86,6 +86,8 @@ const TR_UI = Object.freeze({
     "Share link created. Anyone with it can view the shared conversation.": "Paylaşım bağlantısı oluşturuldu. Bağlantıya sahip herkes bu sohbeti görüntüleyebilir.",
     "Message table": "Mesaj tablosu",
     "Copy Markdown": "Markdown kopyala",
+    "This response contains media that Native Chat cannot display yet.": "Bu yanıtta Native Chat'in henüz gösteremediği görsel veya medya içeriği var.",
+    "View in ChatGPT": "ChatGPT'de görüntüle",
     "Markdown copied.": "Markdown kopyalandı.",
     "Could not copy Markdown.": "Markdown kopyalanamadı.",
     "Copy link": "Bağlantıyı kopyala",

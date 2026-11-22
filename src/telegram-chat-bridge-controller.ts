@@ -759,10 +759,12 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     const value=await callContext(target.browserContext,"chat_bridge.recent",{
       tabId:target.tabId,conversationId:target.conversationId,
     },10_000) as (BrowserResult & {items?:unknown;partial?:unknown}) | null;
-    if(!Array.isArray(value?.items)||value.items.length>24)throw new Error("Chat Bridge recent transcript is invalid.");
+    if(!Array.isArray(value?.items)||value.items.length>48)throw new Error("Chat Bridge recent transcript is invalid.");
     let remainingRich = 46_000;
     const items=value.items.map((item:any)=>{
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat Bridge transcript message is invalid.");
+      if(item.hasRichMedia!==undefined&&typeof item.hasRichMedia!=="boolean")
+        throw new Error("Chat Bridge rich-media indicator is invalid.");
       const candidate=item.role==="assistant"?validateChatRichText(item.richText,5000):null;
       const size=candidate?[...candidate].length:0;
       const richText=candidate&&size<=remainingRich?candidate:null;
@@ -775,6 +777,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         ||!Number.isSafeInteger(attachmentImageCount)||attachmentImageCount<0||attachmentImageCount>12)
         throw new Error("Chat Bridge user-turn attachment readback is invalid.");
       return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true,richText,
+        hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
         ...(item.role==="user"?{attachmentFileNames,attachmentImageCount}:{})};
     });
     return Object.freeze({items,partial:value.partial===true,tabId:target.tabId});

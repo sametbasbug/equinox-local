@@ -1561,3 +1561,25 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 .native-chat-model-toolbar[hidden],
 .native-chat-tool-toolbar[hidden] { display: none; }
+
+/* Provider-confirmed media is never silently presented as complete prose. */
+.native-chat-rich-media-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 9px 12px;
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 4px 9px 9px 4px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.native-chat-rich-media-notice a {
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.native-chat-rich-media-notice a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

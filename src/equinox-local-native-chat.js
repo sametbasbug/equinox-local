@@ -767,10 +767,11 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     if (value?.tabId !== undefined && value.tabId !== next.tabId)
                         throw new Error("Recent history came from another Chrome tab.");
                     if (value && Array.isArray(value.items)) {
-                        history = value.items.slice(-24).map((item) => ({ id: String(item.id).slice(0, 220), role: item.role,
+                        history = value.items.slice(-48).map((item) => ({ id: String(item.id).slice(0, 220), role: item.role,
                             text: String(item.text).slice(0, 14000), status: "complete", truncated: item.truncated === true,
                             richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 5000 ? item.richText : null,
                             versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
+                            hasRichMedia: item.role === "assistant" && item.hasRichMedia === true,
                             ...providerUserAttachments(item) }));
                         historyPartial = value.partial === true;
                         // Navigation may finish before ChatGPT hydrates its transcript.
@@ -832,11 +833,12 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     if (fresh?.tabId !== undefined && fresh.tabId !== initialBinding.tabId)
                         throw Object.assign(new Error("The selected Chrome tab changed while refreshing history."), { code: "CHAT_BRIDGE_TAB_CHANGED" });
                     if (Array.isArray(fresh?.items)) {
-                        history = fresh.items.slice(-24).map((item) => ({
+                        history = fresh.items.slice(-48).map((item) => ({
                             id: String(item.id).slice(0, 220), role: item.role, text: String(item.text).slice(0, 14000),
                             status: "complete", truncated: item.truncated === true,
                             richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 5000 ? item.richText : null,
                             versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
+                            hasRichMedia: item.role === "assistant" && item.hasRichMedia === true,
                             ...providerUserAttachments(item),
                         }));
                         historyPartial = fresh.partial === true;
@@ -855,12 +857,13 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                     if (!sameSelection())
                         return staleResult();
                     if (Array.isArray(fresh?.items) && fresh.items.length) {
-                        history = fresh.items.slice(-24).map((item) => ({
+                        history = fresh.items.slice(-48).map((item) => ({
                             id: String(item.id).slice(0, 220), role: item.role, text: String(item.text).slice(0, 14000),
                             status: "complete", truncated: item.truncated === true,
                             richText: typeof item.richText === "string" && item.role === "assistant"
                                 && [...item.richText].length <= 5000 ? item.richText : null,
                             versionsAvailable: item.role === "assistant" && item.versionsAvailable === true,
+                            hasRichMedia: item.role === "assistant" && item.hasRichMedia === true,
                             ...providerUserAttachments(item),
                         }));
                         historyPartial = fresh.partial === true;
@@ -1005,7 +1008,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         const messageEditAllowed = await messageEditPermitted(initialBinding, taskId);
         if (!sameSelection())
             return staleResult();
-        return { selected: { conversationId: selected.conversationId, tabId: selected.tabId, browserInstanceId: selected.browserInstanceId }, items: [...history, ...messages].slice(-54),
+        return { selected: { conversationId: selected.conversationId, tabId: selected.tabId, browserInstanceId: selected.browserInstanceId }, items: [...history, ...messages].slice(-80),
             turn, sending, blocked, creationBlocked, taskId, messageEditAllowed,
             preview, notice: notice || historyNotice, limitedHistory: historyPartial || !history.length, historyCount: history.length };
     };

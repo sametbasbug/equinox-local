@@ -5,7 +5,7 @@ import { chatGptConversationIdFromUrl } from "./telegram-chat-bridge-controller.
 type BrowserTab = {id?:number;tabId?:number;url?:string;title?:string};
 type Binding = {browserContext:"user";browserInstanceId:string;tabId:number;conversationId:string;canonicalUrl:string};
 type Message = {id:string;role:"user"|"assistant";text:string;status:"sent"|"complete"|"uncertain";
-  truncated?:boolean;richText?:string|null;versionsAvailable?:boolean;
+  truncated?:boolean;richText?:string|null;versionsAvailable?:boolean;hasRichMedia?:boolean;
   attachmentFileNames?:string[];attachmentImageCount?:number};
 type BrowserBridge = {snapshot:()=>any;call:(method:string,args:object,options:{context:"user";timeoutMs:number})=>Promise<unknown>};
 type ChatBridge = {
@@ -717,10 +717,11 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         if(value?.tabId!==undefined && value.tabId!==next.tabId)
           throw new Error("Recent history came from another Chrome tab.");
         if(value&&Array.isArray(value.items)){
-          history=value.items.slice(-24).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,
+          history=value.items.slice(-48).map((item:any):Message=>({id:String(item.id).slice(0,220),role:item.role,
             text:String(item.text).slice(0,14000),status:"complete",truncated:item.truncated===true,
             richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=5000?item.richText:null,
             versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
+            hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
             ...providerUserAttachments(item)}));
           historyPartial=value.partial===true;
           // Navigation may finish before ChatGPT hydrates its transcript.
@@ -769,11 +770,12 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           if(fresh?.tabId!==undefined && fresh.tabId!==initialBinding.tabId)
             throw Object.assign(new Error("The selected Chrome tab changed while refreshing history."),{code:"CHAT_BRIDGE_TAB_CHANGED"});
           if(Array.isArray(fresh?.items)){
-            history=fresh.items.slice(-24).map((item:any):Message=>({
+            history=fresh.items.slice(-48).map((item:any):Message=>({
               id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
               status:"complete",truncated:item.truncated===true,
               richText:typeof item.richText==="string"&&item.role==="assistant"&&[...item.richText].length<=5000?item.richText:null,
               versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
+              hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
               ...providerUserAttachments(item),
             }));
             historyPartial=fresh.partial===true;
@@ -787,12 +789,13 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           const fresh=await chatBridge.readRecent({binding:initialBinding});
           if(!sameSelection())return staleResult();
           if(Array.isArray(fresh?.items)&&fresh.items.length){
-            history=fresh.items.slice(-24).map((item:any):Message=>({
+            history=fresh.items.slice(-48).map((item:any):Message=>({
               id:String(item.id).slice(0,220),role:item.role,text:String(item.text).slice(0,14000),
               status:"complete",truncated:item.truncated===true,
               richText:typeof item.richText==="string"&&item.role==="assistant"
                 &&[...item.richText].length<=5000?item.richText:null,
               versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
+              hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
               ...providerUserAttachments(item),
             }));
             historyPartial=fresh.partial===true;
@@ -913,7 +916,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     const taskId=turn==="disconnected" ? null : await currentTaskId(initialBinding);
     const messageEditAllowed=await messageEditPermitted(initialBinding,taskId);
     if(!sameSelection())return staleResult();
-    return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-54),
+    return{selected:{conversationId:selected.conversationId,tabId:selected.tabId,browserInstanceId:selected.browserInstanceId},items:[...history,...messages].slice(-80),
       turn,sending,blocked,creationBlocked,taskId,messageEditAllowed,
       preview,notice:notice||historyNotice,limitedHistory:historyPartial||!history.length,historyCount:history.length};
   };

@@ -1719,7 +1719,7 @@ function updateNativeChatControls() {
 }
 
 type NativeChatMessage = { id?:string; role: "user" | "assistant"; text: string; richText?: string | null;
-  truncated: boolean; versionsAvailable?:boolean; uncertain?: boolean; live?: boolean;
+  truncated: boolean; versionsAvailable?:boolean; hasRichMedia?:boolean; uncertain?: boolean; live?: boolean;
   attachmentFileNames?:string[]; attachmentImageCount?:number };
 
 function appendNativeChatInline(element: HTMLElement, text: string) {
@@ -2363,7 +2363,7 @@ function renderNativeChatMessage(message: NativeChatMessage) {
     });
     // Provider file-only captions are represented by attachment cards,
     // not a copyable text message; do not show a misleading Copy control.
-    if(message.role!=="user"||body.textContent?.trim())actions.append(copy);
+    if(body.textContent?.trim())actions.append(copy);
     if(message.role==="user"&&!message.attachmentFileNames?.length
       &&!message.attachmentImageCount&&typeof message.id==="string"
       &&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:user$/iu.test(message.id)
@@ -2431,7 +2431,7 @@ function renderNativeChatMessage(message: NativeChatMessage) {
       branch.addEventListener("click",()=>openNativeChatNewBranch(message));
       actions.append(branch);
     }
-    if (message.role === "assistant") {
+    if (message.role === "assistant" && body.textContent?.trim()) {
       const quote = document.createElement("button");
       quote.type = "button";
       quote.className = "native-chat-message-copy native-chat-quote";
@@ -2477,6 +2477,23 @@ function renderNativeChatMessage(message: NativeChatMessage) {
   const attachments=nativeChatSentAttachments(message);
   if(attachments)article.append(attachments);
   if(body.textContent?.trim()||body.hasChildNodes())article.append(body);
+  if(message.role==="assistant"&&!message.live&&message.hasRichMedia){
+    const notice=document.createElement("p");
+    notice.className="native-chat-rich-media-notice";
+    const copy=document.createElement("span");
+    copy.textContent=localizeUiText("This response contains media that Native Chat cannot display yet.");
+    notice.append(copy);
+    const webUrl=selectedNativeChatWebUrl();
+    if(webUrl){
+      const link=document.createElement("a");
+      link.href=webUrl;
+      link.target="_blank";
+      link.rel="noopener noreferrer";
+      link.textContent=localizeUiText("View in ChatGPT");
+      notice.append(link);
+    }
+    article.append(notice);
+  }
   return article;
 }
 
@@ -2497,7 +2514,7 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
   const live = $("native-chat-preview");
   const nearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 96;
   const signatures = items.map(item => JSON.stringify([state.language,chatMessageEditAllowed,
-    item.id,item.role,item.text,item.richText,item.status,item.truncated,item.versionsAvailable,
+    item.id,item.role,item.text,item.richText,item.status,item.truncated,item.versionsAvailable,item.hasRichMedia,
     item.attachmentFileNames,item.attachmentImageCount]));
   const previous = chatMessageSignatures;
   const keepsPrefix = !changedConversation && previous.every((signature, index) => signature === signatures[index]);
@@ -2511,6 +2528,7 @@ function renderNativeChatTranscript(items: UiRemoteData[], preview: NativeChatMe
       richText: typeof item.richText === "string" && item.role === "assistant" && [...item.richText].length <= 14_000 ? item.richText : null,
       uncertain: item.status === "uncertain",
       versionsAvailable:item.role==="assistant"&&item.versionsAvailable===true,
+      hasRichMedia:item.role==="assistant"&&item.hasRichMedia===true,
       attachmentFileNames:item.role==="user"&&Array.isArray(item.attachmentFileNames)
         ?item.attachmentFileNames:undefined,
       attachmentImageCount:item.role==="user"&&Number.isSafeInteger(item.attachmentImageCount)

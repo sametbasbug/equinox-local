@@ -5254,7 +5254,7 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
           attachmentImageCount:Math.min(images.length,13)};
       };
       let remaining=46000,remainingRich=46000,ambiguousUnits=false;
-      for(const turn of turns.slice(-12))for(const role of ['user','assistant']){
+      for(const turn of turns.slice(-24))for(const role of ['user','assistant']){
         const units=[...turn.querySelectorAll('[data-chatgpt-search-unit-key$=":'+role+'"]')];
         if(units.length>1){ambiguousUnits=true;continue;}
         const unit=units[0];
@@ -5263,7 +5263,9 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
         const attachments=role==='user'?readUserAttachments(content):null;
         const raw=role==='assistant'?readChatBridgeVisibleText(content):
           String(content.innerText||content.textContent||'').trim();
-        if(!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount)continue;
+        const hasRichMedia=role==='assistant'&&[...content.querySelectorAll('img,video,canvas,iframe,math')]
+          .some(node=>node.getClientRects().length>0&&!node.closest('[aria-hidden="true"]'));
+        if(!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount&&!hasRichMedia)continue;
         const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const id=String(unit.getAttribute('data-chatgpt-search-message-ids')||turn.getAttribute('data-turn-key')||'').split(/\s+/u)[0].slice(0,200);
         const richText=role==='assistant'&&chars.length<=limit
@@ -5277,32 +5279,37 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
         const turnKey=String(turn.getAttribute('data-turn-key')||'').trim().split(/\s+/u)[0];
         out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,
           ...(turnKey&&turnKey.length<=200?{turnKey}:{}),
-          richText,versionsAvailable,...(attachments??{})});remaining-=limit;
+          richText,versionsAvailable,hasRichMedia,...(attachments??{})});remaining-=limit;
       }
       if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
         const role=unit.getAttribute('data-message-author-role');
         const attachments=role==='user'?readUserAttachments(unit):null;
         const raw=role==='assistant'?readChatBridgeVisibleText(unit):
           String(unit.innerText||unit.textContent||'').trim();
-        if((!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount)||remaining<=0)continue;
+        const hasRichMedia=role==='assistant'&&[...unit.querySelectorAll('img,video,canvas,iframe,math')]
+          .some(node=>node.getClientRects().length>0&&!node.closest('[aria-hidden="true"]'));
+        if((!raw&&!attachments?.attachmentFileNames.length&&!attachments?.attachmentImageCount&&!hasRichMedia)||remaining<=0)continue;
         const chars=[...raw],limit=Math.min(3500,remaining,chars.length);
         const richText=role==='assistant'&&chars.length<=limit
           ?projectChatBridgeRichText(unit,Math.min(5000,remainingRich)):null;
         if(richText)remainingRich-=[...richText].length;
         out.push({id:String(unit.getAttribute('data-message-id')||'').slice(0,200)+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,richText,
-          ...(attachments??{})});remaining-=limit;
+          hasRichMedia,...(attachments??{})});remaining-=limit;
       }
-      return{items:out.slice(-24),partial:turns.length>12||remaining<=0||ambiguousUnits,observedTurns:turns.length};
+      return{items:out.slice(-48),partial:turns.length>24||remaining<=0||ambiguousUnits,observedTurns:turns.length};
     })()`,returnByValue:true,silent:true});
     if(result?.exceptionDetails)throw new Error("Chat history inspection failed.");
     const value=cdpObject(result?.result?.value);
-    if(!Array.isArray(value?.items)||value.items.length>24)throw new Error("Chat history payload is invalid.");
+    if(!Array.isArray(value?.items)||value.items.length>48)throw new Error("Chat history payload is invalid.");
     const items=value.items.map((item:any)=>{
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat history message is invalid.");
       if(item.turnKey!==undefined
         &&(typeof item.turnKey!=='string'
           ||!item.turnKey||item.turnKey.length>200||/[\x00-\x20\x7f]/u.test(item.turnKey)))
         throw new Error("Chat history provider turn identity is invalid.");
+      if(item.hasRichMedia!==undefined&&(item.role!=="assistant"&&item.hasRichMedia!==false
+        ||typeof item.hasRichMedia!=="boolean"))
+        throw new Error("Chat history rich-media indicator is invalid.");
       const validRich=item.role==="assistant"&&typeof item.richText==="string"&&[...item.richText].length<=5000;
       const fileNames=item.role==='user'?item.attachmentFileNames:[];
       const images=item.role==='user'?item.attachmentImageCount:0;
@@ -5314,6 +5321,7 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
       return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true,
         ...(typeof item.turnKey==='string'?{turnKey:item.turnKey}:{}),
         richText:validRich?item.richText:null,versionsAvailable:item.role==='assistant'&&item.versionsAvailable===true,
+        hasRichMedia:item.role==='assistant'&&item.hasRichMedia===true,
         ...(item.role==='user'?{attachmentFileNames:fileNames,attachmentImageCount:images}:{})};
     });
     const after=await chooseTab(Number(tabId));
