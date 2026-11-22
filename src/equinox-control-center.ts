@@ -501,6 +501,15 @@ let chatSearchInFlight = false;
 let chatSearchError = "";
 let chatSearchGeneration = 0;
 let chatSearchTimer: ReturnType<typeof setTimeout> | null = null;
+let chatToolCatalog: Array<{name:string;kind:"tool"|"app"}>=[];
+let chatToolSelection: {name:string;kind:"tool"|"app"}|null=null;
+let chatToolCatalogBusy=false;
+let chatToolCatalogBrowserInstance:string|null=null;
+// Only the provider's verified inline Search pill has an accepted send path.
+// Other tools/apps are discoverable, not falsely advertised as working.
+function nativeChatInlineToolSupported(value:{name:string;kind:"tool"|"app"}):boolean{
+  return value.kind==="tool"&&/^(Web search|Web araması)$/iu.test(value.name);
+}
 let chatModelState: UiRemoteData = null;
 let chatModelIdentity: string | null = null;
 let chatModelBusy = false;
@@ -1084,7 +1093,60 @@ async function changeNativeChatModel(action: "discover"|"choose"|"power"|"catalo
   }
 }
 
+function paintNativeChatToolControls(){
+  const combo=$("native-chat-tool-choice") as HTMLSelectElement;
+  const busy=chatSending||chatSelecting||chatToolCatalogBusy||chatServerSending;
+  const canChoose=!chatNewDraft&&!chatBlocked&&!busy&&chatConnection==="ready"
+    &&Boolean(chatActive)&&["ready","complete"].includes(chatTurn);
+  const current=chatToolSelection?chatToolSelection.kind+":"+chatToolSelection.name:"";
+  const options=[new Option(localizeUiText("No tool"),""),...chatToolCatalog.map(item=>{
+    const supported=nativeChatInlineToolSupported(item);
+    const option=new Option((item.kind==="app"?localizeUiText("Connected app"):localizeUiText("Account tool"))
+      +" · "+item.name+(supported?"":" · "+localizeUiText("Not yet supported")),
+      item.kind+":"+item.name);
+    option.disabled=!supported;
+    return option;
+  })];
+  const prior=Array.from(combo.options).map(x=>x.value).join("|");
+  if(prior!==options.map(x=>x.value).join("|"))combo.replaceChildren(...options);
+  combo.value=chatToolCatalog.some(item=>item.kind+":"+item.name===current
+    &&nativeChatInlineToolSupported(item))?current:"";
+  combo.disabled=!canChoose||!chatToolCatalog.length;
+  $("native-chat-tool-refresh").disabled=busy||chatNewDraft||!chatActive;
+  setNativeChatCopy("native-chat-tool-status",chatNewDraft
+    ?"Tools are unavailable for New Chat first messages"
+    :chatToolCatalogBusy?"Tool options are loading…"
+    :chatToolSelection?"ChatGPT will confirm the chosen tool before sending"
+    :chatToolCatalog.length?"Tool selection applies to the next message":"");
+}
+
+async function refreshNativeChatToolCatalog(){
+  if(chatToolCatalogBusy||chatNewDraft||!chatActive)return;
+  chatToolCatalogBusy=true;
+  const generation=chatSelectionGeneration;
+  const identity=chatConversationKey(chatActive);
+  const instance=chatThreadBrowserInstanceId;
+  paintNativeChatToolControls();
+  try{
+    const data=await requestJson("/api/v1/chat/tools",{backgroundRefresh:true});
+    if(generation!==chatSelectionGeneration||identity!==chatConversationKey(chatActive)
+      ||instance!==chatThreadBrowserInstanceId)return;
+    const items=Array.isArray(data.tools?.items)?data.tools.items:[];
+    chatToolCatalog=items.filter((x:UiRemoteData)=>x&&typeof x.name==="string"
+      &&x.name.length<=90&&["tool","app"].includes(x.kind));
+    chatToolCatalogBrowserInstance=instance;
+    if(chatToolSelection&&!chatToolCatalog.some(x=>x.name===chatToolSelection?.name
+      &&x.kind===chatToolSelection?.kind))chatToolSelection=null;
+  }catch(error){
+    if(generation===chatSelectionGeneration)showToast(nativeChatErrorMessage(error));
+  }finally{
+    chatToolCatalogBusy=false;
+    paintNativeChatToolControls();
+  }
+}
+
 function updateNativeChatControls() {
+  paintNativeChatToolControls();
   const busy = chatSelecting || chatSending || chatServerSending;
   const composer = chatComposer();
   const allowed = !busy && !chatBlocked && (chatNewDraft
@@ -1623,6 +1685,7 @@ async function selectNativeChat(thread: UiRemoteData) {
   composer.maxLength = 4000;
   chatModelState = null;
   chatModelIdentity = null;
+  chatToolSelection=null;
   chatSelecting = true;
   chatStateAvailable = false;
   const selectionGeneration = ++chatSelectionGeneration;
@@ -1656,6 +1719,7 @@ function beginNewNativeChat() {
   chatTaskRelated = null;
   $("native-chat-task-open").hidden = true;
   chatNewDraft = true;
+  chatToolSelection=null;
   chatNewModelCatalog=null;chatNewModelChoice=null;chatNewEffortLevel=null;
   chatSelectionGeneration++;
   chatNewCreationId = "nch-" + crypto.randomUUID();
@@ -1732,9 +1796,11 @@ async function sendNativeChatMessage() {
       renderNativeChatThreads();
       return;
     }
-    const response = await mutationJson("/api/v1/chat/send", "POST", { text, deliveryId });
+    const request:UiRemoteData={text,deliveryId};
+    if(chatToolSelection)request.tool={...chatToolSelection};
+    const response = await mutationJson("/api/v1/chat/send", "POST",request);
     confirmed = response.delivery?.confirmed === true;
-    if (confirmed) composer.value = "";
+    if (confirmed) {composer.value = "";chatToolSelection=null;}
     else holdChatUncertainty();
     const result = await requestJson("/api/v1/chat/state");
     renderNativeChatState(result.chat);
@@ -5183,6 +5249,13 @@ function bindEvents() {
   $("language-select").addEventListener("change", (event) => setLanguage((event.target as UiDomControl).value));
   $("native-chat-refresh").addEventListener("click", () => {
     if ($("native-chat-refresh").getAttribute("aria-disabled") !== "true") void refreshNativeChat(true);
+  });
+  $("native-chat-tool-refresh").addEventListener("click",()=>void refreshNativeChatToolCatalog());
+  $("native-chat-tool-choice").addEventListener("change",event=>{
+    const value=(event.currentTarget as HTMLSelectElement).value;
+    chatToolSelection=chatToolCatalog.find(x=>x.kind+":"+x.name===value
+      &&nativeChatInlineToolSupported(x))||null;
+    paintNativeChatToolControls();
   });
   $("native-chat-model-refresh").addEventListener("click", () => void changeNativeChatModel("discover"));
   $("native-chat-model-choice").addEventListener("change", (event) => {

@@ -100,7 +100,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         }
         return { binding: target, state, reacquired: target.tabId !== binding.tabId };
     };
-    const deliverText = async ({ binding, deliveryId, text, requireExactTab = false } = {}) => {
+    const deliverText = async ({ binding, deliveryId, text, tool, requireExactTab = false } = {}) => {
         const message = typeof text === "string" ? text.trim() : "";
         if (!message || message.length > 4_000 || /\0/u.test(message))
             throw new Error("Telegram Chat Bridge message must contain 1–4000 safe characters.");
@@ -134,7 +134,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                 userEpoch: state.userEpoch,
                 assistantTurnKey: state.assistantTurnKey,
                 text: message,
-            }, 10_000);
+                ...(tool ? { toolName: tool.name, toolKind: tool.kind } : {}),
+            }, tool ? 16_000 : 10_000);
             if (result?.confirmed === true) {
                 if (typeof result.userEpoch !== "string" || typeof result.previousAssistantTurnKey !== "string") {
                     const error = new Error("Telegram Chat Bridge delivery confirmation is missing turn identity.");

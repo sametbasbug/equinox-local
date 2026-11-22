@@ -646,6 +646,14 @@
               </div>
               <span id="native-chat-model-status" class="native-chat-model-status" role="status"></span>
             </div>
+            <div class="native-chat-tool-toolbar" aria-label="ChatGPT account tools">
+              <label for="native-chat-tool-choice">Tool</label>
+              <select id="native-chat-tool-choice" aria-label="Choose ChatGPT tool" disabled>
+                <option value="">No tool</option>
+              </select>
+              <button id="native-chat-tool-refresh" class="text-button" type="button">Discover tools</button>
+              <span id="native-chat-tool-status" role="status" class="native-chat-tool-status"></span>
+            </div>
             <form id="native-chat-form" class="native-chat-compose">
               <label for="native-chat-text" class="native-chat-sr-only">Message</label>
               <textarea id="native-chat-text" rows="1" maxlength="4000" placeholder="Write a message…" aria-describedby="native-chat-compose-hint" disabled></textarea>

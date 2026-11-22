@@ -2272,6 +2272,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         searchChatThreads: (value) => nativeChatController.search(value),
         browseChatProject: (value) => nativeChatController.project(value),
         controlChatConversation: (value) => nativeChatController.conversationAction(value),
+        getChatTools: () => nativeChatController.tools(),
         selectChatThread: (value) => nativeChatController.select(value),
         getChatState: () => nativeChatController.read(),
         sendChatText: (value) => nativeChatController.send(value),

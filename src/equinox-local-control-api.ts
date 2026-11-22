@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -310,6 +310,7 @@ export function createEquinoxLocalControlApi({
   searchChatThreads = null,
   browseChatProject = null,
   controlChatConversation = null,
+  getChatTools = null,
   selectChatThread = null,
   getChatState = null,
   sendChatText = null,
@@ -529,6 +530,10 @@ export function createEquinoxLocalControlApi({
         if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");
         send(200, {ok:true,chat:await getChatState()});return;
       }
+      if (method === "GET" && pathname === "/api/v1/chat/tools") {
+        if(typeof getChatTools!=="function")throw badRequest("Native Chat tool discovery is unavailable.");
+        send(200,{ok:true,tools:await getChatTools()});return;
+      }
       if (method === "GET" && pathname === "/api/v1/chat/model") {
         if (typeof getChatModel !== "function") throw badRequest("Native Chat model selection is unavailable.");
         send(200, {ok:true,model:await getChatModel()});return;
@@ -569,8 +574,14 @@ export function createEquinoxLocalControlApi({
       if (method === "POST" && pathname === "/api/v1/chat/send") {
         authorizeMutation();
         if (typeof sendChatText !== "function") throw badRequest("Native chat is unavailable.");
-        const body=validateExactObject(await readBody(),["deliveryId","text"],"Native chat delivery");
-        if (typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||!body.text.trim()||body.text.length>4000) throw badRequest("Invalid Chat message or delivery id.");
+        const body=validateExactObject(await readBody(),["deliveryId","text","tool"],"Native chat delivery");
+        if (typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||!body.text.trim()||body.text.length>4000
+          ||(body.tool!==undefined&&(!body.tool||typeof body.tool!=="object"||Array.isArray(body.tool)
+            ||Object.keys(body.tool).some(k=>!["name","kind"].includes(k))
+            ||typeof body.tool.name!=="string"||!body.tool.name.trim()||body.tool.name.length>90
+            ||body.tool.kind!=="tool"
+            ||!/^(Web search|Web araması)$/iu.test(body.tool.name))))
+          throw badRequest("Invalid Chat message, account tool or delivery id.");
         const delivery=await sendChatText(body);
         state.mutationCount+=1;send(200,{ok:true,delivery});return;
       }

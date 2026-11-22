@@ -45,7 +45,8 @@ type Inspection = {binding: Binding; state: BrowserState; reacquired: boolean};
 type BridgeController = {
   inspectBinding: (binding: unknown, requiredVersion?: number, options?: {allowMissingAssistantTurnKey?: boolean; allowMissingUserEpoch?: boolean}) => Promise<Inspection>;
   inspectTurnIdentity: (args?: {binding?: Binding}) => Promise<unknown>;
-  deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string; requireExactTab?: boolean}) => Promise<unknown>;
+  deliverText: (args?: {binding?: Binding; deliveryId?: string; text?: string;
+    tool?:{name:string;kind:"tool"|"app"};requireExactTab?: boolean}) => Promise<unknown>;
   readFinal: (args?: {binding?: Binding; userEpoch?: string; previousAssistantTurnKey?: string | null}) => Promise<unknown>;
   readRecent: (args?: {binding?: Binding}) => Promise<unknown>;
   startTaskChat: (args?: {taskId?: string; checkpointRevision?: number; initialMessage?: string;
@@ -158,8 +159,9 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     return { binding: target, state, reacquired: target.tabId !== binding.tabId };
   };
 
-  const deliverText = async ({ binding, deliveryId, text, requireExactTab = false }: {
-    binding?: Binding; deliveryId?: string; text?: string; requireExactTab?: boolean
+  const deliverText = async ({ binding, deliveryId, text, tool, requireExactTab = false }: {
+    binding?: Binding; deliveryId?: string; text?: string;
+    tool?:{name:string;kind:"tool"|"app"};requireExactTab?: boolean
   } = {}) => {
     const message = typeof text === "string" ? text.trim() : "";
     if (!message || message.length > 4_000 || /\0/u.test(message)) throw new Error("Telegram Chat Bridge message must contain 1–4000 safe characters.");
@@ -192,7 +194,8 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
         userEpoch: state.userEpoch,
         assistantTurnKey: state.assistantTurnKey,
         text: message,
-      }, 10_000) as BrowserResult | null;
+        ...(tool?{toolName:tool.name,toolKind:tool.kind}:{}),
+      }, tool?16_000:10_000) as BrowserResult | null;
       if (result?.confirmed === true) {
         if (typeof result.userEpoch !== "string" || typeof result.previousAssistantTurnKey !== "string") {
           const error = new Error("Telegram Chat Bridge delivery confirmation is missing turn identity.") as CodedError;

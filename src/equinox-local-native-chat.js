@@ -647,17 +647,40 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             turn, sending, blocked, creationBlocked, taskId,
             preview, notice: notice || historyNotice, limitedHistory: historyPartial || !history.length, historyCount: history.length };
     };
+    const tools = async () => {
+        const instance = context();
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            invalid("The connected Browser must support Native Chat tool discovery.");
+        const data = await call("chat_bridge.tools_catalog", {}, 14_000);
+        if (context() !== instance || !Array.isArray(data?.items) || data.items.length > 60)
+            invalid("ChatGPT account tool discovery changed or failed.");
+        const items = data.items.filter((row) => row && typeof row.name === "string"
+            && row.name.trim() && row.name.length <= 90 && ["tool", "app"].includes(row.kind))
+            .map((row) => ({ name: row.name, kind: row.kind }));
+        if (items.length !== data.items.length)
+            invalid("ChatGPT returned invalid tool choices.");
+        return { items, partial: true, source: "visible-provider-composer" };
+    };
     const send = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Invalid chat delivery request.");
         const body = value;
-        if (Object.keys(body).length !== 2 || typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || !body.text.trim() || body.text.length > 4000 || /[\0]/u.test(body.text))
-            invalid("Chat delivery must include a unique id and 1–4000 characters of text.");
+        if (Object.keys(body).some(k => !["deliveryId", "text", "tool"].includes(k))
+            || typeof body.deliveryId !== "string" || !/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId) || typeof body.text !== "string" || !body.text.trim() || body.text.length > 4000 || /[\0]/u.test(body.text)
+            || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
+                || Object.keys(body.tool).some(k => !["name", "kind"].includes(k))
+                || typeof body.tool.name !== "string"
+                || !body.tool.name.trim() || body.tool.name.length > 90
+                || body.tool.kind !== "tool"
+                || !/^(Web search|Web araması)$/iu.test(body.tool.name))))
+            invalid("Chat delivery requires an exact provider-offered tool and 1–4000 safe characters.");
         const key = body.deliveryId;
         const message = body.text.trim();
+        const selectedTool = body.tool;
+        const toolKey = selectedTool ? selectedTool.kind + ":" + selectedTool.name : "";
         const prior = attempts.get(key);
         if (prior) {
-            if (prior.text !== message || !selected || prior.conversationKey !== conversationKey(selected))
+            if (prior.text !== message || prior.toolKey !== toolKey || !selected || prior.conversationKey !== conversationKey(selected))
                 invalid("A delivery id cannot be reused for a different conversation or message.");
             return prior.promise;
         }
@@ -671,7 +694,21 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         sending = true;
         const attempt = (async () => {
             try {
-                const result = await chatBridge.deliverText({ binding, deliveryId: key, text: body.text.trim(), requireExactTab: true });
+                if (selectedTool) {
+                    try {
+                        const catalog = await tools();
+                        if (!catalog.items.some((item) => item.name === selectedTool.name && item.kind === selectedTool.kind))
+                            throw new Error("The selected tool is no longer offered by this ChatGPT account.");
+                    }
+                    catch (error) {
+                        const unavailable = new Error("Tool preflight failed: " +
+                            (error instanceof Error ? error.message : "ChatGPT tool menu unavailable."));
+                        unavailable.code = "CHAT_BRIDGE_NOT_READY";
+                        throw unavailable;
+                    }
+                }
+                const result = await chatBridge.deliverText({ binding, deliveryId: key, text: body.text.trim(),
+                    ...(selectedTool ? { tool: selectedTool } : {}), requireExactTab: true });
                 if (result?.confirmed !== true) {
                     blocked = true;
                     uncertainConversations.add(conversationKey(binding));
@@ -703,7 +740,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 sending = false;
             }
         })();
-        attempts.set(key, { text: message, conversationKey: conversationKey(binding), promise: attempt });
+        attempts.set(key, { text: message, toolKey, conversationKey: conversationKey(binding), promise: attempt });
         return attempt;
     };
     // Explicit first-message creation. Reuse the existing Task Capsule + first-party
@@ -828,5 +865,5 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, search, project, conversationAction, select, read, send, startNew, model });
+    return Object.freeze({ list, search, project, conversationAction, tools, select, read, send, startNew, model });
 }

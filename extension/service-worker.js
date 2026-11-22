@@ -1570,7 +1570,7 @@ async function inspectChatBridgeState({ tabId } = {}) {
         scheduleDetach(tabId, CONTINUATION_MUTATION_DETACH_MS);
     }
 }
-async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, userEpoch, assistantTurnKey, text, } = {}) {
+async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, userEpoch, assistantTurnKey, text, toolName, toolKind, } = {}) {
     if (typeof deliveryId !== "string" || !/^tgb-[a-z0-9-]{6,80}$/u.test(deliveryId)) {
         throw new Error("Chat Bridge delivery id is invalid.");
     }
@@ -1588,6 +1588,12 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
     const message = String(text || "");
     if (!message || message.length > 4_000 || /\0/u.test(message))
         throw new Error("Chat Bridge prompt is invalid.");
+    if (toolName !== undefined && (typeof toolName !== "string" || !toolName.trim()
+        || toolName.length > 90 || /[\x00-\x1f\x7f]/u.test(toolName)
+        || !["tool", "app"].includes(String(toolKind))))
+        throw new Error("Chat Bridge selected tool identity is invalid.");
+    if (toolName === undefined && toolKind !== undefined)
+        throw new Error("Chat Bridge tool kind requires an actual provider choice.");
     if (await hasChatBridgeReceipt(deliveryId)) {
         return {
             chatBridgeVersion: CHAT_BRIDGE_VERSION,
@@ -1628,12 +1634,76 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
             };
         }
         stage = "claimed";
+        if (typeof toolName === "string") {
+            // Only the account's actual provider menu can stage this mode.
+            // No hidden provider endpoint or spoofed attachment capability.
+            const selected = await send(tabId, "Runtime.evaluate", {
+                expression: `(async()=>{
+          if(location.origin!=="https://chatgpt.com")return{selected:false,reason:"origin"};
+          const composer=${VISIBLE_CHATGPT_COMPOSER_JS};
+          if(!composer||String(composer.textContent||"").trim())
+            return{selected:false,reason:"composer_not_empty"};
+          const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+          const triggers=[...document.querySelectorAll('button[data-composer-navigation-target="add-context"]')]
+            .filter(x=>x.getClientRects().length);
+          if(triggers.length!==1)return{selected:false,reason:"menu_unavailable"};
+          if(triggers[0].getAttribute('aria-expanded')!=='true')triggers[0].click();
+          let candidates=[];
+          for(let n=0;n<25;n++){
+            const sections=[...document.querySelectorAll('[data-mention-section-id]')]
+              .filter(x=>x.getClientRects().length
+                &&x.getAttribute('data-mention-section-id')===${JSON.stringify(toolKind === "app" ? "plugins" : "chatgpt-primary")});
+            candidates=sections.flatMap(section=>[...section.querySelectorAll('button[data-list-navigation-item]')]
+              .filter(row=>row.getClientRects().length
+                &&String(row.querySelector('span.truncate.shrink-0')?.textContent||'').trim()===${JSON.stringify(toolName)}));
+            if(candidates.length)break;
+            await pause(100);
+          }
+          if(candidates.length!==1)return{selected:false,reason:"tool_not_offered"};
+          candidates[0].click();
+          for(let n=0;n<35;n++){
+            await pause(85);
+            const pills=[...composer.querySelectorAll('[data-inline-selection-pill]')];
+            if(pills.length!==1)continue;
+            const pill=pills[0];
+            if(pill.getAttribute('data-system-hint-label')!==${JSON.stringify(toolName)}
+              ||!pill.getAttribute('data-system-hint-type'))break;
+            const empty=composer.cloneNode(true);
+            empty.querySelector('[data-inline-selection-pill]')?.remove();
+            if(String(empty.textContent||'').trim())break;
+            if(triggers[0].getAttribute('aria-expanded')==='true')break;
+            return{selected:true,hint:pill.getAttribute('data-system-hint-type')};
+          }
+          return{selected:false,reason:"inline_tool_not_confirmed"};
+        })()`, awaitPromise: true, returnByValue: true, silent: true
+            });
+            const value = cdpObject(selected?.result?.value);
+            if (selected?.exceptionDetails || value?.selected !== true || typeof value.hint !== "string")
+                throw new Error("ChatGPT did not confirm an inline selected tool before message submission.");
+            stage = "tool_confirmed";
+        }
         const focusResult = await send(tabId, "Runtime.evaluate", {
             expression: `(() => {
         const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
         if (!composer) throw new Error('ChatGPT composer is unavailable');
-        if (String(composer.textContent || '').trim()) throw new Error('ChatGPT composer is not empty');
+        const pill = composer.querySelectorAll('[data-inline-selection-pill]');
+        if(${JSON.stringify(typeof toolName === "string")}){
+          if(pill.length!==1||pill[0].getAttribute('data-system-hint-label')!==${JSON.stringify(toolName ?? "")})
+            throw new Error('ChatGPT tool selection changed before text entry');
+          const rest=composer.cloneNode(true);
+          rest.querySelector('[data-inline-selection-pill]')?.remove();
+          if(String(rest.textContent||'').trim())throw new Error('ChatGPT composer already contains human input');
+        }else if(pill.length||String(composer.textContent||'').trim()){
+          throw new Error('ChatGPT composer is not empty');
+        }
         composer.focus();
+        if(${JSON.stringify(typeof toolName === "string")}){
+          const selection=getSelection(),range=document.createRange();
+          range.selectNodeContents(composer);
+          range.collapse(false);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        }
         return { focused: document.activeElement === composer };
       })()`,
             returnByValue: true,
@@ -1694,11 +1764,22 @@ async function deliverChatBridgeMessage({ deliveryId, tabId, conversationId, use
         // ChatGPT's contenteditable composer. textContent silently drops the
         // paragraph boundaries, so exact multi-line delivery must restore
         // those separators before matching the staged source message.
-        const children = composer ? Array.from(composer.children) : [];
-        const stagedText = children.length && children.every((node) => node.tagName === 'P')
-          ? children.map((node) => String(node.textContent || '')).join('\\n')
-          : String(composer?.textContent || '');
-        if (!composer || stagedText !== ${JSON.stringify(message)}) return { focused: false, reason: "composer_changed" };
+        const clone=composer?.cloneNode(true);
+        const pill=clone?.querySelectorAll('[data-inline-selection-pill]');
+        if(${JSON.stringify(typeof toolName === "string")}){
+          if(!pill||pill.length!==1
+            ||pill[0].getAttribute('data-system-hint-label')!==${JSON.stringify(toolName ?? "")})
+            return{focused:false,reason:"tool_changed"};
+          pill[0].remove();
+        }else if(pill?.length){
+          return{focused:false,reason:"unexpected_tool"};
+        }
+        const children=clone?Array.from(clone.children):[];
+        const stagedText=children.length&&children.every(node=>node.tagName==='P')
+          ?children.map(node=>String(node.textContent||'')).join('\n').trim()
+          :String(clone?.textContent||'').trim();
+        if(!composer||stagedText!==${JSON.stringify(message.trim())})
+          return{focused:false,reason:"composer_changed"};
         if (!button || !button.isConnected || button.type !== 'submit') return { focused: false, reason: "send_button_missing" };
         const form = composer.closest('form');
         if (!form || button.closest('form') !== form) return { focused: false, reason: "send_button_scope_changed" };
