@@ -12,6 +12,8 @@
 
 **Checkpoint 78 transcript reconciliation:** Real provider user-turn identity (the visible `data-turn-key`) now accompanies bounded Browser 13 history, and is checked against the exact confirmed pending local delivery after response interruption. Only that matched duplicate user message is removed; no text-based deduplication or fabricated assistant response. The controller also rejects Stop if an outstanding locally confirmed delivery belongs to a different active provider turn. Provider DOM attribute identity was checked read-only in the user's actual ChatGPT tab with no changes to the conversation. Installed Bridge 13 end-to-end QA remains pending.
 
+**Delayed Stop readback:** The user turn and assistant reply share their provider `data-turn-key`; a stopped response is not considered fully rehydrated merely because the user turn appeared. Bounded read-only polls continue until a matching assistant row appears, with conservative timeout and no duplicate send. This applies to externally started generations as well. Physical Bridge 13 QA is still outstanding.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.

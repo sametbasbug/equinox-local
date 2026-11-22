@@ -60,9 +60,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let historyNotice:string|null=null;
   let historyPendingHydration=0;
   let pending:{userEpoch:string;previousAssistantTurnKey:string|null;deliveryId:string}|null=null;
-  // When Stop is confirmed, the provider's real user turn may be rehydrated.
-  // Reconcile only against its exact observed epoch, never matching prompt text.
-  let stoppedLocalReceipt:{userEpoch:string;deliveryId:string}|null=null;
+  // After Stop, the provider may hydrate the user turn before the partial
+  // assistant reply. Reconcile only by the shared, confirmed provider epoch.
+  let stoppedTurn:{userEpoch:string;deliveryId:string|null}|null=null;
   let awaitingNewChatIdentity:{conversationId:string;text:string;fileNames:string[];deliveryId:string}|null=null;
   let sending=false;
   let creating=false;
@@ -697,7 +697,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       ||selected?.canonicalUrl!==next.canonicalUrl;
     if(changed){
       selectedRevision++;
-      messages=[];pending=null;stoppedLocalReceipt=null;
+      messages=[];pending=null;stoppedTurn=null;
       awaitingNewChatIdentity=awaitingFirstTurns.get(conversationKey(next))??null;
       blocked=uncertainConversations.has(conversationKey(next))||Boolean(awaitingNewChatIdentity);
       history=[];historyPartial=false;historyPendingHydration=0;
@@ -796,19 +796,22 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
               ...providerUserAttachments(item),
             }));
             historyPartial=fresh.partial===true;
-            const exact=stoppedLocalReceipt;
-            if(exact&&fresh.items.some((item:any)=>item.role==='user'
-              &&item.turnKey===exact.userEpoch)
-              &&messages.some(item=>item.id===exact.deliveryId&&item.role==='user'
-                &&item.status==='sent')){
-              messages=messages.filter(item=>item.id!==exact.deliveryId);
-              stoppedLocalReceipt=null;
+            const stopped=stoppedTurn;
+            if(stopped&&fresh.items.some((item:any)=>item.role==='user'
+              &&item.turnKey===stopped.userEpoch)){
+              if(stopped.deliveryId&&messages.some(item=>item.id===stopped.deliveryId
+                &&item.role==='user'&&item.status==='sent'))
+                messages=messages.filter(item=>item.id!==stopped.deliveryId);
+              // A visible user message alone is not proof that a stopped
+              // partial assistant response has finished hydrating.
+              if(fresh.items.some((item:any)=>item.role==='assistant'
+                &&item.turnKey===stopped.userEpoch))
+                stoppedTurn=null;
             }
-            // A partially hydrated provider view might not yet show the
-            // interrupted user turn. Keep the bounded subsequent reads.
-            if(!stoppedLocalReceipt)historyPendingHydration=0;
+            if(!stoppedTurn)historyPendingHydration=0;
           }
         }catch{/* A later explicit refresh can recover without replaying sends. */}
+        if(historyPendingHydration===0)stoppedTurn=null;
       }
       if(awaitingNewChatIdentity&&inspected?.status==="ready"&&typeof inspected.userEpoch==="string"&&inspected.userEpoch){
         // A fresh /c/ URL can precede the first user-turn epoch. Read-only
@@ -944,7 +947,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       ||conversationKey(selected)!==conversationKey(binding)
       ||sending||creating||blocked||mutatingAction
       ||observed?.generationActive!==true
-      ||(pending!==null&&pending.userEpoch!==observed?.userEpoch)
+      ||typeof observed?.userEpoch!=='string'||!observed.userEpoch
+      ||(pending!==null&&pending.userEpoch!==observed.userEpoch)
       ||observed?.binding?.tabId!==binding.tabId
       ||observed?.binding?.conversationId!==binding.conversationId
       ||observed?.binding?.browserInstanceId!==binding.browserInstanceId)
@@ -971,9 +975,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         // assistant text or replay a send. Hydrate provider-rendered history.
         const interrupted=pending;
         pending=null;
-        stoppedLocalReceipt=interrupted&&typeof interrupted.userEpoch==='string'
-          &&interrupted.userEpoch?{userEpoch:interrupted.userEpoch,
-            deliveryId:interrupted.deliveryId}:null;
+        stoppedTurn={userEpoch:observed.userEpoch as string,
+          deliveryId:interrupted?.deliveryId??null};
         historyPendingHydration=5;
         previousHistoryGeneration=false;
         return{confirmed:true,stopped:true,chat:await read()};

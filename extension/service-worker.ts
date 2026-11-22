@@ -5272,11 +5272,11 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
         const versionsAvailable=role==='assistant'&&[...turn.querySelectorAll('button[aria-label]')]
           .filter(b=>b.getClientRects().length
             &&/^(View versions|Sürümleri görüntüle)$/iu.test(String(b.getAttribute('aria-label')||'').trim())).length===1;
-        // A provider turn key is proof of the exact submitted turn, unlike
-        // text matching (users may send identical messages more than once).
+        // Both the user turn and assistant response share the parent turn key.
+        // This is exact provider identity, not a text-based approximation.
         const turnKey=String(turn.getAttribute('data-turn-key')||'').trim().split(/\s+/u)[0];
         out.push({id:id+':'+role,role,text:chars.slice(0,limit).join(''),truncated:chars.length>limit,
-          ...(role==='user'&&turnKey.length<=200?{turnKey}:{}),
+          ...(turnKey&&turnKey.length<=200?{turnKey}:{}),
           richText,versionsAvailable,...(attachments??{})});remaining-=limit;
       }
       if(turns.length===0)for(const unit of [...document.querySelectorAll('[data-message-author-role="user"], [data-message-author-role="assistant"]')].slice(-24)){
@@ -5300,7 +5300,7 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
     const items=value.items.map((item:any)=>{
       if(!item||!["user","assistant"].includes(item.role)||typeof item.text!=="string"||item.text.length>14000||typeof item.id!=="string"||item.id.length>220)throw new Error("Chat history message is invalid.");
       if(item.turnKey!==undefined
-        &&(item.role!=='user'||typeof item.turnKey!=='string'
+        &&(typeof item.turnKey!=='string'
           ||!item.turnKey||item.turnKey.length>200||/[\x00-\x20\x7f]/u.test(item.turnKey)))
         throw new Error("Chat history provider turn identity is invalid.");
       const validRich=item.role==="assistant"&&typeof item.richText==="string"&&[...item.richText].length<=5000;
@@ -5312,7 +5312,7 @@ async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conve
         ||!Number.isInteger(images)||images<0||images>12)
         throw new Error("Chat history attachment evidence is invalid.");
       return{id:item.id,role:item.role,text:item.text,truncated:item.truncated===true,
-        ...(item.role==='user'&&typeof item.turnKey==='string'?{turnKey:item.turnKey}:{}),
+        ...(typeof item.turnKey==='string'?{turnKey:item.turnKey}:{}),
         richText:validRich?item.richText:null,versionsAvailable:item.role==='assistant'&&item.versionsAvailable===true,
         ...(item.role==='user'?{attachmentFileNames:fileNames,attachmentImageCount:images}:{})};
     });
