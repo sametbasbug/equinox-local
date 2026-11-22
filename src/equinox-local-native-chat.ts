@@ -914,7 +914,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       tabId:binding.tabId,promise});
     return promise;
   };
-  const branchNewChat=async(value:unknown)=>{
+  const branchNewChat=async(value:unknown,mode:"new"|"work"="new")=>{
     if(!value||typeof value!=="object"||Array.isArray(value))
       invalid("Branch requires an exact provider assistant reply.");
     const body=value as Record<string,unknown>;
@@ -926,9 +926,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       ||typeof body.firstMessage!=="string"||!body.firstMessage.trim()
       ||body.firstMessage!==body.firstMessage.trim()||body.firstMessage.length>1500
       ||/[\r\n\x00]/u.test(body.firstMessage)
-      ||typeof body.mutationId!=="string"||!/^mbr-[a-f0-9-]{36}$/u.test(body.mutationId))
+      ||typeof body.mutationId!=="string"||!(mode==="work"?/^mwr-[a-f0-9-]{36}$/u:/^mbr-[a-f0-9-]{36}$/u).test(body.mutationId))
       invalid("Branch needs one exact complete assistant reply and a one-use identity.");
-    const key=String(body.mutationId),fingerprint=JSON.stringify(body);
+    const key=String(body.mutationId),fingerprint=JSON.stringify({mode,...body});
     const prior=branchAttempts.get(key);
     if(prior){
       if(prior.fingerprint!==fingerprint||!selected
@@ -956,7 +956,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     mutatingAction=true;
     const promise=(async()=>{
       try{
-        const result=await call("chat_bridge.branch_new_chat",{
+        const result=await call(mode==="work"?"chat_bridge.branch_work_chat":"chat_bridge.branch_new_chat",{
           tabId:binding.tabId,conversationId:binding.conversationId,
           messageId:body.messageId,expectedText:body.expectedText,
           firstMessage:body.firstMessage,mutationId:key
@@ -974,14 +974,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           ||next.conversationId===binding.conversationId){
           if(result?.notSubmitted===true){
             const err:Error&{statusCode?:number}=new Error(
-              "The provider did not offer New-chat Branch for this exact reply.");
+              "The provider did not offer the requested Branch mode for this exact reply.");
             err.statusCode=409;throw err;
           }
           throw new Error("ChatGPT Branch may have started. Inspect Chrome before trying again.");
         }
         // Preserve original Task Capsule association. The new browser branch
         // is a separate conversation that the native UI can select directly.
-        historyNotice="A new ChatGPT branch was created. Open it from Native Chat.";
+        historyNotice=mode==="work"?"A ChatGPT Work branch was created.":"A new ChatGPT branch was created.";
         return{confirmed:true,branch:{
           tabId:next.tabId,conversationId:next.conversationId,
           canonicalUrl:next.canonicalUrl,
@@ -1133,5 +1133,5 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     return attempt;
   };
 
-  return Object.freeze({list,search,project,conversationAction,editMessage,retryAssistant,branchNewChat,tools,select,read,send,startNew,model});
+  return Object.freeze({list,search,project,conversationAction,editMessage,retryAssistant,branchNewChat,branchWorkChat:(value:unknown)=>branchNewChat(value,"work"),tools,select,read,send,startNew,model});
 }

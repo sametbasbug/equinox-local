@@ -552,7 +552,7 @@ let chatMessageEditAllowed=false;
 let chatRetryCandidate:{messageId:string;expectedText:string;identity:string;tabId:number}|null=null;
 let chatRetryBusy=false;
 let chatRetryAttempted=false;
-let chatBranchCandidate:{messageId:string;expectedText:string;identity:string;tabId:number}|null=null;
+let chatBranchCandidate:{messageId:string;expectedText:string;identity:string;tabId:number;mode:"new"|"work"}|null=null;
 let chatBranchBusy=false;
 let chatBranchAttempted=false;
 
@@ -1621,7 +1621,7 @@ async function submitNativeChatAssistantRetry(){
   }
 }
 
-function openNativeChatNewBranch(message:NativeChatMessage){
+function openNativeChatNewBranch(message:NativeChatMessage,mode:"new"|"work"="new"){
   if(chatBranchBusy||chatNewDraft||chatSending||chatSelecting||chatBlocked
     ||!chatMessageEditAllowed||chatComposer().value.trim()||chatPickedFile
     ||chatToolSelection||!chatActive||!["ready","complete"].includes(chatTurn)
@@ -1631,9 +1631,14 @@ function openNativeChatNewBranch(message:NativeChatMessage){
   const identity=chatConversationKey(chatActive);
   if(!identity)return;
   chatBranchCandidate={messageId:message.id,expectedText:message.text.trim(),
-    identity,tabId:Number(chatActive.tabId)};
+    identity,tabId:Number(chatActive.tabId),mode};
   chatBranchAttempted=false;
   setNativeChatCopy("native-chat-branch-status","");
+  setNativeChatCopy("native-chat-branch-title",mode==="work"?"Branch into Work mode":"Branch into a new chat");
+  setNativeChatCopy("native-chat-branch-subtitle",mode==="work"
+    ?"ChatGPT opens a Work branch. Your first prompt may start Work tools and consume Work allowance. The original conversation stays unchanged. Confirm only when you want Work to begin."
+    :"ChatGPT opens a temporary branch. Write its first message to save it as a new conversation. The original remains unchanged.");
+  setNativeChatCopy("native-chat-branch-confirm",mode==="work"?"Create Work branch and send":"Branch and send message");
   const dialog=$("native-chat-branch-dialog") as HTMLDialogElement;
   if(!dialog.open)dialog.showModal();
   const input=document.getElementById("native-chat-branch-text") as HTMLTextAreaElement;
@@ -1657,11 +1662,12 @@ async function submitNativeChatNewBranch(){
   $("native-chat-branch-confirm").disabled=true;
   $("native-chat-branch-cancel").disabled=true;
   $("native-chat-branch-close").disabled=true;
-  setNativeChatCopy("native-chat-branch-status","Creating the exact ChatGPT branch…");
+  setNativeChatCopy("native-chat-branch-status",candidate.mode==="work"
+    ?"Creating the exact ChatGPT Work branch…":"Creating the exact ChatGPT branch…");
   try{
-    const result=await mutationJson("/api/v1/chat/branch_new","POST",{
+    const result=await mutationJson(candidate.mode==="work"?"/api/v1/chat/branch_work":"/api/v1/chat/branch_new","POST",{
       messageId:candidate.messageId,expectedText:candidate.expectedText,
-      firstMessage,mutationId:"mbr-"+crypto.randomUUID()
+      firstMessage,mutationId:(candidate.mode==="work"?"mwr-":"mbr-")+crypto.randomUUID()
     });
     if(candidate!==chatBranchCandidate)return;
     const branch=result.branch?.branch;
@@ -1674,7 +1680,7 @@ async function submitNativeChatNewBranch(){
     // The verified new Chrome tab is now an ordinary user-selected conversation.
     await selectNativeChat({tabId:branch.tabId,conversationId:branch.conversationId,
       title:String(branch.title||"New branch"),opened:true});
-    showToast("New ChatGPT branch created.");
+    showToast(candidate.mode==="work"?"ChatGPT Work branch created.":"New ChatGPT branch created.");
   }catch(error){
     if(candidate===chatBranchCandidate&&dialog.open)
       setNativeChatCopy("native-chat-branch-status",nativeChatErrorMessage(error)+
@@ -1777,6 +1783,12 @@ function renderNativeChatMessage(message: NativeChatMessage) {
       branch.setAttribute("aria-label",localizeUiText("Branch into a new chat"));
       branch.addEventListener("click",()=>openNativeChatNewBranch(message));
       actions.append(branch);
+      const workBranch=document.createElement("button");
+      workBranch.type="button";workBranch.className="native-chat-message-copy";
+      workBranch.textContent=localizeUiText("Branch in Work mode");
+      workBranch.setAttribute("aria-label",localizeUiText("Branch into Work mode"));
+      workBranch.addEventListener("click",()=>openNativeChatNewBranch(message,"work"));
+      actions.append(workBranch);
     }
     if (message.role === "assistant") {
       const quote = document.createElement("button");

@@ -3848,9 +3848,9 @@ async function retryChatBridgeAssistant({tabId,conversationId,messageId,expected
   }finally{scheduleDetach(id,CONTINUATION_MUTATION_DETACH_MS);}
 }
 
-/** Open the provider's actual new-chat branch, never a simulated copy. */
-async function branchChatBridgeAssistant({tabId,conversationId,messageId,expectedText,firstMessage,mutationId}:{
-  tabId?:unknown;conversationId?:unknown;messageId?:unknown;expectedText?:unknown;firstMessage?:unknown;mutationId?:unknown;
+/** Open the provider's exact New-chat or Work branch, never a simulated copy. */
+async function branchChatBridgeAssistant({tabId,conversationId,messageId,expectedText,firstMessage,mutationId,branchMode="new"}:{
+  tabId?:unknown;conversationId?:unknown;messageId?:unknown;expectedText?:unknown;firstMessage?:unknown;mutationId?:unknown;branchMode?:"new"|"work";
 }={}){
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1
     ||typeof conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
@@ -3861,7 +3861,9 @@ async function branchChatBridgeAssistant({tabId,conversationId,messageId,expecte
     ||typeof firstMessage!=="string"||!firstMessage.trim()
     ||firstMessage!==firstMessage.trim()||firstMessage.length>1500
     ||/[\r\n\x00]/u.test(firstMessage)
-    ||typeof mutationId!=="string"||!/^mbr-[a-f0-9-]{36}$/u.test(mutationId))
+    ||!(branchMode==="new"||branchMode==="work")
+    ||typeof mutationId!=="string"
+    ||!(branchMode==="work"?/^mwr-[a-f0-9-]{36}$/u:/^mbr-[a-f0-9-]{36}$/u).test(mutationId))
     throw new Error("Branch requires one exact completed assistant reply.");
   const id=Number(tabId),uuid=String(messageId).slice(0,-10),tabs=workerTabs();
   const initial=await chooseTab(id);
@@ -3937,12 +3939,11 @@ async function branchChatBridgeAssistant({tabId,conversationId,messageId,expecte
             .filter(m=>visible(m)&&m.getAttribute('aria-labelledby')===branch.id);
           const options=menus.length===1?[...menus[0].querySelectorAll('[role="menuitem"]')]
             .filter(m=>visible(m)&&m.getAttribute('aria-busy')!=='true'
-              &&/^(Branch in new chat|Yeni sohbette dallandır)$/iu.test(
-                String(m.innerText||'').trim())):[];
+              &&${branchMode==="work"?"/^(Branch in Work mode|Create a branch in Work mode|Çalışma modunda dal oluştur)$/iu.test(String(m.innerText||'').trim())":"/^(Branch in new chat|Yeni sohbette dallandır)$/iu.test(String(m.innerText||'').trim())"}):[];
           if(options.length===1){target=options[0];break;}
           await pause();
         }
-        if(!target)return{clicked:false,stage:'new_chat_branch_not_offered'};
+        if(!target)return{clicked:false,stage:'requested_branch_not_offered'};
         if(location.pathname.split('/').at(-1)!==${JSON.stringify(conversationId)}
           ||readChatBridgeVisibleText(content)!==${JSON.stringify(expectedText)})
           return{clicked:false,stage:'source_changed_after_menu'};
@@ -3984,7 +3985,8 @@ async function branchChatBridgeAssistant({tabId,conversationId,messageId,expecte
         const route=location.pathname;
         const inputs=[...document.querySelectorAll(
           '[contenteditable="true"][role="textbox"][data-composer-markdown]')]
-          .filter(e=>e.getClientRects().length);
+          .filter(e=>e.getClientRects().length
+            &&${branchMode==="work"?"/^(ChatGPT ile çalış|Work with ChatGPT)$/iu.test(String(e.getAttribute('aria-label')||'').trim())":"!/^(ChatGPT ile çalış|Work with ChatGPT)$/iu.test(String(e.getAttribute('aria-label')||'').trim())"});
         const sent=[...document.querySelectorAll('[data-chatgpt-search-unit-key$=":assistant"]')]
           .some(unit=>readChatBridgeVisibleText(
             unit.querySelector('[data-chatgpt-selection-message-id]')||unit
@@ -4006,7 +4008,8 @@ async function branchChatBridgeAssistant({tabId,conversationId,messageId,expecte
       expression:String.raw`(()=>{
         const input=[...document.querySelectorAll(
           '[contenteditable="true"][role="textbox"][data-composer-markdown]')]
-          .filter(e=>e.getClientRects().length);
+          .filter(e=>e.getClientRects().length
+            &&${branchMode==="work"?"/^(ChatGPT ile çalış|Work with ChatGPT)$/iu.test(String(e.getAttribute('aria-label')||'').trim())":"!/^(ChatGPT ile çalış|Work with ChatGPT)$/iu.test(String(e.getAttribute('aria-label')||'').trim())"});
         const submits=[...document.querySelectorAll('button[aria-label]')]
           .filter(b=>b.getClientRects().length
             &&/^(Send|Gönder)$/iu.test(String(b.getAttribute('aria-label')||''))
@@ -4024,7 +4027,8 @@ async function branchChatBridgeAssistant({tabId,conversationId,messageId,expecte
       expression:String.raw`(()=>{
         const input=[...document.querySelectorAll(
           '[contenteditable="true"][role="textbox"][data-composer-markdown]')]
-          .filter(e=>e.getClientRects().length);
+          .filter(e=>e.getClientRects().length
+            &&${branchMode==="work"?"/^(ChatGPT ile çalış|Work with ChatGPT)$/iu.test(String(e.getAttribute('aria-label')||'').trim())":"!/^(ChatGPT ile çalış|Work with ChatGPT)$/iu.test(String(e.getAttribute('aria-label')||'').trim())"});
         const submits=[...document.querySelectorAll('button[aria-label]')]
           .filter(b=>b.getClientRects().length
             &&/^(Send|Gönder)$/iu.test(String(b.getAttribute('aria-label')||''))
@@ -10935,6 +10939,7 @@ const COMMANDS = {
   "chat_bridge.edit_message": editChatBridgeMessage,
   "chat_bridge.retry_assistant": retryChatBridgeAssistant,
   "chat_bridge.branch_new_chat": branchChatBridgeAssistant,
+  "chat_bridge.branch_work_chat": (args:any)=>branchChatBridgeAssistant({...args,branchMode:"work"}),
   "chat_bridge.model": chatBridgeModelControl,
   "chat_bridge.model_catalog": discoverChatBridgeNewModel,
   "chat_bridge.tools_catalog": readChatBridgeToolsCatalog,

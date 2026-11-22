@@ -244,7 +244,7 @@ function validateTaskUpdateRequest(body) {
     }
     return body;
 }
-export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, searchChatThreads = null, browseChatProject = null, controlChatConversation = null, editChatMessage = null, retryChatAssistant = null, branchChatAssistant = null, getChatTools = null, selectChatThread = null, getChatState = null, sendChatText = null, startNewChat = null, getChatModel = null, changeChatModel = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
+export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getChatThreads = null, searchChatThreads = null, browseChatProject = null, controlChatConversation = null, editChatMessage = null, retryChatAssistant = null, branchChatAssistant = null, branchWorkAssistant = null, getChatTools = null, selectChatThread = null, getChatState = null, sendChatText = null, startNewChat = null, getChatModel = null, changeChatModel = null, getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
     if (!configManager?.snapshot || !configManager?.replacePersisted) {
         throw new Error("Control Center API için configManager gerekli.");
     }
@@ -450,11 +450,13 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 send(200, { ok: true, retry });
                 return;
             }
-            if (method === "POST" && pathname === "/api/v1/chat/branch_new") {
+            if (method === "POST" && (pathname === "/api/v1/chat/branch_new" || pathname === "/api/v1/chat/branch_work")) {
                 authorizeMutation();
-                if (typeof branchChatAssistant !== "function")
+                const workMode = pathname === "/api/v1/chat/branch_work";
+                const branchAction = workMode ? branchWorkAssistant : branchChatAssistant;
+                if (typeof branchAction !== "function")
                     throw badRequest("Native Chat branching is unavailable.");
-                const body = validateExactObject(await readBody(), ["messageId", "expectedText", "firstMessage", "mutationId"], "Native Chat new branch");
+                const body = validateExactObject(await readBody(), ["messageId", "expectedText", "firstMessage", "mutationId"], "Native Chat branch");
                 if (typeof body.messageId !== "string"
                     || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
                     || typeof body.expectedText !== "string" || !body.expectedText.trim()
@@ -462,9 +464,9 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                     || typeof body.firstMessage !== "string" || !body.firstMessage.trim()
                     || body.firstMessage !== body.firstMessage.trim() || body.firstMessage.length > 1500
                     || /[\r\n\x00]/u.test(body.firstMessage)
-                    || typeof body.mutationId !== "string" || !/^mbr-[a-f0-9-]{36}$/u.test(body.mutationId))
+                    || typeof body.mutationId !== "string" || !(workMode ? /^mwr-[a-f0-9-]{36}$/u : /^mbr-[a-f0-9-]{36}$/u).test(body.mutationId))
                     throw badRequest("A verified assistant reply and one-use Branch id are required.");
-                const branch = await branchChatAssistant(body);
+                const branch = await branchAction(body);
                 state.mutationCount += 1;
                 send(200, { ok: true, branch });
                 return;
