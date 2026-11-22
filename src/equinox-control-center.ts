@@ -2501,6 +2501,19 @@ function renderNativeChatMessage(message: NativeChatMessage) {
       content.className="native-chat-message-menu-content";
       for(const button of secondary)content.append(button);
       disclosure.append(trigger,content);
+      disclosure.addEventListener("toggle",()=>{
+        if(!disclosure.open){
+          disclosure.classList.remove("opens-up");
+          return;
+        }
+        const feed=disclosure.closest(".native-chat-feed");
+        if(!feed)return;
+        const visible=feed.getBoundingClientRect();
+        const origin=trigger.getBoundingClientRect();
+        const below=visible.bottom-origin.bottom;
+        const above=origin.top-visible.top;
+        disclosure.classList.toggle("opens-up",below<content.offsetHeight+10&&above>below);
+      });
       disclosure.addEventListener("click",event=>{
         if(event.target instanceof Element&&event.target.closest("button"))disclosure.open=false;
       });

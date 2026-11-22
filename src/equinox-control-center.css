@@ -1198,6 +1198,11 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   background: var(--surface);
   box-shadow: var(--shadow-lg);
 }
+/* Bottom-of-feed message actions open upward rather than under the composer. */
+.native-chat-message-menu.opens-up > .native-chat-message-menu-content {
+  inset-block-start: auto;
+  inset-block-end: calc(100% + 5px);
+}
 .native-chat-message-menu:not([open]) > .native-chat-message-menu-content { display: none; }
 .native-chat-message-menu-content .native-chat-message-copy {
   width: 100%;
