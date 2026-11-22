@@ -3708,6 +3708,119 @@ async function editChatBridgeMessage({tabId,conversationId,messageId,oldText,new
   }
 }
 
+/** One exact provider-offered assistant Retry. Never resend the user's prompt. */
+async function retryChatBridgeAssistant({tabId,conversationId,messageId,expectedText,mutationId}:{
+  tabId?:unknown;conversationId?:unknown;messageId?:unknown;expectedText?:unknown;mutationId?:unknown;
+}={}){
+  if(!Number.isSafeInteger(tabId)||Number(tabId)<1
+    ||typeof conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
+    ||typeof messageId!=="string"
+    ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(messageId)
+    ||typeof expectedText!=="string"||!expectedText.trim()
+    ||expectedText!==expectedText.trim()||expectedText.length>3500
+    ||typeof mutationId!=="string"||!/^mrt-[a-f0-9-]{36}$/u.test(mutationId))
+    throw new Error("Retry requires one exact complete provider assistant turn.");
+  const id=Number(tabId),uuid=String(messageId).slice(0,-10);
+  const tab=await chooseTab(id);
+  if(tab.pendingUrl||chatGptConversationIdentity(tab)?.conversationId!==conversationId)
+    throw new Error("The Chrome conversation changed before Retry.");
+  const state=await chatGptContinuationState(id);
+  if(state.generationActive||!state.composerReady||!state.composerEmpty)
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+      confirmed:false,notSubmitted:true,reason:"provider_busy_or_draft"};
+  await requireDebuggableTab(id);await attachTab(id);
+  let submitted=false;
+  const selector=String.raw`const matches=[...document.querySelectorAll(
+    '[data-chatgpt-search-unit-key$=":assistant"]')]
+    .filter(x=>String(x.getAttribute('data-chatgpt-search-message-ids')||'')
+      .split(/\s+/u)[0]===${JSON.stringify(uuid)});
+    const unit=matches.length===1?matches[0]:null;
+    const turn=unit?.closest('[data-turn-key]');
+    const content=unit?(unit.querySelector('[data-chatgpt-selection-message-id]')||unit):null;
+    const more=[...(turn?.querySelectorAll('button[aria-label]')||[])]
+      .filter(b=>b.getClientRects().length
+        &&/^(More actions|Diğer işlemler)$/iu.test(
+          String(b.getAttribute('aria-label')||'').trim()));`;
+  try{
+    const preflight=await send(id,"Runtime.evaluate",{
+      expression:`(()=>{
+        ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
+        ${selector}
+        return{ready:location.origin==='https://chatgpt.com'
+          &&location.pathname.split('/').at(-1)===${JSON.stringify(conversationId)}
+          &&!!unit&&!!turn&&more.length===1
+          &&readChatBridgeVisibleText(content)===${JSON.stringify(expectedText)}};
+      })()`,returnByValue:true,silent:true});
+    if(preflight?.exceptionDetails||cdpObject(preflight?.result?.value)?.ready!==true)
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+        confirmed:false,notSubmitted:true,reason:"exact_assistant_or_retry_control_missing"};
+    if(!await claimChatBridgeReceipt(String(mutationId)))
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+        confirmed:false,duplicatePrevented:true};
+    const fresh=await chatGptContinuationState(id);
+    if(fresh.generationActive||fresh.conversationId!==conversationId)
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+        confirmed:false,notSubmitted:true,reason:"provider_turn_changed"};
+    // This call may cross an irreversible Retry click. Never replay it.
+    submitted=true;
+    const clicked=await send(id,"Runtime.evaluate",{
+      expression:`(async()=>{
+        ${CHAT_BRIDGE_RICH_CONTENT_SCRIPT}
+        ${selector}
+        if(matches.length!==1||more.length!==1
+          ||location.pathname.split('/').at(-1)!==${JSON.stringify(conversationId)}
+          ||readChatBridgeVisibleText(content)!==${JSON.stringify(expectedText)})
+          return{clicked:false,reason:'source_changed'};
+        more[0].click();
+        for(let n=0;n<28;n++){
+          const menus=[...document.querySelectorAll('[role="menu"]')]
+            .filter(m=>m.getClientRects().length
+              &&m.getAttribute('aria-labelledby')===more[0].id);
+          const retry=menus.length===1?[...menus[0].querySelectorAll('[role="menuitem"]')]
+            .filter(item=>item.getClientRects().length
+              &&String(item.innerText||'').trim()==='Retry'
+              &&item.getAttribute('aria-disabled')!=='true'):[];
+          if(retry.length===1){
+            if(readChatBridgeVisibleText(content)!==${JSON.stringify(expectedText)}
+              ||location.pathname.split('/').at(-1)!==${JSON.stringify(conversationId)})
+              return{clicked:false,reason:'source_changed_after_menu'};
+            retry[0].click();return{clicked:true};
+          }
+          await new Promise(resolve=>setTimeout(resolve,90));
+        }
+        return{clicked:false,reason:'retry_not_offered'};
+      })()`,awaitPromise:true,returnByValue:true,silent:true});
+    if(clicked?.exceptionDetails||cdpObject(clicked?.result?.value)?.clicked!==true)
+      return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+        confirmed:false,ambiguous:true,reason:"retry_click_unconfirmed"};
+    // Actual generation or a changed provider assistant UUID proves Retry
+    // started; menu click alone must never be marketed as response success.
+    for(let n=0;n<44;n++){
+      const current=await chooseTab(id);
+      if(current.pendingUrl||chatGptConversationIdentity(current)?.conversationId!==conversationId)break;
+      const observed=await chatGptContinuationState(id);
+      if(observed.generationActive)return{chatBridgeVersion:CHAT_BRIDGE_VERSION,
+        tabId:id,conversationId,messageId,confirmed:true,retryStarted:true};
+      const proof=await send(id,"Runtime.evaluate",{
+        expression:`(()=>{
+          ${selector}
+          return{replaced:!unit||
+            String(unit.getAttribute('data-chatgpt-search-message-ids')||'')
+              .split(/\\s+/u)[0]!==${JSON.stringify(uuid)}};
+        })()`,returnByValue:true,silent:true});
+      if(!proof?.exceptionDetails&&cdpObject(proof?.result?.value)?.replaced===true)
+        return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+          messageId,confirmed:true,retryStarted:true};
+      await new Promise(resolve=>setTimeout(resolve,115));
+    }
+    throw new Error("The provider did not confirm that Retry started.");
+  }catch{
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:id,conversationId,
+      confirmed:false,ambiguous:submitted,notSubmitted:!submitted,
+      reason:submitted?"provider_retry_uncertain":"retry_not_submitted"};
+  }finally{scheduleDetach(id,CONTINUATION_MUTATION_DETACH_MS);}
+}
+
 async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conversationId?:unknown}={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1||typeof conversationId!=="string"||!/^[A-Za-z0-9-]{8,160}$/u.test(conversationId))throw new Error("Chat history identity is invalid.");
   const tab=await chooseTab(Number(tabId));
@@ -10574,6 +10687,7 @@ const COMMANDS = {
   "chat_bridge.project": browseChatBridgeProject,
   "chat_bridge.conversation_action": controlChatBridgeConversation,
   "chat_bridge.edit_message": editChatBridgeMessage,
+  "chat_bridge.retry_assistant": retryChatBridgeAssistant,
   "chat_bridge.model": chatBridgeModelControl,
   "chat_bridge.model_catalog": discoverChatBridgeNewModel,
   "chat_bridge.tools_catalog": readChatBridgeToolsCatalog,

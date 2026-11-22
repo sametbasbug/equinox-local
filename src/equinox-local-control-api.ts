@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -311,6 +311,7 @@ export function createEquinoxLocalControlApi({
   browseChatProject = null,
   controlChatConversation = null,
   editChatMessage = null,
+  retryChatAssistant = null,
   getChatTools = null,
   selectChatThread = null,
   getChatState = null,
@@ -547,6 +548,21 @@ export function createEquinoxLocalControlApi({
           throw badRequest("An exact original user message and a changed edit are required.");
         const edit=await editChatMessage(body);
         state.mutationCount+=1;send(200,{ok:true,edit});return;
+      }
+      if(method==="POST"&&pathname==="/api/v1/chat/retry_assistant"){
+        authorizeMutation();
+        if(typeof retryChatAssistant!=="function")
+          throw badRequest("Native Chat assistant Retry is unavailable.");
+        const body=validateExactObject(await readBody(),
+          ["messageId","expectedText","mutationId"],"Native Chat assistant Retry");
+        if(typeof body.messageId!=="string"
+          ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
+          ||typeof body.expectedText!=="string"||!body.expectedText.trim()
+          ||body.expectedText!==body.expectedText.trim()||body.expectedText.length>3500
+          ||typeof body.mutationId!=="string"||!/^mrt-[a-f0-9-]{36}$/u.test(body.mutationId))
+          throw badRequest("Retry requires an exact response and a one-use mutation identifier.");
+        const retry=await retryChatAssistant(body);
+        state.mutationCount+=1;send(200,{ok:true,retry});return;
       }
       if (method === "GET" && pathname === "/api/v1/chat/state") {
         if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");

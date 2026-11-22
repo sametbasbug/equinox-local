@@ -109,6 +109,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
     const createAttempts = new Map();
     const attempts = new Map();
     const actionAttempts = new Map();
+    const retryAttempts = new Map();
     const editAttempts = new Map();
     let mutatingAction = false;
     function appendMessage(message) {
@@ -902,6 +903,89 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             tabId: binding.tabId, promise: attempt });
         return attempt;
     };
+    const retryAssistant = async (value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+            invalid("Retry requires an exact observed assistant response.");
+        const body = value;
+        if (Object.keys(body).some(k => !["messageId", "expectedText", "mutationId"].includes(k))
+            || typeof body.messageId !== "string"
+            || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
+            || typeof body.expectedText !== "string" || !body.expectedText.trim()
+            || body.expectedText !== body.expectedText.trim() || body.expectedText.length > 3500
+            || typeof body.mutationId !== "string" || !/^mrt-[a-f0-9-]{36}$/u.test(body.mutationId))
+            invalid("Retry requires one complete, exact provider assistant message.");
+        const key = String(body.mutationId), fingerprint = JSON.stringify(body);
+        const prior = retryAttempts.get(key);
+        if (prior) {
+            if (prior.fingerprint !== fingerprint || !selected
+                || prior.conversationKey !== conversationKey(selected) || prior.tabId !== selected.tabId)
+                invalid("Retry identity cannot be reused for another conversation or response.");
+            return prior.promise;
+        }
+        if (retryAttempts.size >= 256)
+            invalid("This Chat session reached its bounded Retry limit.");
+        if (!selected || selecting || sending || creating || pending || blocked || mutatingAction)
+            invalid("Select an idle, unblocked conversation before Retry.");
+        const binding = selected, revision = selectedRevision;
+        if (Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge || 0) < 13)
+            invalid("Update Equinox Browser before using Retry.");
+        const taskId = await currentTaskId(binding);
+        if (!await messageEditPermitted(binding, taskId))
+            invalid("Active automation Task Capsules cannot retry historical replies.");
+        if (selectedRevision !== revision || !selected
+            || selected.tabId !== binding.tabId
+            || conversationKey(selected) !== conversationKey(binding)
+            || selecting || sending || creating || pending || blocked || mutatingAction)
+            invalid("Conversation changed while verifying Retry.");
+        const reply = history.find(item => item.id === body.messageId && item.role === "assistant"
+            && item.status === "complete" && item.truncated !== true);
+        if (!reply || reply.text !== body.expectedText)
+            invalid("This exact assistant reply is not available in the selected provider history.");
+        mutatingAction = true;
+        const promise = (async () => {
+            try {
+                const result = await call("chat_bridge.retry_assistant", {
+                    tabId: binding.tabId, conversationId: binding.conversationId,
+                    messageId: body.messageId, expectedText: body.expectedText,
+                    mutationId: key
+                }, 19_000);
+                if (selectedRevision !== revision || !selected
+                    || selected.tabId !== binding.tabId
+                    || conversationKey(selected) !== conversationKey(binding)
+                    || result?.tabId !== binding.tabId
+                    || result?.conversationId !== binding.conversationId)
+                    throw new Error("Retry lost the original Chrome conversation binding.");
+                if (result?.confirmed !== true || result?.retryStarted !== true) {
+                    if (result?.notSubmitted === true) {
+                        const err = new Error("ChatGPT did not offer Retry for this exact reply. Refresh history before trying again.");
+                        err.statusCode = 409;
+                        throw err;
+                    }
+                    throw new Error("Retry may already be running. Inspect Chrome before another response mutation.");
+                }
+                history = [];
+                messages = [];
+                historyPartial = true;
+                historyNotice = null;
+                historyPendingHydration = 7;
+                previousHistoryGeneration = true;
+                return { confirmed: true, messageId: body.messageId, chat: await read() };
+            }
+            catch (error) {
+                if (error?.statusCode !== 409) {
+                    blocked = true;
+                    uncertainConversations.add(conversationKey(binding));
+                }
+                throw error;
+            }
+            finally {
+                mutatingAction = false;
+            }
+        })();
+        retryAttempts.set(key, { fingerprint, conversationKey: conversationKey(binding),
+            tabId: binding.tabId, promise });
+        return promise;
+    };
     const startNew = async (value) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Invalid New Chat request.");
@@ -1055,5 +1139,5 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, toolKey, fileKey, promise: attempt });
         return attempt;
     };
-    return Object.freeze({ list, search, project, conversationAction, editMessage, tools, select, read, send, startNew, model });
+    return Object.freeze({ list, search, project, conversationAction, editMessage, retryAssistant, tools, select, read, send, startNew, model });
 }

@@ -524,6 +524,9 @@ let chatEditCandidate = null;
 let chatEditBusy = false;
 let chatEditAttempted = false;
 let chatMessageEditAllowed = false;
+let chatRetryCandidate = null;
+let chatRetryBusy = false;
+let chatRetryAttempted = false;
 const chatComposer = () => document.getElementById("native-chat-text");
 function setNativeChatCopy(id, message) {
     const element = $(id);
@@ -1617,6 +1620,67 @@ async function submitNativeChatMessageEdit() {
         updateNativeChatEditControls();
     }
 }
+function openNativeChatAssistantRetry(message) {
+    if (chatRetryBusy || chatNewDraft || chatSending || chatSelecting || chatBlocked
+        || !chatMessageEditAllowed || chatComposer().value.trim() || chatPickedFile
+        || chatToolSelection || !chatActive || !["ready", "complete"].includes(chatTurn)
+        || typeof message.id !== "string"
+        || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(message.id)
+        || message.truncated || !message.text.trim() || message.text.length > 3500)
+        return;
+    const identity = chatConversationKey(chatActive);
+    if (!identity)
+        return;
+    chatRetryCandidate = { messageId: message.id, expectedText: message.text.trim(),
+        identity, tabId: Number(chatActive.tabId) };
+    chatRetryAttempted = false;
+    setNativeChatCopy("native-chat-retry-status", "");
+    const dialog = $("native-chat-retry-dialog");
+    if (!dialog.open)
+        dialog.showModal();
+    $("native-chat-retry-confirm").focus();
+}
+async function submitNativeChatAssistantRetry() {
+    const candidate = chatRetryCandidate;
+    const dialog = $("native-chat-retry-dialog");
+    if (!candidate || !dialog.open || chatRetryBusy || chatRetryAttempted
+        || candidate.identity !== chatConversationKey(chatActive)
+        || candidate.tabId !== chatActive?.tabId || !chatMessageEditAllowed
+        || chatBlocked || chatSending || chatSelecting || chatComposer().value.trim()
+        || chatPickedFile || chatToolSelection || !["ready", "complete"].includes(chatTurn))
+        return;
+    chatRetryBusy = true;
+    chatRetryAttempted = true;
+    $("native-chat-retry-confirm").disabled = true;
+    $("native-chat-retry-close").disabled = true;
+    $("native-chat-retry-cancel").disabled = true;
+    setNativeChatCopy("native-chat-retry-status", "Checking exact assistant response…");
+    try {
+        const result = await mutationJson("/api/v1/chat/retry_assistant", "POST", {
+            messageId: candidate.messageId, expectedText: candidate.expectedText,
+            mutationId: "mrt-" + crypto.randomUUID()
+        });
+        if (candidate !== chatRetryCandidate || candidate.identity !== chatConversationKey(chatActive))
+            return;
+        if (result.retry?.confirmed !== true)
+            throw new Error("ChatGPT did not confirm Retry on this response.");
+        dialog.close();
+        if (result.retry.chat)
+            renderNativeChatState(result.retry.chat);
+        chatThreadRefreshRequested = true;
+        void refreshNativeChat(true);
+        showToast("ChatGPT Retry started.");
+    }
+    catch (error) {
+        if (candidate === chatRetryCandidate && dialog.open)
+            setNativeChatCopy("native-chat-retry-status", nativeChatErrorMessage(error) + " Inspect Chrome before another Retry.");
+    }
+    finally {
+        chatRetryBusy = false;
+        $("native-chat-retry-close").disabled = false;
+        $("native-chat-retry-cancel").disabled = false;
+    }
+}
 function renderNativeChatMessage(message) {
     const article = document.createElement("article");
     article.className = "native-chat-message";
@@ -1686,6 +1750,20 @@ function renderNativeChatMessage(message) {
                     ? "Markdown copied." : "Could not copy Markdown.");
             });
             actions.append(markdown);
+        }
+        if (message.role === "assistant" && typeof message.id === "string"
+            && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(message.id)
+            && !message.truncated && chatMessageEditAllowed && !chatNewDraft
+            && !chatBlocked && !chatSending && !chatSelecting
+            && !chatComposer().value.trim() && !chatPickedFile && !chatToolSelection
+            && ["ready", "complete"].includes(chatTurn)) {
+            const retry = document.createElement("button");
+            retry.type = "button";
+            retry.className = "native-chat-message-copy";
+            retry.textContent = localizeUiText("Retry");
+            retry.setAttribute("aria-label", localizeUiText("Retry response"));
+            retry.addEventListener("click", () => openNativeChatAssistantRetry(message));
+            actions.append(retry);
         }
         if (message.role === "assistant") {
             const quote = document.createElement("button");
@@ -5795,6 +5873,22 @@ function bindEvents() {
             closeNativeChatTaskPanel();
             $("native-chat-task-open").focus();
         }
+    });
+    $("native-chat-retry-confirm").addEventListener("click", () => void submitNativeChatAssistantRetry());
+    for (const name of ["native-chat-retry-close", "native-chat-retry-cancel"]) {
+        $(name).addEventListener("click", () => {
+            if (!chatRetryBusy)
+                $("native-chat-retry-dialog").close();
+        });
+    }
+    $("native-chat-retry-dialog").addEventListener("cancel", event => {
+        if (chatRetryBusy)
+            event.preventDefault();
+    });
+    $("native-chat-retry-dialog").addEventListener("close", () => {
+        chatRetryCandidate = null;
+        chatRetryAttempted = false;
+        $("native-chat-retry-confirm").disabled = false;
     });
     $("native-chat-edit-text").addEventListener("input", updateNativeChatEditControls);
     $("native-chat-edit-confirm").addEventListener("click", () => void submitNativeChatMessageEdit());
