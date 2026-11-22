@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;controlChatConversation?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -309,6 +309,7 @@ export function createEquinoxLocalControlApi({
   getChatThreads = null,
   searchChatThreads = null,
   browseChatProject = null,
+  controlChatConversation = null,
   selectChatThread = null,
   getChatState = null,
   sendChatText = null,
@@ -496,6 +497,30 @@ export function createEquinoxLocalControlApi({
         if(typeof body.projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId))
           throw badRequest("Invalid ChatGPT project identity.");
         send(200,{ok:true,project:await browseChatProject(body)});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/conversation_action") {
+        authorizeMutation();
+        if (typeof controlChatConversation !== "function")
+          throw badRequest("ChatGPT conversation actions are unavailable.");
+        const body=validateExactObject(await readBody(),
+          ["tabId","conversationId","action","expectedTitle","title","mutationId"],
+          "ChatGPT conversation action");
+        if(!Number.isSafeInteger(body.tabId)||body.tabId<1
+          ||typeof body.conversationId!=="string"
+          ||!/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
+          ||!["inspect","pin","rename"].includes(String(body.action))
+          ||(body.action!=="inspect"&&(typeof body.expectedTitle!=="string"
+            ||!body.expectedTitle.trim()||body.expectedTitle.length>120))
+          ||(body.action==="rename"&&(typeof body.title!=="string"
+            ||!body.title.trim()||body.title.length>120||/[\x00-\x1f\x7f]/u.test(body.title)))
+          ||(body.action!=="rename"&&body.title!==undefined)
+          ||(body.action==="inspect"&&(body.expectedTitle!==undefined||body.mutationId!==undefined))
+          ||(body.action!=="inspect"&&(typeof body.mutationId!=="string"
+            ||!/^cma-[a-f0-9-]{36}$/u.test(body.mutationId))))
+          throw badRequest("Invalid ChatGPT conversation operation or identity.");
+        const result=await controlChatConversation(body);
+        if(body.action!=="inspect")state.mutationCount+=1;
+        send(200,{ok:true,conversationAction:result});return;
       }
       if (method === "GET" && pathname === "/api/v1/chat/state") {
         if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");
@@ -1051,7 +1076,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/conversation_action",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

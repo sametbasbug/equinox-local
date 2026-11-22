@@ -456,6 +456,11 @@ let chatThreadList = [];
 let chatThreadBrowserInstanceId = null;
 let chatDuplicateCount = 0;
 let chatHistoryPartial = false;
+let chatActionThread = null;
+let chatActionProvider = null;
+let chatActionGeneration = 0;
+let chatActionBusy = false;
+let chatActionMutating = false;
 let chatProjectCatalog = [];
 let chatProjectId = null;
 let chatProjectName = "";
@@ -625,7 +630,19 @@ function renderNativeChatThreads() {
                 }
                 button.title = name.textContent;
                 button.addEventListener("click", () => { void selectNativeChat(thread); });
-                next.append(button);
+                const container = document.createElement("div");
+                container.className = "native-chat-thread-row";
+                container.append(button);
+                const actions = document.createElement("button");
+                actions.type = "button";
+                actions.className = "native-chat-thread-actions";
+                actions.dataset.conversationId = String(thread.conversationId);
+                actions.setAttribute("aria-label", localizeUiText("Conversation actions") + ": " + name.textContent);
+                actions.title = localizeUiText("Conversation actions");
+                actions.textContent = "⋯";
+                actions.addEventListener("click", () => { void openNativeChatActions(thread); });
+                container.append(actions);
+                next.append(container);
                 if (button.dataset.conversationId === focused)
                     nextFocus = button;
             }
@@ -702,6 +719,120 @@ async function browseNativeChatProject(projectId) {
         if (generation === chatProjectGeneration) {
             chatProjectBusy = false;
             renderNativeChatThreads();
+        }
+    }
+}
+function nativeChatActionDialog() {
+    return $("native-chat-action-dialog");
+}
+function updateNativeChatActionControls() {
+    const canEdit = Boolean(chatActionThread && chatActionProvider && !chatActionBusy);
+    const name = $("native-chat-action-name");
+    const changed = Boolean(canEdit && name.value.trim()
+        && name.value.trim() !== chatActionThread.title && name.value.trim().length <= 120);
+    name.disabled = !canEdit || chatActionProvider.rename !== true;
+    $("native-chat-action-rename").disabled = !changed || chatActionProvider.rename !== true;
+    $("native-chat-action-pin").disabled = !canEdit || chatActionProvider.pin !== true;
+    setNativeChatCopy("native-chat-action-pin", chatActionProvider?.pinned === true
+        ? "Unpin chat" : "Pin chat");
+}
+async function openNativeChatActions(thread) {
+    if (chatActionBusy || chatNewDraft || chatSending || chatSelecting)
+        return;
+    const dialog = nativeChatActionDialog();
+    const generation = ++chatActionGeneration;
+    chatActionThread = thread;
+    chatActionProvider = null;
+    chatActionBusy = true;
+    setNativeChatCopy("native-chat-action-title", "Conversation actions");
+    setNativeChatCopy("native-chat-action-subtitle", String(thread.title || "ChatGPT conversation"));
+    setNativeChatCopy("native-chat-action-status", "Checking ChatGPT conversation actions…");
+    $("native-chat-action-name").value = String(thread.title || "");
+    updateNativeChatActionControls();
+    if (!dialog.open)
+        dialog.showModal();
+    try {
+        const result = await mutationJson("/api/v1/chat/conversation_action", "POST", {
+            tabId: thread.tabId, conversationId: thread.conversationId, action: "inspect",
+        });
+        if (generation !== chatActionGeneration || !dialog.open)
+            return;
+        chatActionProvider = result.conversationAction;
+        const name = String(result.conversationAction?.title || "");
+        if (!name)
+            throw new Error("ChatGPT returned an empty conversation title.");
+        chatActionThread = { ...thread, title: name };
+        $("native-chat-action-name").value = name;
+        setNativeChatCopy("native-chat-action-subtitle", name);
+        setNativeChatCopy("native-chat-action-status", "Account actions are ready.");
+    }
+    catch (error) {
+        if (generation !== chatActionGeneration || !dialog.open)
+            return;
+        setNativeChatCopy("native-chat-action-status", nativeChatErrorMessage(error));
+    }
+    finally {
+        if (generation === chatActionGeneration) {
+            chatActionBusy = false;
+            updateNativeChatActionControls();
+        }
+    }
+}
+async function applyNativeChatAction(action) {
+    const thread = chatActionThread;
+    if (!thread || chatActionBusy || !chatActionProvider)
+        return;
+    const dialog = nativeChatActionDialog();
+    const generation = chatActionGeneration;
+    const title = $("native-chat-action-name").value.trim();
+    if (action === "rename" && (!title || title === thread.title || title.length > 120))
+        return;
+    chatActionBusy = true;
+    chatActionMutating = true;
+    $("native-chat-action-close").setAttribute("aria-disabled", "true");
+    $("native-chat-action-done").setAttribute("aria-disabled", "true");
+    setNativeChatCopy("native-chat-action-status", "Applying change in ChatGPT…");
+    updateNativeChatActionControls();
+    try {
+        const result = await mutationJson("/api/v1/chat/conversation_action", "POST", {
+            tabId: thread.tabId, conversationId: thread.conversationId, action,
+            expectedTitle: String(thread.title), mutationId: "cma-" + crypto.randomUUID(),
+            ...(action === "rename" ? { title } : {}),
+        });
+        const confirmed = result.conversationAction;
+        if (confirmed?.confirmed !== true || confirmed?.conversationId !== thread.conversationId)
+            throw new Error("ChatGPT did not confirm the conversation change.");
+        const actual = String(confirmed.title || thread.title);
+        for (const threads of [chatThreadList, chatSearchResults, chatProjectThreads]) {
+            for (const item of threads)
+                if (item.conversationId === thread.conversationId) {
+                    item.title = actual;
+                }
+        }
+        if (generation === chatActionGeneration && dialog.open) {
+            chatActionProvider = confirmed;
+            chatActionThread = { ...thread, title: actual };
+            $("native-chat-action-name").value = actual;
+            setNativeChatCopy("native-chat-action-subtitle", actual);
+            setNativeChatCopy("native-chat-action-status", action === "rename" ? "Conversation renamed in ChatGPT." : "Pin preference updated in ChatGPT.");
+        }
+        chatThreadRenderSignature = "";
+        renderNativeChatThreads();
+        chatThreadRefreshRequested = true;
+        if (state.activeSection === "chat")
+            void refreshNativeChat(true);
+    }
+    catch (error) {
+        if (generation === chatActionGeneration && dialog.open)
+            setNativeChatCopy("native-chat-action-status", nativeChatErrorMessage(error));
+    }
+    finally {
+        chatActionMutating = false;
+        $("native-chat-action-close").removeAttribute("aria-disabled");
+        $("native-chat-action-done").removeAttribute("aria-disabled");
+        if (generation === chatActionGeneration) {
+            chatActionBusy = false;
+            updateNativeChatActionControls();
         }
     }
 }
@@ -5196,6 +5327,26 @@ function bindEvents() {
             $("native-chat-task-open").focus();
         }
     });
+    $("native-chat-action-close").addEventListener("click", () => {
+        if (!chatActionMutating)
+            nativeChatActionDialog().close();
+    });
+    $("native-chat-action-done").addEventListener("click", () => {
+        if (!chatActionMutating)
+            nativeChatActionDialog().close();
+    });
+    $("native-chat-action-dialog").addEventListener("cancel", event => {
+        if (chatActionMutating)
+            event.preventDefault();
+    });
+    $("native-chat-action-dialog").addEventListener("close", () => {
+        chatActionGeneration++;
+        chatActionThread = null;
+        chatActionProvider = null;
+    });
+    $("native-chat-action-name").addEventListener("input", updateNativeChatActionControls);
+    $("native-chat-action-pin").addEventListener("click", () => void applyNativeChatAction("pin"));
+    $("native-chat-action-rename").addEventListener("click", () => void applyNativeChatAction("rename"));
     $("native-chat-filter").addEventListener("input", scheduleNativeChatSearch);
     $("native-chat-new").addEventListener("click", beginNewNativeChat);
     $("native-chat-cancel-new").addEventListener("click", cancelNewNativeChat);

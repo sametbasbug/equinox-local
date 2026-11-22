@@ -2095,10 +2095,18 @@ async function chatBridgeModelControl({tabId,conversationId,action="read",choice
   try{
     const result=await send(Number(tabId),"Runtime.evaluate",{expression:`(async () => {
       if(location.origin!=='https://chatgpt.com')return{available:false,reason:'origin'};
-      const trigger=[...document.querySelectorAll('button')].filter(b=>
-        b.getClientRects().length&&
-        (b.getAttribute('data-composer-navigation-target')==='reasoning'
-          ||/model/i.test(b.getAttribute('aria-label')||'')));
+      // A newly created ChatGPT tab can report document complete before
+      // React hydrates its composer. Retry discovery, never a model click.
+      const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      let trigger=[];
+      for(let n=0;n<35;n++){
+        trigger=[...document.querySelectorAll('button')].filter(b=>
+          b.getClientRects().length&&
+          (b.getAttribute('data-composer-navigation-target')==='reasoning'
+            ||/model/i.test(b.getAttribute('aria-label')||'')));
+        if(trigger.length===1)break;
+        await pause(80);
+      }
       if(trigger.length!==1)return{available:false,reason:'picker-unavailable'};
       const button=trigger[0];
       const current=String(button.innerText||'').replace(/\\s+/gu,' ').trim().slice(0,80);
@@ -2112,7 +2120,6 @@ async function chatBridgeModelControl({tabId,conversationId,action="read",choice
         return Number.isInteger(value)&&Number.isInteger(min)&&Number.isInteger(max)
           &&min>=0&&max<=12&&value>=min&&value<=max?{value,min,max,label:current}:null;
       };
-      const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
       if(${JSON.stringify(action)}==='read')
         return{available:true,current,choices:[],power:null,discovered:false};
       const composer=document.querySelector('#prompt-textarea,[contenteditable="true"][data-testid*="composer"],[contenteditable="true"][role="textbox"]');
@@ -2181,7 +2188,7 @@ async function chatBridgeModelControl({tabId,conversationId,action="read",choice
         }
       }
       const afterModel=options.find(x=>x.selected)?.label||null;
-      if(!originallyOpen&&menu()){
+      if(menu()){
         const ownedMenu=menu();
         ownedMenu?.focus();
         ownedMenu?.dispatchEvent(new KeyboardEvent('keydown',
@@ -2191,7 +2198,7 @@ async function chatBridgeModelControl({tabId,conversationId,action="read",choice
       return{available:true,current:String(button.innerText||current).trim().slice(0,80),
         choices:options.slice(0,20),power:beforePower,selectedModel:afterModel,
         discovered:true,confirmed:action==='discover'||confirmed,
-        changed:chosen,closed:!menu()||originallyOpen};
+        changed:chosen,closed:!menu()};
     })()`,returnByValue:true,awaitPromise:true,silent:true});
     if(result?.exceptionDetails)throw new Error("ChatGPT model inspection failed.");
     const value:any=cdpObject(result?.result?.value);
@@ -2201,6 +2208,8 @@ async function chatBridgeModelControl({tabId,conversationId,action="read",choice
       ?after.url!==tab.url
       :chatGptConversationIdentity(after)?.conversationId!==conversationId))
       throw new Error("ChatGPT model selection conversation drifted.");
+    if(action!=="read"&&value.available===true&&value.closed!==true)
+      throw new Error("ChatGPT model selection menu did not close after inspection.");
     if(action==="choose"&&value.confirmed!==true)
       throw new Error("The requested model could not be confirmed in ChatGPT. Keep the current model.");
     if(action==="power"&&value.confirmed!==true)
@@ -2318,7 +2327,7 @@ async function searchChatBridgeHistory({tabId,query}:{tabId?:unknown;query?:unkn
       };
       // Search results arrive asynchronously. Do not mistake the recent-chat
       // suggestions for a completed provider search.
-      for(let n=0;n<70;n++){
+      for(let n=0;n<36;n++){
         if(input.value!==${JSON.stringify(term)})return{status:'changed',items:[]};
         rows=read();
         const dialog=input.closest('[role="dialog"]');
@@ -2603,6 +2612,169 @@ async function openChatBridgeHistory({tabId,conversationId,canonicalUrl,searchTi
     if(inspected.conversationId!==conversationId)throw new Error("ChatGPT history conversation identity is not confirmed.");
     return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:Number(tabId),conversationId,canonicalUrl};
   }finally{scheduleDetach(Number(tabId),CONTINUATION_MUTATION_DETACH_MS);}
+}
+
+
+/** A native conversation action always targets an exact provider conversation,
+ * rendered in a disposable Your Browser tab. Never mutate the task tab. */
+async function controlChatBridgeConversation({tabId,conversationId,canonicalUrl,
+    searchTicket,action="inspect",expectedTitle,title}:{
+  tabId?:unknown;conversationId?:unknown;canonicalUrl?:unknown;
+  searchTicket?:unknown;action?:"inspect"|"pin"|"rename";expectedTitle?:unknown;title?:unknown
+}={}) {
+  if(!Number.isSafeInteger(tabId)||Number(tabId)<1
+    ||typeof conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
+    ||typeof canonicalUrl!=="string"||canonicalUrl.length>400
+    ||chatGptConversationIdentity(canonicalUrl)?.conversationId!==conversationId
+    ||!canonicalUrl.startsWith("https://chatgpt.com/")
+    ||!["inspect","pin","rename"].includes(action)
+    ||(action!=="inspect"&&(typeof expectedTitle!=="string"||!expectedTitle.trim()
+      ||expectedTitle.length>120))
+    ||(action==="rename"&&(typeof title!=="string"||!title.trim()
+      ||title.length>120||/[\x00-\x1f\x7f]/u.test(title))))
+    throw new Error("ChatGPT conversation action identity is invalid.");
+  const source=await chooseTab(Number(tabId));
+  const sourceId=chatGptConversationIdentity(source)?.conversationId;
+  if(source.pendingUrl||!sourceId)throw new Error("Conversation actions require an open ChatGPT conversation.");
+  const ticket=typeof searchTicket==="string"?chatBridgeSearchTickets.get(searchTicket):null;
+  const ticketValid=!!ticket&&ticket.tabId===Number(tabId)
+    &&ticket.sourceUrl===source.url&&Date.now()-ticket.createdAt<CHAT_BRIDGE_SEARCH_TTL_MS
+    &&ticket.links.get(conversationId)===canonicalUrl;
+  if(searchTicket!==undefined&&!ticketValid)
+    throw new Error("ChatGPT search/project evidence expired. Refresh the list.");
+  if(!ticketValid&&sourceId!==conversationId){
+    const side=await readChatBridgeSidebar({tabId:Number(tabId)});
+    if(!side.threads.some(row=>row.conversationId===conversationId
+      &&row.canonicalUrl===canonicalUrl))
+      throw new Error("This conversation is no longer in the authenticated sidebar.");
+  }
+  if(action!=="inspect"&&sourceId===conversationId){
+    const state=await chatGptContinuationState(Number(tabId));
+    if(state.generationActive)throw new Error("Wait for the current ChatGPT response before changing conversation settings.");
+  }
+  const tabs=workerTabs();
+  if(!tabs.create||!tabs.remove)throw new Error("Temporary conversation-control tabs are unavailable.");
+  let tempId:number|null=null;
+  try{
+    const created=await tabs.create({url:canonicalUrl,active:false});
+    if(typeof created?.id!=="number"||!Number.isSafeInteger(created.id)||created.id<1)
+      throw new Error("Chrome did not return a temporary conversation tab id.");
+    tempId=created.id;
+    await waitForTab(tempId,candidate=>candidate.status==="complete"
+      &&chatGptConversationIdentity(candidate)?.conversationId===conversationId,12_000);
+    await requireDebuggableTab(tempId);await attachTab(tempId);
+    const result=await send(tempId,"Runtime.evaluate",{expression:`(async()=>{
+      if(location.origin!=='https://chatgpt.com')return{status:'unavailable'};
+      const conversation=${JSON.stringify(conversationId)};
+      const mode=${JSON.stringify(action)};
+      const expected=${JSON.stringify(expectedTitle??"")};
+      const replacement=${JSON.stringify(title??"")};
+      const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      const getRow=()=>document.querySelector('[data-sidebar-archive-chatgpt-id="'+conversation+'"]');
+      let row=null;
+      for(let n=0;n<36;n++){
+        row=getRow();
+        if(row&&row.getClientRects().length)break;
+        await pause(100);
+      }
+      if(!row||!row.getClientRects().length)return{status:'row-unavailable'};
+      const label=()=>String(getRow()?.getAttribute('aria-label')||'').trim();
+      const pinButton=()=>[...(getRow()?.querySelectorAll('button[aria-label]')||[])]
+        .find(b=>/^(Pin chat|Unpin chat|Sohbeti sabitle|Sohbetin sabitlemesini kaldır)$/iu.test(
+          String(b.getAttribute('aria-label')||'').trim()));
+      const pinned=()=>/^(Unpin chat|Sohbetin sabitlemesini kaldır)$/iu.test(
+        String(pinButton()?.getAttribute('aria-label')||'').trim());
+      const more=()=>getRow()?.querySelector('button[aria-haspopup="menu"]');
+      const menu=()=>[...document.querySelectorAll('[role="menu"]')]
+        .find(m=>m.getClientRects().length&&m.querySelector('[role="menuitem"][aria-keyshortcuts="R"]'));
+      const dismiss=async()=>{
+        const owned=menu();
+        if(owned){
+          owned.focus();
+          owned.dispatchEvent(new KeyboardEvent('keydown',
+            {key:'Escape',code:'Escape',bubbles:true,cancelable:true}));
+          for(let n=0;n<12&&menu();n++)await pause(60);
+        }
+      };
+      const before=label();
+      if(!before||mode!=='inspect'&&before!==expected)return{status:'title-drifted',before};
+      const button=more();
+      if(!button||!pinButton())return{status:'controls-unavailable'};
+      if(mode==='pin'){
+        const previous=pinned();
+        pinButton().click();
+        for(let n=0;n<40;n++){
+          await pause(100);
+          if(getRow()&&pinned()!==previous)
+            return{status:'confirmed',title:label(),pinned:pinned(),pin:!!pinButton(),rename:true};
+        }
+        return{status:'unconfirmed',title:label(),pinned:pinned()};
+      }
+      button.click();
+      for(let n=0;n<15&&!menu();n++)await pause(80);
+      const currentMenu=menu();
+      if(!currentMenu)return{status:'menu-unavailable'};
+      const rename=[...currentMenu.querySelectorAll('[role="menuitem"]')]
+        .filter(m=>m.getClientRects().length&&m.getAttribute('aria-keyshortcuts')==='R');
+      const capabilities={pin:!!pinButton(),rename:rename.length===1};
+      if(mode==='inspect'){
+        await dismiss();
+        return{status:'ready',title:before,pinned:pinned(),...capabilities};
+      }
+      if(mode!=='rename'||rename.length!==1){await dismiss();return{status:'controls-unavailable'};}
+      rename[0].click();
+      let dialog=null;
+      for(let n=0;n<20;n++){
+        dialog=[...document.querySelectorAll('[role="dialog"]')].find(d=>d.getClientRects().length
+          &&d.querySelector('input[aria-label="Sohbet başlığı"],input[aria-label="Chat title"]'));
+        if(dialog)break;
+        await pause(70);
+      }
+      const input=dialog?.querySelector('input[aria-label="Sohbet başlığı"],input[aria-label="Chat title"]');
+      const cancel=()=>[...(dialog?.querySelectorAll('button')||[])]
+        .find(b=>/^(Cancel|İptal)$/iu.test(String(b.innerText||'').trim()));
+      const save=()=>[...(dialog?.querySelectorAll('button')||[])]
+        .find(b=>/^(Save|Kaydet)$/iu.test(String(b.innerText||'').trim()));
+      if(!input||input.value!==before||!save()){cancel()?.click();return{status:'dialog-drifted'};}
+      if(replacement===before){cancel()?.click();return{status:'confirmed',title:before,pinned:pinned()};}
+      const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+      if(!setter){cancel()?.click();return{status:'input-unavailable'};}
+      setter.call(input,replacement);
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+      await pause(100);
+      if(input.value!==replacement||!save()||save().disabled){
+        cancel()?.click();return{status:'input-unavailable'};
+      }
+      save().click();
+      for(let n=0;n<45;n++){
+        await pause(100);
+        if(label()===replacement)
+          return{status:'confirmed',title:replacement,pinned:pinned(),pin:!!pinButton(),rename:true};
+      }
+      return{status:'unconfirmed',title:label(),pinned:pinned()};
+    })()`,returnByValue:true,awaitPromise:true,silent:true});
+    if(result?.exceptionDetails)throw new Error("ChatGPT conversation action failed in the provider UI.");
+    const value:any=cdpObject(result?.result?.value);
+    if(!value||typeof value.status!=="string")
+      throw new Error("ChatGPT did not provide a valid conversation action result.");
+    if(!["ready","confirmed"].includes(value.status)){
+      // A click may have occurred, so do not imply a safe retry.
+      throw new Error("ChatGPT conversation action was not confirmed ("+
+        String(value.status).slice(0,55)+"). Check the provider state before retrying.");
+    }
+    const current=await chooseTab(Number(tabId));
+    if(current.pendingUrl||current.url!==source.url)
+      throw new Error("The original Chrome conversation changed during the action.");
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:Number(tabId),conversationId,
+      action,confirmed:value.status==="confirmed",available:true,
+      title:String(value.title||"").slice(0,120),
+      pinned:value.pinned===true,pin:value.pin===true,rename:value.rename===true};
+  }finally{
+    if(tempId!==null){
+      await detachTab(tempId).catch(()=>{});
+      await tabs.remove(tempId).catch(()=>{});
+    }
+  }
 }
 
 async function readChatBridgeRecent({tabId,conversationId}:{tabId?:unknown;conversationId?:unknown}={}) {
@@ -9469,6 +9641,7 @@ const COMMANDS = {
   "chat_bridge.sidebar": readChatBridgeSidebar,
   "chat_bridge.search": searchChatBridgeHistory,
   "chat_bridge.project": browseChatBridgeProject,
+  "chat_bridge.conversation_action": controlChatBridgeConversation,
   "chat_bridge.model": chatBridgeModelControl,
   "chat_bridge.model_catalog": discoverChatBridgeNewModel,
   "chat_bridge.open_history": openChatBridgeHistory,

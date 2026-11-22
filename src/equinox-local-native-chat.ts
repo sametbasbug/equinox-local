@@ -96,6 +96,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   const createAttempts=new Map<string,{text:string;modelChoice:string|null;
     effortLevel:number|null;promise:Promise<unknown>}>();
   const attempts=new Map<string,{text:string;conversationKey:string;promise:Promise<unknown>}>();
+  const actionAttempts=new Map<string,{fingerprint:string;promise:Promise<unknown>}>();
+  let mutatingAction=false;
   function appendMessage(message:Message) {
     messages.push(message);
     while(messages.length>MAX_MESSAGES||messages.reduce((sum,item)=>sum+item.text.length,0)>MAX_TRANSCRIPT_CHARS)messages.shift();
@@ -236,6 +238,71 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       checkedAt:Date.now(),threads};
     return{projectId:choice.id,name:choice.name,threads,partial:true,source:"visible-project"};
   };
+  const conversationAction=async(value:unknown)=>{
+    if(!value||typeof value!=="object"||Array.isArray(value))
+      invalid("Invalid ChatGPT conversation action request.");
+    const body=value as Record<string,unknown>;
+    if(Object.keys(body).some(k=>!["tabId","conversationId","action","expectedTitle","title","mutationId"].includes(k))
+      ||!Number.isSafeInteger(body.tabId)||Number(body.tabId)<1
+      ||typeof body.conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
+      ||!["inspect","pin","rename"].includes(String(body.action))
+      ||(body.action!=="inspect"&&(typeof body.expectedTitle!=="string"
+        ||!body.expectedTitle.trim()||body.expectedTitle.length>120))
+      ||(body.action==="rename"&&(typeof body.title!=="string"
+        ||!body.title.trim()||body.title.length>120||/[\x00-\x1f\x7f]/u.test(body.title)))
+      ||(body.action!=="rename"&&body.title!==undefined)
+      ||(body.action==="inspect"&&(body.mutationId!==undefined||body.expectedTitle!==undefined))
+      ||(body.action!=="inspect"&&(typeof body.mutationId!=="string"
+        ||!/^cma-[a-f0-9-]{36}$/u.test(body.mutationId))))
+      invalid("Conversation action requires exact identity, requested operation and valid title.");
+    const fingerprint=JSON.stringify(body);
+    const key=body.mutationId as string|undefined;
+    if(key){
+      const prior=actionAttempts.get(key);
+      if(prior){
+        if(prior.fingerprint!==fingerprint)
+          invalid("Conversation action id cannot be reused for a different operation.");
+        return prior.promise;
+      }
+      if(actionAttempts.size>=256)invalid("Conversation actions reached the current runtime limit.");
+      if(mutatingAction||selecting||sending||creating||pending||blocked)
+        invalid("Finish any pending ChatGPT action or delivery before changing conversations.");
+      mutatingAction=true;
+    }
+    const perform=(async()=>{
+      try{
+        const available=await list();
+        const tabId=Number(body.tabId),id=String(body.conversationId);
+        const thread=available.threads.find(t=>t.tabId===tabId&&t.conversationId===id)
+          ||(searched&&Date.now()-searched.checkedAt<90_000
+            &&searched.browserInstanceId===available.browserInstanceId
+            ?searched.threads.find(t=>t.tabId===tabId&&t.conversationId===id):null)
+          ||(browsedProject&&Date.now()-browsedProject.checkedAt<90_000
+            &&browsedProject.browserInstanceId===available.browserInstanceId
+            ?browsedProject.threads.find(t=>t.tabId===tabId&&t.conversationId===id):null);
+        if(!thread)invalid("The selected chat is not in the current provider history.");
+        if(key&&body.expectedTitle!==thread.title)
+          invalid("The selected chat title changed. Refresh its actions.");
+        const revision=selectedRevision;
+        const response=await call("chat_bridge.conversation_action",{
+          tabId,conversationId:id,canonicalUrl:thread.canonicalUrl,
+          ...("searchTicket" in thread?{searchTicket:thread.searchTicket}:{}),
+          action:body.action,
+          ...(key?{expectedTitle:thread.title}:{}),
+          ...(body.action==="rename"?{title:String(body.title).trim()}:{}),
+        },20_000) as any;
+        if(context()!==available.browserInstanceId||selectedRevision!==revision
+          ||response?.tabId!==tabId||response?.conversationId!==id
+          ||response?.action!==body.action||response?.available!==true)
+          throw new Error("The ChatGPT conversation action lost its exact identity.");
+        if(key&&response.confirmed!==true)
+          throw new Error("ChatGPT did not confirm this change. Check the provider before retrying.");
+        return response;
+      }finally{if(key)mutatingAction=false;}
+    })();
+    if(key)actionAttempts.set(key,{fingerprint,promise:perform});
+    return perform;
+  };
   const model=async(value:{action:"read"|"discover"|"choose"|"power"|"catalog";
     choice?:string;direction?:"left"|"right"})=>{
     if(value.action==="catalog"){
@@ -252,7 +319,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(!target)return{available:false,reason:"no-conversation",choices:[]};
     if(Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)<13)
       return{available:false,reason:"browser-upgrade-required",choices:[]};
-    if(value.action!=="read"&&(selecting||sending||creating||pending||blocked))
+    if(value.action!=="read"&&(selecting||sending||creating||pending||blocked||mutatingAction))
       invalid("Cannot change ChatGPT model settings while the conversation is busy or uncertain.");
     const revision=selectedRevision;
     const info=await call("chat_bridge.model",
@@ -268,7 +335,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid conversation selection.");
     const object=value as Record<string,unknown>;
     if(Object.keys(object).length!==2||typeof object.conversationId!=="string"||!Number.isSafeInteger(object.tabId))invalid("Invalid conversation selection.");
-    if(selecting||sending||creating||pending)invalid("Cannot change conversation while a message is in flight.");
+    if(selecting||sending||creating||pending||mutatingAction)
+      invalid("Cannot switch conversations while an action or message is in flight.");
     selecting=true;
     try{
     const available=await list();
@@ -517,7 +585,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     // Retain every delivery identity for the lifetime of this backend.
     // Refuse new sends at the bound rather than evict old IDs and risk replay.
     if(attempts.size>=MAX_DELIVERY_IDS)invalid("This Chat session reached its bounded delivery limit. Restart the runtime before sending again.");
-    if(selecting||sending||creating||pending||blocked||!selected)invalid("Select an idle, unblocked ChatGPT conversation before sending. Confirm any uncertain delivery in Chrome.");
+    if(selecting||sending||creating||pending||blocked||mutatingAction||!selected)
+      invalid("Select an idle, unblocked ChatGPT conversation and finish any pending conversation action before sending.");
     const binding=selected;
     sending=true;
     const attempt=(async()=>{
@@ -579,7 +648,8 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(creationBlocked)invalid("A previous New Chat creation is uncertain. Check Chrome before restarting the Chat session; no new conversation will be opened automatically.");
     if(createAttempts.size>=MAX_NEW_CHAT_IDS)invalid("New Chat reached its request limit for this runtime.");
     if(!taskStore||!chatBridge.startTaskChat)invalid("New Chat is unavailable on this installation.");
-    if(selecting||creating||sending||pending||blocked)invalid("Finish the current conversation or reconcile an uncertain delivery before starting New Chat.");
+    if(selecting||creating||sending||pending||blocked||mutatingAction)
+      invalid("Finish the current conversation or pending action before starting New Chat.");
     creating=true;
     const attempt=(async()=>{
       let taskId:string|null=null;
@@ -654,5 +724,5 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     return attempt;
   };
 
-  return Object.freeze({list,search,project,select,read,send,startNew,model});
+  return Object.freeze({list,search,project,conversationAction,select,read,send,startNew,model});
 }
