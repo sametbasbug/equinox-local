@@ -38,6 +38,8 @@
 
 **Checkpoint 83 default-window header density:** On the 1180px desktop window, the right-side Chat area is much narrower because of its conversation sidebar. The Open in ChatGPT action is now icon-only (32px hit area, existing accessible name) at widths up to 1380px; the Task Capsule subtitle displays its checkpoint/status rather than duplicating a truncated title. No account or conversation actions changed.
 
+**Checkpoint 85 response-state clarity:** In the actual signed Source Factory, a selected ChatGPT conversation actively generating a response showed a header status of **Responding...** but an empty transcript title of **Waiting for ChatGPT**, despite the observer proving active generation. The empty-state title now distinguishes generating from waiting; when generating without a readable preview, it tells the user to follow the response in the selected Chrome tab rather than implying no response is underway. The verified direct provider link already added in checkpoint 84 remains available. This does not claim a Bridge 12 full transcript is visible.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.
@@ -47,7 +49,7 @@ Native Chat is a full-featured desktop client for the person's real signed-in Ch
 | Area | Current status (2026-11-22) | Acceptance requirement |
 | --- | --- | --- |
 | Rich transcript, live stream, code, copy, quote, task identity | Previously verified in installed Factory | Retain across navigation |
-| ChatGPT sidebar conversations | **Developing, uninstalled Browser 1.2.8 source** | All observed visible chats, grouped, partial/virtualized states |
+| ChatGPT sidebar conversations | **Main source: Browser 1.2.9 / Bridge 13; installed personal Chrome: 1.2.8 / Bridge 12** | All observed visible chats, grouped, partial/virtualized states; actual installed Bridge 13 acceptance pending |
 | Open history without a pre-existing tab | **Developing, uninstalled source** | Guard unsent drafts, attachments and generation; verify post-navigation identity |
 | Native conversation search | **Source implemented, uninstalled** (actual provider dialog) | Search beyond visible history with bounded results, excerpts and explicit empty states |
 | Model and reasoning effort selection | **Source implemented, uninstalled** for existing and new Chat | Account-observed options and exact installed per-chat/first-message confirmation |
@@ -61,7 +63,10 @@ Native Chat is a full-featured desktop client for the person's real signed-in Ch
 | Personalization, memory, profile, account settings | **Partial** (Equinox theme/language only) | Account-observed native controls, identify provider-only actions |
 | Automations, apps/connectors, specialized media | **Missing** | Provider-backed feature discovery without fabricated support |
 
-## Current integrated acceptance gate (2026-11-22, checkpoint 68)
+## Historical acceptance gate (2026-11-22, checkpoint 68)
+
+> This section records the earlier draft PR #357 decision. It is not the current Main/Factory baseline. The current candidate is tracked at the top of this document and in Task Capsule checkpoint 85. Production publication remains QA-gated.
+
 
 **Candidate:** Draft PR #357 at SHA d7b2a9f, Browser manifest **1.2.8 / Chat Bridge 13**, macOS Source Shell 25. Source compilation, exact generated JavaScript, static security analysis, macOS ARM64 strict deep signature and provider-specific UI observations are **not** installed acceptance.
 
@@ -87,7 +92,7 @@ Browser Bridge v13 reads bounded ChatGPT navigation links and project identities
 
 The new read-only chat_bridge.tools_catalog method opens an inactive temporary ChatGPT home tab, inspects the provider's visible composer Add Files and More menu and closes that tab. On the user's signed-in account, this projected 7 provider tools and 3 connected apps, including Web Search, Deep Research, image creation, file attachment, Equinox Local and Gmail. The catalog is account-observed and bounded, not static or exhaustive. **Source-only progress:** Native Chat now displays the dynamic tool/app list in a first-party picker. Existing-chat messages can request the account-offered Web Search option; the bridge selects it in the actual provider composer and verifies exactly one matching inline tool pill before filling/sending the original message through a single durable receipt. Other tool/app options are shown but disabled until their distinct provider composer behaviors are implemented; they are not silently treated as Web Search. This source flow is compiled but has not yet been proven by a real installed sent turn. New Chat first-turn tool choice remains open. A source-only single-file flow now uses a trusted Electron Open File dialog and realpath/regular-file/size validation (100 MiB cap); the Browser Bridge selects the unique generic ChatGPT form file input with DOM.setFileInputFiles and requires the provider's actual named attachment card and removal control to remain stable before the existing one-shot send. File-only and captioned sends are supported in the source; source does not assert a provider upload completed from input.files alone. Native remove-before-send simply clears the local selection. A 61-byte synthetic file was uploaded into a temporary ChatGPT Home composer through the existing Browser file upload operation, its named attachment and remove button were observed and its attachment removed, and the temporary browser tab and local QA file were deleted. **The Native Chat end-to-end file send has not yet been performed or accepted in the installed Factory.** Images/multi-file/provider progress/new-chat attachments need follow-up.
 
-Browser 1.2.6's earlier CWS ZIP is superseded as a Native Chat candidate; Browser 1.2.8 is **not submitted or published**.
+Browser 1.2.6/1.2.8 review ZIPs are superseded. Current owner-review candidate is Browser **1.2.9 / Bridge 13**, still not submitted or installed. The actual Chrome Web Store developer dashboard's pending version has not been confirmed.
 
 ## Release gates
 

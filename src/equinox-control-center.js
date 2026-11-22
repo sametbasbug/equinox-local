@@ -2767,13 +2767,16 @@ function renderNativeChatTranscript(items, preview) {
     transcript.hidden = !items.length;
     $("native-chat-empty").hidden = Boolean(items.length || preview);
     if (!items.length && !preview) {
-        const waiting = chatActive && ["generating", "waiting"].includes(chatTurn);
+        const generating = Boolean(chatActive && chatTurn === "generating");
+        const waiting = Boolean(chatActive && chatTurn === "waiting");
         setNativeChatCopy("native-chat-empty-title", chatNewDraft ? "What are we working on?"
-            : waiting ? "Waiting for ChatGPT" : chatActive ? "No messages loaded" : "Choose a conversation");
+            : generating ? "ChatGPT is responding"
+                : waiting ? "Waiting for ChatGPT" : chatActive ? "No messages loaded" : "Choose a conversation");
         setNativeChatCopy("native-chat-empty-copy", chatNewDraft ? "Ask ChatGPT a question, or choose an existing conversation."
-            : waiting ? "Keep the selected conversation open in Chrome."
-                : chatActive ? "Messages from the selected Chrome conversation will appear here when available."
-                    : "Choose an open Chrome conversation, or select New Chat to begin one.");
+            : generating ? "Follow the response in the selected ChatGPT tab while it loads here."
+                : waiting ? "Keep the selected conversation open in Chrome."
+                    : chatActive ? "Messages from the selected Chrome conversation will appear here when available."
+                        : "Choose an open Chrome conversation, or select New Chat to begin one.");
     }
     chatFeedConversation = key;
     chatMessageSignatures = signatures;
