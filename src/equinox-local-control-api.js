@@ -462,12 +462,25 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 authorizeMutation();
                 if (typeof startNewChat !== "function")
                     throw badRequest("New Chat is unavailable.");
-                const body = validateExactObject(await readBody(), ["creationId", "text", "model", "effort"], "Native New Chat");
+                const body = validateExactObject(await readBody(), ["creationId", "text", "model", "effort", "tool", "file"], "Native New Chat");
                 if (typeof body.creationId !== "string" || !/^nch-[a-f0-9-]{36}$/u.test(body.creationId) ||
                     typeof body.text !== "string" || !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
                     || (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim() || body.model.length > 80))
-                    || (body.effort !== undefined && (!Number.isInteger(body.effort) || Number(body.effort) < 0 || Number(body.effort) > 12)))
-                    throw badRequest("New Chat requires one initial line of up to 1500 characters and a unique creation id.");
+                    || (body.effort !== undefined && (!Number.isInteger(body.effort) || Number(body.effort) < 0 || Number(body.effort) > 12))
+                    || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
+                        || Object.keys(body.tool).some(k => !["name", "kind"].includes(k))
+                        || typeof body.tool.name !== "string" || body.tool.name.length > 90
+                        || (body.tool.kind === "tool"
+                            ? !/^(Web search|Web araması|Create image|Görsel oluştur|Deep research|Derin araştırma)$/iu.test(body.tool.name)
+                            : body.tool.kind !== "app" || !/^(Gmail|Equinox Local)$/u.test(body.tool.name))))
+                    || (body.file !== undefined && (!body.file || typeof body.file !== "object" || Array.isArray(body.file)
+                        || Object.keys(body.file).some(k => !["path", "name", "size"].includes(k))
+                        || typeof body.file.path !== "string" || body.file.path.length > 4096
+                        || typeof body.file.name !== "string" || !body.file.name.trim() || body.file.name.length > 255
+                        || !Number.isSafeInteger(body.file.size) || body.file.size < 1
+                        || body.file.size > 100 * 1024 * 1024))
+                    || (body.tool !== undefined && body.file !== undefined))
+                    throw badRequest("New Chat requires a unique initial prompt, offered tool or selected local file.");
                 const creation = await startNewChat(body);
                 state.mutationCount += 1;
                 send(200, { ok: true, creation });

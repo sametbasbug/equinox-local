@@ -782,20 +782,40 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
         if (!value || typeof value !== "object" || Array.isArray(value))
             invalid("Invalid New Chat request.");
         const body = value;
-        if (Object.keys(body).some(k => !["creationId", "text", "model", "effort"].includes(k))
+        if (Object.keys(body).some(k => !["creationId", "text", "model", "effort", "tool", "file"].includes(k))
             || typeof body.creationId !== "string" ||
             !/^nch-[a-f0-9-]{36}$/u.test(body.creationId) || typeof body.text !== "string" ||
             !body.text.trim() || body.text.length > 1500 || /[\r\n\0]/u.test(body.text)
             || (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim() || body.model.length > 80))
-            || (body.effort !== undefined && (!Number.isInteger(body.effort) || Number(body.effort) < 0 || Number(body.effort) > 12)))
-            invalid("The first Chat message must be a single line of 1–1500 characters and a unique creation id.");
+            || (body.effort !== undefined && (!Number.isInteger(body.effort) || Number(body.effort) < 0 || Number(body.effort) > 12))
+            || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
+                || Object.keys(body.tool).some(k => !["name", "kind"].includes(k))
+                || typeof body.tool.name !== "string" || body.tool.name.length > 90
+                || (body.tool.kind === "tool"
+                    ? !/^(Web search|Web araması|Create image|Görsel oluştur|Deep research|Derin araştırma)$/iu.test(body.tool.name)
+                    : body.tool.kind !== "app" || !/^(Gmail|Equinox Local)$/u.test(body.tool.name))))
+            || (body.file !== undefined && (!body.file || typeof body.file !== "object" || Array.isArray(body.file)
+                || Object.keys(body.file).some(k => !["path", "name", "size"].includes(k))
+                || typeof body.file.path !== "string" || body.file.path.length > 4096
+                || !path.isAbsolute(body.file.path)
+                || typeof body.file.name !== "string" || body.file.name.length > 255
+                || !Number.isSafeInteger(body.file.size) || body.file.size < 1
+                || body.file.size > 100 * 1024 * 1024
+                || path.basename(body.file.path) !== body.file.name))
+            || (body.tool !== undefined && body.file !== undefined))
+            invalid("The first Chat message requires one safe prompt, offered tool or explicitly selected file.");
         const key = body.creationId;
         const firstMessage = body.text.trim();
         const modelChoice = typeof body.model === "string" ? body.model.trim() : null;
         const effortLevel = Number.isInteger(body.effort) ? Number(body.effort) : null;
+        const selectedTool = body.tool;
+        const toolKey = selectedTool ? selectedTool.kind + ":" + selectedTool.name : "";
+        const selectedFile = body.file;
+        const fileKey = selectedFile ? JSON.stringify(selectedFile) : "";
         const prior = createAttempts.get(key);
         if (prior) {
-            if (prior.text !== firstMessage || prior.modelChoice !== modelChoice || prior.effortLevel !== effortLevel)
+            if (prior.text !== firstMessage || prior.modelChoice !== modelChoice
+                || prior.effortLevel !== effortLevel || prior.toolKey !== toolKey || prior.fileKey !== fileKey)
                 invalid("A New Chat creation id cannot be reused with different message or model settings.");
             return prior.promise;
         }
@@ -812,6 +832,18 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
             let taskId = null;
             try {
                 context();
+                if (selectedTool) {
+                    const catalog = await tools();
+                    if (!catalog.items.some((item) => item.kind === selectedTool.kind && item.name === selectedTool.name))
+                        invalid("Selected New Chat tool is no longer offered by the account.");
+                }
+                if (selectedFile) {
+                    const stat = await fs.lstat(selectedFile.path);
+                    const canonical = await fs.realpath(selectedFile.path);
+                    if (!stat.isFile() || canonical !== selectedFile.path
+                        || stat.size !== selectedFile.size || stat.size > 100 * 1024 * 1024)
+                        invalid("The file changed after explicit selection. Choose it again.");
+                }
                 const existing = await taskStore.list({ limit: 100 });
                 if (existing.some(t => Array.isArray(t.references) && t.references.some((ref) => ref.label === "Native Chat creation ID" && ref.value === key)))
                     invalid("This New Chat request was already recorded. Review existing Task Capsules instead of creating a duplicate.");
@@ -826,7 +858,9 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 taskId = newTaskId;
                 const opened = await chatBridge.startTaskChat({ taskId: newTaskId, checkpointRevision: task.checkpointRevision,
                     initialMessage: firstMessage, ...(modelChoice ? { modelChoice } : {}),
-                    ...(effortLevel !== null ? { effortLevel } : {}) });
+                    ...(effortLevel !== null ? { effortLevel } : {}),
+                    ...(selectedTool ? { tool: selectedTool } : {}),
+                    ...(selectedFile ? { file: selectedFile } : {}) });
                 if (opened?.confirmed !== true || !opened?.binding)
                     throw new Error("New Chat could not confirm its exact ChatGPT binding.");
                 const source = opened.binding;
@@ -894,7 +928,7 @@ export function createNativeChatController({ browserBridge, chatBridge, taskStor
                 creating = false;
             }
         })();
-        createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, promise: attempt });
+        createAttempts.set(key, { text: firstMessage, modelChoice, effortLevel, toolKey, fileKey, promise: attempt });
         return attempt;
     };
     return Object.freeze({ list, search, project, conversationAction, tools, select, read, send, startNew, model });

@@ -172,7 +172,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             throw ambiguous;
         }
     };
-    const startTaskChat = async ({ taskId, checkpointRevision = 1, initialMessage, modelChoice, effortLevel } = {}) => {
+    const startTaskChat = async ({ taskId, checkpointRevision = 1, initialMessage, modelChoice, effortLevel, tool, file } = {}) => {
         if (typeof taskId !== "string" || !/^task-[a-z0-9-]{6,80}$/u.test(taskId))
             throw new Error("Telegram new-task id is invalid.");
         if (!Number.isInteger(checkpointRevision) || checkpointRevision < 1)
@@ -184,6 +184,16 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
             throw new Error("New Chat requested an invalid model name.");
         if (effortLevel !== undefined && (!Number.isInteger(effortLevel) || effortLevel < 0 || effortLevel > 12))
             throw new Error("New Chat requested an invalid effort level.");
+        if (tool && (!["tool", "app"].includes(tool.kind)
+            || typeof tool.name !== "string" || !tool.name.trim() || tool.name.length > 90
+            || (tool.kind === "tool"
+                ? !/^(Web search|Web araması|Create image|Görsel oluştur|Deep research|Derin araştırma)$/iu.test(tool.name)
+                : !/^(Gmail|Equinox Local)$/u.test(tool.name))))
+            throw new Error("New Chat requires an account-offered supported tool.");
+        if (file && (tool || typeof file.path !== "string" || !file.path
+            || typeof file.name !== "string" || !file.name.trim() || file.name.length > 255
+            || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 100 * 1024 * 1024))
+            throw new Error("New Chat requires an exact local file without an app tool.");
         const prompt = initialMessage ?? `Start task ${taskId} from checkpoint ${checkpointRevision}. Read the latest Task Capsule from Equinox Local and carry out its objective.`;
         agentControl.assertMutationAllowed("telegram_task_chat_create");
         const bridgeSnapshot = browserBridge.snapshot();
@@ -250,6 +260,26 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                     throw taskChatNotStarted("New Chat model selection failed before submit: " + errorMessage(error).slice(0, 170));
                 }
             }
+            // Stage the provider's real app mention or hint after model selection,
+            // before the first-message submission or any fallback text fill.
+            if (tool || file) {
+                try {
+                    if (chatBridgeVersion(contextState) < 13)
+                        throw new Error("New Chat selected tool needs Chat Bridge version 13.");
+                    const staged = await callContext("user", "chat_bridge.stage_new", {
+                        tabId: createdTabId, text: prompt,
+                        ...(tool ? { toolName: tool.name, toolKind: tool.kind } : {}),
+                        ...(file ? { filePath: file.path, fileName: file.name, fileSize: file.size } : {}),
+                    }, file ? 75_000 : 18_000);
+                    if (staged?.staged !== true || staged.tool !== (tool?.name ?? null)
+                        || staged.file !== Boolean(file) || staged.tabId !== createdTabId)
+                        throw new Error("ChatGPT did not confirm the requested first-message tool.");
+                }
+                catch (error) {
+                    throw taskChatNotStarted("New Chat tool preparation failed before submit: " +
+                        errorMessage(error).slice(0, 170));
+                }
+            }
             let promptSubmitted = false;
             let lastComposerError = null;
             let lastSendReason = "not_ready";
@@ -266,9 +296,29 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                 && rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
             });
             const composer = visible.length === 1 ? visible[0] : null;
+            const marks=[...(composer?.querySelectorAll(
+              '[data-inline-selection-pill],[app-mention-name][app-mention-display-name]')||[])];
+            const required=${JSON.stringify(tool?.name ?? null)};
+            const kind=${JSON.stringify(tool?.kind ?? null)};
+            const validMark=!required?marks.length===0:marks.length===1&&(kind==='tool'
+              ?marks[0].getAttribute('data-system-hint-label')===required
+                ||marks[0].getAttribute('app-mention-display-name')===required
+              :marks[0].getAttribute('app-mention-display-name')===required
+                &&String(marks[0].getAttribute('data-prompt-link-href')||'').startsWith('app://'));
+            const clone=composer?.cloneNode(true);
+            clone?.querySelector('[data-inline-selection-pill],[app-mention-name]')?.remove();
             return {
               present: Boolean(composer),
-              text: composer ? String(composer.textContent || '').trim() : '',
+              validMark,
+              validFile:!${JSON.stringify(Boolean(file))}||(()=>{
+                const form=composer?.closest('form');
+                const named=[...(form?.querySelectorAll('button[aria-label]')||[])]
+                  .filter(x=>x.getClientRects().length
+                    &&x.getAttribute('aria-label')===${JSON.stringify(file?.name ?? "")});
+                return named.length===1&&!form?.querySelector(
+                  '[aria-busy="true"],[data-testid*="upload-progress"]');
+              })(),
+              text: clone ? String(clone.textContent || '').trim() : '',
               generationActive: [...document.querySelectorAll('button[data-testid="stop-button"]')]
                 .some(button => button.isConnected && button.getClientRects().length > 0
                   && button.getBoundingClientRect().height > 0 && button.getBoundingClientRect().width > 0
@@ -282,10 +332,14 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                 const before = await inspectComposer();
                 if (before.generationActive)
                     throw taskChatNotStarted("ChatGPT task-chat found an unexpected active generation before submit.");
+                if (before.validMark !== true || before.validFile !== true)
+                    throw taskChatNotStarted("ChatGPT first-message provider tool or file changed before submit.");
                 if (before.text && before.text !== prompt) {
                     throw taskChatNotStarted("ChatGPT task-chat composer contains unexpected text before submit.");
                 }
                 if (before.text !== prompt) {
+                    if (tool || file)
+                        throw taskChatNotStarted("New Chat staged prompt changed; refusing to overwrite the provider attachment.");
                     let composerRef = null;
                     try {
                         const snapshotResult = await callContext("user", "snapshot", {
@@ -363,8 +417,28 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
               const composer = editors.length === 1 ? editors[0] : null;
               const buttons = [...document.querySelectorAll(selector)].filter(isVisible);
               const button = buttons.length === 1 ? buttons[0] : null;
-              const text = composer ? String(composer.textContent || '').trim() : '';
+              const marks=[...(composer?.querySelectorAll(
+                '[data-inline-selection-pill],[app-mention-name][app-mention-display-name]')||[])];
+              const required=${JSON.stringify(tool?.name ?? null)};
+              const kind=${JSON.stringify(tool?.kind ?? null)};
+              const validMark=!required?marks.length===0:marks.length===1&&(kind==='tool'
+                ?marks[0].getAttribute('data-system-hint-label')===required
+                  ||marks[0].getAttribute('app-mention-display-name')===required
+                :marks[0].getAttribute('app-mention-display-name')===required
+                  &&String(marks[0].getAttribute('data-prompt-link-href')||'').startsWith('app://'));
+              const clone=composer?.cloneNode(true);
+              clone?.querySelector('[data-inline-selection-pill],[app-mention-name]')?.remove();
+              const text = clone ? String(clone.textContent || '').trim() : '';
               if (!composer) return { ready: false, reason: editors.length > 1 ? "composer_ambiguous" : "composer_missing", name: null, text };
+              if(!validMark)return{ready:false,reason:"tool_changed",name:null,text};
+              if(${JSON.stringify(Boolean(file))}){
+                const form=composer.closest('form');
+                const named=[...(form?.querySelectorAll('button[aria-label]')||[])]
+                  .filter(x=>x.getClientRects().length
+                    &&x.getAttribute('aria-label')===${JSON.stringify(file?.name ?? "")});
+                if(named.length!==1||form?.querySelector('[aria-busy="true"],[data-testid*="upload-progress"]'))
+                  return{ready:false,reason:"attachment_changed",name:null,text};
+              }
               if (!text) return { ready: false, reason: "composer_empty", name: null, text };
               if (text !== ${JSON.stringify(prompt)}) return { ready: false, reason: "composer_changed", name: null, text };
               if (!button) return { ready: false, reason: buttons.length > 1 ? "send_button_ambiguous" : "send_button_missing", name: null, text };
@@ -381,7 +455,7 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
                             composerReset = true;
                             break;
                         }
-                        if (["composer_changed", "generation_active"].includes(lastSendReason)) {
+                        if (["composer_changed", "tool_changed", "attachment_changed", "generation_active"].includes(lastSendReason)) {
                             throw taskChatNotStarted(`ChatGPT task-chat send target changed before click: ${lastSendReason}.`);
                         }
                         await sleep(100);

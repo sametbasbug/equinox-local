@@ -701,7 +701,8 @@ ipcMain.handle("equinox-shell:control-request", async (event, value: unknown) =>
   // A renderer cannot forge an arbitrary path into the private chat API.
   if(value&&typeof value==="object"&&!Array.isArray(value)){
     const request=value as Record<string,unknown>;
-    if(request.path==="/api/v1/chat/send"&&request.method==="POST"&&typeof request.body==="string"){
+    if(["/api/v1/chat/send","/api/v1/chat/new"].includes(String(request.path))
+      &&request.method==="POST"&&typeof request.body==="string"){
       let parsed:unknown;
       try{parsed=JSON.parse(request.body);}catch{/* Backend will reject malformed JSON. */}
       if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&"file" in parsed){
@@ -735,6 +736,11 @@ ipcMain.handle("equinox-shell:pick-folder", async (event) => {
     if (!stat.isDirectory() || selected === path.parse(selected).root) throw new Error("Choose a folder, not a filesystem root.");
     return { cancelled: false, path: selected };
   } finally { pickerPending = false; }
+});
+ipcMain.handle("equinox-shell:clear-chat-file", (event) => {
+  if(!trustedSender(event))throw new Error("Untrusted file selection cancellation.");
+  pickedChatFile=null;
+  return{cleared:true};
 });
 ipcMain.handle("equinox-shell:pick-chat-file", async (event) => {
   if(!trustedSender(event))throw new Error("Untrusted chat file picker request.");

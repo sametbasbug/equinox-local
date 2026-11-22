@@ -1124,17 +1124,17 @@ async function changeNativeChatModel(action, value) {
     }
 }
 function paintNativeChatFileControls() {
-    const ready = !chatNewDraft && !chatSelecting && !chatSending && !chatServerSending && !chatBlocked
-        && chatConnection === "ready" && Boolean(chatActive) && ["ready", "complete"].includes(chatTurn);
+    const ready = !chatSelecting && !chatSending && !chatServerSending && !chatBlocked
+        && chatConnection === "ready" && (chatNewDraft || (Boolean(chatActive) && ["ready", "complete"].includes(chatTurn)));
     $("native-chat-file-pick").disabled = !ready || !!chatPickedFile;
     $("native-chat-file-remove").hidden = !chatPickedFile;
     $("native-chat-file-remove").disabled = chatSending || chatSelecting || chatServerSending;
     setNativeChatCopy("native-chat-file-name", chatPickedFile
         ? chatPickedFile.name + " · " + Math.ceil(chatPickedFile.size / 1024) + " KiB"
-        : chatNewDraft ? "New Chat attachments are not yet supported" : "");
+        : chatNewDraft ? "Attach one file with your first message" : "");
 }
 async function pickNativeChatFile() {
-    if (chatNewDraft || chatSending || chatSelecting || chatBlocked || !chatActive
+    if (chatSending || chatSelecting || chatBlocked || (!chatNewDraft && !chatActive)
         || !window.equinoxShell?.pickChatFile)
         return;
     const revision = chatSelectionGeneration;
@@ -1143,7 +1143,7 @@ async function pickNativeChatFile() {
     if (selected.cancelled)
         return;
     if (revision !== chatSelectionGeneration || target !== chatConversationKey(chatActive)
-        || chatNewDraft || chatSending || chatSelecting || chatBlocked)
+        || chatSending || chatSelecting || chatBlocked)
         throw new Error("Conversation changed while the file picker was open. Select the file again.");
     if (!selected.path || !selected.name || !Number.isSafeInteger(selected.size)
         || selected.size < 1 || selected.size > 100 * 1024 * 1024)
@@ -1157,8 +1157,8 @@ async function pickNativeChatFile() {
 function paintNativeChatToolControls() {
     const combo = $("native-chat-tool-choice");
     const busy = chatSending || chatSelecting || chatToolCatalogBusy || chatServerSending;
-    const canChoose = !chatNewDraft && !chatBlocked && !busy && !chatPickedFile && chatConnection === "ready"
-        && Boolean(chatActive) && ["ready", "complete"].includes(chatTurn);
+    const canChoose = !chatBlocked && !busy && !chatPickedFile && chatConnection === "ready"
+        && (chatNewDraft || (Boolean(chatActive) && ["ready", "complete"].includes(chatTurn)));
     const current = chatToolSelection ? chatToolSelection.kind + ":" + chatToolSelection.name : "";
     const offered = chatToolCatalogBrowserInstance === chatThreadBrowserInstanceId ? chatToolCatalog : [];
     const options = [new Option(localizeUiText("No tool"), ""), ...offered.map(item => {
@@ -1174,15 +1174,13 @@ function paintNativeChatToolControls() {
     combo.value = offered.some(item => item.kind + ":" + item.name === current
         && nativeChatInlineToolSupported(item)) ? current : "";
     combo.disabled = !canChoose || !offered.length;
-    $("native-chat-tool-refresh").disabled = busy || chatNewDraft || !chatActive;
-    setNativeChatCopy("native-chat-tool-status", chatNewDraft
-        ? "Tools are unavailable for New Chat first messages"
-        : chatToolCatalogBusy ? "Tool options are loading…"
-            : chatToolSelection ? "ChatGPT will confirm the chosen tool before sending"
-                : offered.length ? "Tool selection applies to the next message" : "");
+    $("native-chat-tool-refresh").disabled = busy || (!chatNewDraft && !chatActive);
+    setNativeChatCopy("native-chat-tool-status", chatToolCatalogBusy ? "Tool options are loading…"
+        : chatToolSelection ? "ChatGPT will confirm the chosen tool before sending"
+            : offered.length ? "Tool selection applies to the next message" : "");
 }
 async function refreshNativeChatToolCatalog(quiet = false) {
-    if (chatToolCatalogBusy || chatNewDraft || !chatActive)
+    if (chatToolCatalogBusy || (!chatNewDraft && !chatActive))
         return;
     chatToolCatalogBusy = true;
     const generation = chatSelectionGeneration;
@@ -1219,7 +1217,7 @@ function updateNativeChatControls() {
     const allowed = !busy && !chatBlocked && (chatNewDraft
         || Boolean(chatStateAvailable && chatActive && ["ready", "complete"].includes(chatTurn)));
     composer.disabled = !allowed;
-    $("native-chat-send").disabled = !allowed || (!composer.value.trim() && !chatPickedFile)
+    $("native-chat-send").disabled = !allowed || (chatNewDraft ? !composer.value.trim() : (!composer.value.trim() && !chatPickedFile))
         || (chatNewDraft && /[\r\n]/u.test(composer.value));
     $("native-chat-new").disabled = busy || chatNewDraft || !chatStateAvailable || chatConnection !== "ready" || chatCreationBlocked
         || chatBlocked || ["waiting", "generating"].includes(chatTurn);
@@ -1858,6 +1856,8 @@ function beginNewNativeChat() {
     updateNativeChatControls();
     composer.focus();
     void changeNativeChatModel("catalog");
+    if (chatToolCatalogBrowserInstance !== chatThreadBrowserInstanceId || !chatToolCatalog.length)
+        void refreshNativeChatToolCatalog(true);
 }
 function cancelNewNativeChat() {
     if (chatSending)
@@ -1867,6 +1867,10 @@ function cancelNewNativeChat() {
     chatNewModelCatalog = null;
     chatNewModelChoice = null;
     chatNewEffortLevel = null;
+    chatToolSelection = null;
+    if (chatPickedFile)
+        void window.equinoxShell?.clearChatFile?.();
+    chatPickedFile = null;
     chatSelectionGeneration++;
     chatStateAvailable = false;
     $("native-chat-cancel-new").hidden = true;
@@ -1881,7 +1885,7 @@ async function sendNativeChatMessage() {
     const composer = chatComposer();
     const text = composer.value.trim();
     if (composer.disabled || chatSending || chatSelecting || chatBlocked || (!chatActive && !chatNewDraft)
-        || (!text && !chatPickedFile) || text.length > 4000)
+        || (chatNewDraft ? !text : (!text && !chatPickedFile)) || text.length > 4000)
         return;
     if (chatNewDraft && (text.length > 1500 || /[\r\n]/u.test(composer.value))) {
         setNativeChatNotice("The first message must be one line of at most 1,500 characters.");
@@ -1905,6 +1909,10 @@ async function sendNativeChatMessage() {
                 request.model = chatNewModelChoice;
             if (chatNewEffortLevel !== null)
                 request.effort = chatNewEffortLevel;
+            if (chatToolSelection)
+                request.tool = { ...chatToolSelection };
+            if (chatPickedFile)
+                request.file = { ...chatPickedFile };
             const response = await mutationJson("/api/v1/chat/new", "POST", request);
             if (response.creation?.confirmed !== true)
                 throw new Error("New Chat creation could not be confirmed.");
@@ -1914,6 +1922,8 @@ async function sendNativeChatMessage() {
             chatNewModelCatalog = null;
             chatNewModelChoice = null;
             chatNewEffortLevel = null;
+            chatToolSelection = null;
+            chatPickedFile = null;
             composer.maxLength = 4000;
             composer.value = "";
             $("native-chat-cancel-new").hidden = true;
@@ -5492,6 +5502,7 @@ function bindEvents() {
         if (chatSending || chatSelecting)
             return;
         chatPickedFile = null;
+        void window.equinoxShell?.clearChatFile?.();
         updateNativeChatControls();
     });
     $("native-chat-tool-refresh").addEventListener("click", () => void refreshNativeChatToolCatalog());

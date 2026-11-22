@@ -879,7 +879,8 @@ ipcMain.handle("equinox-shell:control-request", async (event, value) => {
     // A renderer cannot forge an arbitrary path into the private chat API.
     if (value && typeof value === "object" && !Array.isArray(value)) {
         const request = value;
-        if (request.path === "/api/v1/chat/send" && request.method === "POST" && typeof request.body === "string") {
+        if (["/api/v1/chat/send", "/api/v1/chat/new"].includes(String(request.path))
+            && request.method === "POST" && typeof request.body === "string") {
             let parsed;
             try {
                 parsed = JSON.parse(request.body);
@@ -923,6 +924,12 @@ ipcMain.handle("equinox-shell:pick-folder", async (event) => {
     finally {
         pickerPending = false;
     }
+});
+ipcMain.handle("equinox-shell:clear-chat-file", (event) => {
+    if (!trustedSender(event))
+        throw new Error("Untrusted file selection cancellation.");
+    pickedChatFile = null;
+    return { cleared: true };
 });
 ipcMain.handle("equinox-shell:pick-chat-file", async (event) => {
     if (!trustedSender(event))
