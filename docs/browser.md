@@ -149,3 +149,6 @@ Generated ZIP files are release artifacts and are intentionally not committed to
 
 
 **Browser extension version admission, checkpoint 61 (2026-11-22):** The Chrome Web Store user installation is still Browser 1.2.7 / Chat Bridge v12. The separate unreleased **source** candidate now uses manifest version **1.2.8 / Chat Bridge v13**, fixing a same-version collision that would prevent a future Chrome Web Store submission. This source-only version bump is NOT a Chrome install, Web Store upload, installed Factory update, or integrated end-to-end acceptance. The owner reviews/submits any CWS package only when the release gate permits it.
+
+
+**Browser v1.2.8 review-only package (checkpoint 61):** A uniquely SHA-tagged zip of the source manifest, five compiled JavaScript files, popup HTML/CSS and four icon assets was prepared in the maintainer's Mac Downloads folder, verified byte-for-byte against this branch and checked for archive validity; TypeScript source files, credentials and development files are excluded. The package is for maintainer-controlled CWS review with **automatic publishing off**. It is NOT uploaded, published or installed, and must not be treated as acceptance of Bridge v13 on personal Chrome.
