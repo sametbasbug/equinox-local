@@ -1772,6 +1772,15 @@ async function deliverChatBridgeMessage({
     throw new Error("Chat Bridge selected tool identity is invalid.");
   if(toolName===undefined&&toolKind!==undefined)
     throw new Error("Chat Bridge tool kind requires an actual provider choice.");
+  const toolMode=typeof toolName==="string"&&toolKind==="tool"
+    ?(/^(Web search|Web araması)$/iu.test(toolName)?"search"
+      :/^(Create image|Görsel oluştur)$/iu.test(toolName)?"picture"
+      :/^(Deep research|Derin araştırma)$/iu.test(toolName)?"research":null)
+    :typeof toolName==="string"&&toolKind==="app"
+      &&/^(Gmail|Equinox Local)$/u.test(toolName)?"app":null;
+  if(toolName!==undefined&&!toolMode)
+    throw new Error("This provider tool needs its own verified composer workflow.");
+  const expectedHint=toolMode==="search"?"search":toolMode==="picture"?"picture_v2":null;
   if(filePath!==undefined&&(typeof filePath!=="string"||filePath.length<2||filePath.length>4096
     ||!(filePath.startsWith("/")||/^[a-z]:[\\/]/iu.test(filePath))
     ||typeof fileName!=="string"||!fileName.trim()||fileName.length>255
@@ -1851,22 +1860,34 @@ async function deliverChatBridgeMessage({
           candidates[0].click();
           for(let n=0;n<35;n++){
             await pause(85);
-            const pills=[...composer.querySelectorAll('[data-inline-selection-pill]')];
-            if(pills.length!==1)continue;
-            const pill=pills[0];
-            if(pill.getAttribute('data-system-hint-label')!==${JSON.stringify(toolName)}
-              ||!pill.getAttribute('data-system-hint-type'))break;
+            const marks=[...composer.querySelectorAll(
+              '[data-inline-selection-pill],[app-mention-name][app-mention-display-name]')];
+            if(marks.length!==1)continue;
+            const mark=marks[0];
+            const hint=${JSON.stringify(expectedHint)};
+            const valid=hint
+              ?mark.hasAttribute('data-inline-selection-pill')
+                &&mark.getAttribute('data-system-hint-label')===${JSON.stringify(toolName)}
+                &&mark.getAttribute('data-system-hint-type')===hint
+                &&mark.getAttribute('data-prompt-link-href')==='chatgpt-system-hint://'+hint
+              :mark.getAttribute('app-mention-display-name')===${JSON.stringify(toolName)}
+                &&!!mark.getAttribute('app-mention-name')
+                &&String(mark.getAttribute('data-prompt-link-href')||'').startsWith('app://')
+                &&mark.getAttribute('app-mention-path')===mark.getAttribute('data-prompt-link-href');
+            if(!valid)break;
             const empty=composer.cloneNode(true);
-            empty.querySelector('[data-inline-selection-pill]')?.remove();
+            empty.querySelector('[data-inline-selection-pill],[app-mention-name]')?.remove();
             if(String(empty.textContent||'').trim())break;
             if(triggers[0].getAttribute('aria-expanded')==='true')break;
-            return{selected:true,hint:pill.getAttribute('data-system-hint-type')};
+            return{selected:true,kind:hint?'hint':'app',marker:hint||'app'};
           }
-          return{selected:false,reason:"inline_tool_not_confirmed"};
+          return{selected:false,reason:"provider_tool_not_confirmed"};
         })()`,awaitPromise:true,returnByValue:true,silent:true});
       const value=cdpObject(selected?.result?.value);
-      if(selected?.exceptionDetails||value?.selected!==true||typeof value.hint!=="string")
-        throw new Error("ChatGPT did not confirm an inline selected tool before message submission.");
+      if(selected?.exceptionDetails||value?.selected!==true
+        ||value.kind!==(expectedHint?"hint":"app")
+        ||value.marker!==(expectedHint||"app"))
+        throw new Error("ChatGPT did not confirm the requested account tool before message submission.");
       stage="tool_confirmed";
     }
 
@@ -1933,14 +1954,21 @@ async function deliverChatBridgeMessage({
       expression: `(() => {
         const composer = ${VISIBLE_CHATGPT_COMPOSER_JS};
         if (!composer) throw new Error('ChatGPT composer is unavailable');
-        const pill = composer.querySelectorAll('[data-inline-selection-pill]');
+        const marks = composer.querySelectorAll(
+          '[data-inline-selection-pill],[app-mention-name][app-mention-display-name]');
         if(${JSON.stringify(typeof toolName==="string")}){
-          if(pill.length!==1||pill[0].getAttribute('data-system-hint-label')!==${JSON.stringify(toolName??"")})
-            throw new Error('ChatGPT tool selection changed before text entry');
+          const mark=marks[0];
+          const hint=${JSON.stringify(expectedHint)};
+          const valid=mark&&marks.length===1&&(hint
+            ?mark.getAttribute('data-system-hint-label')===${JSON.stringify(toolName??"")}
+              &&mark.getAttribute('data-system-hint-type')===hint
+            :mark.getAttribute('app-mention-display-name')===${JSON.stringify(toolName??"")}
+              &&String(mark.getAttribute('data-prompt-link-href')||'').startsWith('app://'));
+          if(!valid)throw new Error('ChatGPT tool selection changed before text entry');
           const rest=composer.cloneNode(true);
-          rest.querySelector('[data-inline-selection-pill]')?.remove();
+          rest.querySelector('[data-inline-selection-pill],[app-mention-name]')?.remove();
           if(String(rest.textContent||'').trim())throw new Error('ChatGPT composer already contains human input');
-        }else if(pill.length||String(composer.textContent||'').trim()){
+        }else if(marks.length||String(composer.textContent||'').trim()){
           throw new Error('ChatGPT composer is not empty');
         }
         composer.focus();
@@ -2010,18 +2038,23 @@ async function deliverChatBridgeMessage({
         // paragraph boundaries, so exact multi-line delivery must restore
         // those separators before matching the staged source message.
         const clone=composer?.cloneNode(true);
-        const pill=clone?.querySelectorAll('[data-inline-selection-pill]');
+        const marks=clone?.querySelectorAll(
+          '[data-inline-selection-pill],[app-mention-name][app-mention-display-name]');
         if(${JSON.stringify(typeof toolName==="string")}){
-          if(!pill||pill.length!==1
-            ||pill[0].getAttribute('data-system-hint-label')!==${JSON.stringify(toolName??"")})
-            return{focused:false,reason:"tool_changed"};
-          pill[0].remove();
-        }else if(pill?.length){
+          const mark=marks?.[0],hint=${JSON.stringify(expectedHint)};
+          const valid=mark&&marks?.length===1&&(hint
+            ?mark.getAttribute('data-system-hint-label')===${JSON.stringify(toolName??"")}
+              &&mark.getAttribute('data-system-hint-type')===hint
+            :mark.getAttribute('app-mention-display-name')===${JSON.stringify(toolName??"")}
+              &&String(mark.getAttribute('data-prompt-link-href')||'').startsWith('app://'));
+          if(!valid)return{focused:false,reason:"tool_changed"};
+          mark.remove();
+        }else if(marks?.length){
           return{focused:false,reason:"unexpected_tool"};
         }
         const children=clone?Array.from(clone.children):[];
         const stagedText=children.length&&children.every(node=>node.tagName==='P')
-          ?children.map(node=>String(node.textContent||'')).join('\n').trim()
+          ?children.map(node=>String(node.textContent||'')).join('\\n').trim()
           :String(clone?.textContent||'').trim();
         if(!composer||stagedText!==${JSON.stringify(message.trim())})
           return{focused:false,reason:"composer_changed"};

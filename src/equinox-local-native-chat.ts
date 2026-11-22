@@ -615,8 +615,10 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         ||Object.keys(body.tool as object).some(k=>!["name","kind"].includes(k))
         ||typeof (body.tool as any).name!=="string"
         ||!(body.tool as any).name.trim()||(body.tool as any).name.length>90
-        ||(body.tool as any).kind!=="tool"
-        ||!/^(Web search|Web araması)$/iu.test((body.tool as any).name)))
+        ||((body.tool as any).kind==="tool"
+          ?!/^(Web search|Web araması|Create image|Görsel oluştur|Deep research|Derin araştırma)$/iu.test((body.tool as any).name)
+          :(body.tool as any).kind!=="app"
+            ||!/^(Gmail|Equinox Local)$/u.test((body.tool as any).name))))
       ||(body.file!==undefined&&(!body.file||typeof body.file!=="object"||Array.isArray(body.file)
         ||Object.keys(body.file as object).some(k=>!["path","name","size"].includes(k))
         ||typeof (body.file as any).path!=="string"||(body.file as any).path.length>4096

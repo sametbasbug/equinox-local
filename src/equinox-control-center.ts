@@ -509,7 +509,9 @@ let chatToolCatalogBrowserInstance:string|null=null;
 // Only the provider's verified inline Search pill has an accepted send path.
 // Other tools/apps are discoverable, not falsely advertised as working.
 function nativeChatInlineToolSupported(value:{name:string;kind:"tool"|"app"}):boolean{
-  return value.kind==="tool"&&/^(Web search|Web araması)$/iu.test(value.name);
+  return value.kind==="tool"
+    ?/^(Web search|Web araması|Create image|Görsel oluştur|Deep research|Derin araştırma)$/iu.test(value.name)
+    :/^(Gmail|Equinox Local)$/u.test(value.name);
 }
 let chatModelState: UiRemoteData = null;
 let chatModelIdentity: string | null = null;
@@ -1108,8 +1110,13 @@ function paintNativeChatFileControls(){
 async function pickNativeChatFile(){
   if(chatNewDraft||chatSending||chatSelecting||chatBlocked||!chatActive
     ||!window.equinoxShell?.pickChatFile)return;
+  const revision=chatSelectionGeneration;
+  const target=chatConversationKey(chatActive);
   const selected=await window.equinoxShell.pickChatFile();
   if(selected.cancelled)return;
+  if(revision!==chatSelectionGeneration||target!==chatConversationKey(chatActive)
+    ||chatNewDraft||chatSending||chatSelecting||chatBlocked)
+    throw new Error("Conversation changed while the file picker was open. Select the file again.");
   if(!selected.path||!selected.name||!Number.isSafeInteger(selected.size)
     ||selected.size<1||selected.size>100*1024*1024)
     throw new Error("The local file selection was not confirmed.");
@@ -1699,8 +1706,8 @@ async function selectNativeChat(thread: UiRemoteData) {
     void refreshNativeChat(true);
     return;
   }
-  if (chatComposer().value.trim()) {
-    showToast("Clear the unsent message or choose Cancel before switching conversations.");
+  if (chatComposer().value.trim()||chatPickedFile) {
+    showToast("Clear the unsent message or remove the selected file before switching conversations.");
     return;
   }
   closeNativeChatTaskPanel();
@@ -1741,8 +1748,8 @@ async function selectNativeChat(thread: UiRemoteData) {
 function beginNewNativeChat() {
   if ($("native-chat-new").disabled) return;
   const composer = chatComposer();
-  if (composer.value.trim()) {
-    showToast("Clear the unsent message before starting a new conversation.");
+  if (composer.value.trim()||chatPickedFile) {
+    showToast("Clear the unsent message or remove the selected file before starting a new conversation.");
     return;
   }
   closeNativeChatTaskPanel();

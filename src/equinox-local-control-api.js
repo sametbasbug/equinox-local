@@ -482,8 +482,9 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                     || (body.tool !== undefined && (!body.tool || typeof body.tool !== "object" || Array.isArray(body.tool)
                         || Object.keys(body.tool).some(k => !["name", "kind"].includes(k))
                         || typeof body.tool.name !== "string" || !body.tool.name.trim() || body.tool.name.length > 90
-                        || body.tool.kind !== "tool"
-                        || !/^(Web search|Web araması)$/iu.test(body.tool.name)))
+                        || (body.tool.kind === "tool"
+                            ? !/^(Web search|Web araması|Create image|Görsel oluştur|Deep research|Derin araştırma)$/iu.test(body.tool.name)
+                            : body.tool.kind !== "app" || !/^(Gmail|Equinox Local)$/u.test(body.tool.name))))
                     || (body.file !== undefined && (!body.file || typeof body.file !== "object" || Array.isArray(body.file)
                         || Object.keys(body.file).some(k => !["path", "name", "size"].includes(k))
                         || typeof body.file.path !== "string" || body.file.path.length > 4096
