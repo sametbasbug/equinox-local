@@ -20,7 +20,7 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
+  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -308,6 +308,7 @@ export function createEquinoxLocalControlApi({
   getOnboardingStatus = async () => ({ available: false }),
   getChatThreads = null,
   searchChatThreads = null,
+  browseChatProject = null,
   selectChatThread = null,
   getChatState = null,
   sendChatText = null,
@@ -487,6 +488,14 @@ export function createEquinoxLocalControlApi({
           ||[...body.query].length>120||/[\x00-\x1f\x7f]/u.test(body.query))
           throw badRequest("Search requires 2–120 printable characters.");
         send(200,{ok:true,search:await searchChatThreads(body)});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/chat/project") {
+        authorizeMutation();
+        if (typeof browseChatProject !== "function") throw badRequest("ChatGPT project browsing is unavailable.");
+        const body=validateExactObject(await readBody(),["projectId"],"ChatGPT project");
+        if(typeof body.projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId))
+          throw badRequest("Invalid ChatGPT project identity.");
+        send(200,{ok:true,project:await browseChatProject(body)});return;
       }
       if (method === "GET" && pathname === "/api/v1/chat/state") {
         if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");
@@ -1040,7 +1049,7 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search",
+    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",

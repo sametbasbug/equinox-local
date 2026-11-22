@@ -2337,6 +2337,106 @@ async function searchChatBridgeHistory({tabId,query}:{tabId?:unknown;query?:unkn
   }
 }
 
+
+/** Browse one provider Project by expanding its actual sidebar row in a
+ * temporary inactive tab. This does not navigate the user's task conversation. */
+async function browseChatBridgeProject({tabId,projectId}:{tabId?:unknown;projectId?:unknown}={}) {
+  if(!Number.isSafeInteger(tabId)||Number(tabId)<1
+    ||typeof projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(projectId))
+    throw new Error("ChatGPT project identity is invalid.");
+  const source=await chooseTab(Number(tabId));
+  if(source.pendingUrl||!chatGptConversationIdentity(source))
+    throw new Error("Project browsing requires an exact open ChatGPT conversation.");
+  const tabs=workerTabs();
+  if(!tabs.create||!tabs.remove)throw new Error("Temporary Chrome project tabs are unavailable.");
+  let tempId:number|null=null;
+  try{
+    const created=await tabs.create({url:"https://chatgpt.com/",active:false});
+    if(typeof created?.id!=="number"||!Number.isSafeInteger(created.id)||created.id<1)
+      throw new Error("Chrome did not return a project tab id.");
+    tempId=created.id;
+    await waitForTab(tempId,tab=>tab.status==="complete"&&tab.url?.startsWith("https://chatgpt.com/")===true,10_000);
+    await requireDebuggableTab(tempId);await attachTab(tempId);
+    const result=await send(tempId,"Runtime.evaluate",{expression:`(async()=>{
+      if(location.origin!=='https://chatgpt.com')return{status:'unavailable',items:[]};
+      const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+      const project=${JSON.stringify(projectId)};
+      let row=null;
+      for(let n=0;n<35;n++){
+        row=[...document.querySelectorAll('[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]')]
+          .find(x=>x.getAttribute('data-app-action-sidebar-project-id')===project
+            &&x.getClientRects().length);
+        if(row)break;
+        await sleep(100);
+      }
+      if(!row)return{status:'unavailable',items:[]};
+      const name=String(row.getAttribute('data-app-action-sidebar-project-label')||'').trim().slice(0,120);
+      if(!name)return{status:'unavailable',items:[]};
+      if(row.getAttribute('aria-expanded')!=='true')row.click();
+      for(let n=0;n<25&&row.getAttribute('aria-expanded')!=='true';n++)await sleep(100);
+      if(row.getAttribute('aria-expanded')!=='true')return{status:'unavailable',items:[]};
+      const read=()=>{
+        const output=[];
+        for(const link of document.querySelectorAll('nav a[href],aside a[href]')){
+          if(!link.getClientRects().length)continue;
+          const href=String(link.getAttribute('href')||'');
+          const path=href.split('/').filter(Boolean);
+          if(path.length!==4||path[0]!=='g'||path[1]!==project||path[2]!=='c'
+            ||!/^[a-zA-Z0-9-]{8,160}$/u.test(path[3]))continue;
+          const title=String(link.innerText||link.getAttribute('aria-label')||'')
+            .replace(/\\s+/gu,' ').trim().slice(0,120);
+          if(!title)continue;
+          output.push({conversationId:path[3],canonicalUrl:location.origin+href,title});
+          if(output.length>=100)break;
+        }
+        return output;
+      };
+      let items=[],last='',stable=0;
+      for(let n=0;n<35;n++){
+        items=read();
+        const signature=JSON.stringify(items.map(x=>x.conversationId));
+        if(signature===last&&items.length)stable++;
+        else stable=0;
+        last=signature;
+        if(stable>=3)break;
+        await sleep(120);
+      }
+      return{status:'ready',projectId:project,name,items,partial:true};
+    })()`,returnByValue:true,awaitPromise:true,silent:true});
+    if(result?.exceptionDetails)throw new Error("The ChatGPT project list could not be read.");
+    const data:any=cdpObject(result?.result?.value);
+    if(data?.status!=="ready"||data.projectId!==projectId
+      ||typeof data.name!=="string"||!data.name.trim()||data.name.length>120
+      ||!Array.isArray(data.items)||data.items.length>100)
+      throw new Error("The provider did not confirm the requested project.");
+    const links=new Map<string,string>();
+    const items=data.items.map((item:any)=>{
+      if(!item||typeof item.conversationId!=="string"||typeof item.canonicalUrl!=="string"
+        ||typeof item.title!=="string"||!item.title.trim()||item.title.length>120
+        ||chatGptConversationIdentity(item.canonicalUrl)?.conversationId!==item.conversationId)
+        throw new Error("The provider project returned an invalid conversation.");
+      links.set(item.conversationId,item.canonicalUrl);
+      return{conversationId:item.conversationId,canonicalUrl:item.canonicalUrl,title:item.title};
+    });
+    const current=await chooseTab(Number(tabId));
+    if(current.pendingUrl||current.url!==source.url)
+      throw new Error("The source conversation changed during project browsing.");
+    const now=Date.now();
+    for(const [key,value] of chatBridgeSearchTickets)
+      if(value.createdAt<now-CHAT_BRIDGE_SEARCH_TTL_MS)chatBridgeSearchTickets.delete(key);
+    while(chatBridgeSearchTickets.size>=4)chatBridgeSearchTickets.delete(chatBridgeSearchTickets.keys().next().value!);
+    const ticket=crypto.randomUUID();
+    chatBridgeSearchTickets.set(ticket,{tabId:Number(tabId),sourceUrl:source.url||"",createdAt:now,links});
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:Number(tabId),projectId,
+      name:data.name,items,ticket,partial:true,source:"visible-project"};
+  }finally{
+    if(tempId!==null){
+      await detachTab(tempId).catch(()=>{});
+      await tabs.remove(tempId).catch(()=>{});
+    }
+  }
+}
+
 async function readChatBridgeSidebar({tabId}:{tabId?:unknown}={}) {
   if(!Number.isSafeInteger(tabId)||Number(tabId)<1)throw new Error("Chat history tab is invalid.");
   const tab=await chooseTab(Number(tabId));
@@ -2347,8 +2447,15 @@ async function readChatBridgeSidebar({tabId}:{tabId?:unknown}={}) {
       if(location.protocol!=='https:'||location.hostname!=='chatgpt.com')return{threads:[],partial:true};
       const navigation=[...document.querySelectorAll('nav a[href],aside a[href]')];
       const projects=new Map();
-      // Project shortcuts can be outside the sidebar, in ChatGPT's
-      // composer toolbar. They still carry their own accessible name.
+      // ChatGPT keeps stable native Project IDs and labels on collapsed
+      // sidebar rows; do not require users to expand every Project in Chrome.
+      for(const row of document.querySelectorAll('[data-app-action-sidebar-project-row][data-app-action-sidebar-project-id]')){
+        if(!row.getClientRects().length)continue;
+        const id=String(row.getAttribute('data-app-action-sidebar-project-id')||'');
+        const name=String(row.getAttribute('data-app-action-sidebar-project-label')||'').trim().slice(0,120);
+        if(/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(id)&&name)projects.set(id,name);
+      }
+      // Project shortcuts can also appear in the composer toolbar.
       for(const link of document.querySelectorAll('a[href^="/g/g-p-"]')){
         if(!link.getClientRects().length)continue;
         const match=link.getAttribute('href')?.match(/^\\/g\\/(g-p-[a-zA-Z0-9-]{8,100})\\/project\\/?$/u);
@@ -2368,11 +2475,21 @@ async function readChatBridgeSidebar({tabId}:{tabId?:unknown}={}) {
           title,projectId:match[1]||null,projectName:match[1]?projects.get(match[1])||null:null});
         if(threads.length>=100)break;
       }
-      return{threads,partial:true,source:'visible-sidebar'};
+      return{threads,projects:[...projects].slice(0,50).map(([id,name])=>({id,name})),
+        partial:true,source:'visible-sidebar'};
     })()`,returnByValue:true,silent:true});
     if(result?.exceptionDetails)throw new Error("ChatGPT sidebar inspection failed.");
     const value=cdpObject(result?.result?.value);
-    if(!Array.isArray(value?.threads)||value.threads.length>100)throw new Error("Sidebar result is invalid.");
+    if(!Array.isArray(value?.threads)||value.threads.length>100
+      ||!Array.isArray(value?.projects)||value.projects.length>50)
+      throw new Error("Sidebar result is invalid.");
+    const projectRows=value.projects.map((project:any)=>{
+      if(!project||typeof project.id!=="string"
+        ||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(project.id)
+        ||typeof project.name!=="string"||!project.name.trim()||project.name.length>120)
+        throw new Error("Sidebar returned an invalid project.");
+      return{id:project.id,name:project.name};
+    });
     const rows=value.threads.map((row:any)=>{
       if(!row||typeof row.title!=="string"||!row.title.trim()||row.title.length>120
         ||typeof row.conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(row.conversationId)
@@ -2385,7 +2502,8 @@ async function readChatBridgeSidebar({tabId}:{tabId?:unknown}={}) {
     });
     const after=await chooseTab(Number(tabId));
     if(after.pendingUrl||after.url!==tab.url)throw new Error("ChatGPT sidebar tab changed during inspection.");
-    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:Number(tabId),threads:rows,partial:value.partial===true,source:"visible-sidebar"};
+    return{chatBridgeVersion:CHAT_BRIDGE_VERSION,tabId:Number(tabId),threads:rows,
+      projects:projectRows,partial:value.partial===true,source:"visible-sidebar"};
   }finally{scheduleDetach(Number(tabId),CONTINUATION_MUTATION_DETACH_MS);}
 }
 
@@ -9309,6 +9427,7 @@ const COMMANDS = {
   "chat_bridge.read_final": readChatBridgeFinalResponse,
   "chat_bridge.sidebar": readChatBridgeSidebar,
   "chat_bridge.search": searchChatBridgeHistory,
+  "chat_bridge.project": browseChatBridgeProject,
   "chat_bridge.model": chatBridgeModelControl,
   "chat_bridge.open_history": openChatBridgeHistory,
   "chat_bridge.recent": readChatBridgeRecent,

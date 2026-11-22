@@ -456,6 +456,13 @@ let chatThreadList = [];
 let chatThreadBrowserInstanceId = null;
 let chatDuplicateCount = 0;
 let chatHistoryPartial = false;
+let chatProjectCatalog = [];
+let chatProjectId = null;
+let chatProjectName = "";
+let chatProjectThreads = [];
+let chatProjectBusy = false;
+let chatProjectError = "";
+let chatProjectGeneration = 0;
 let chatSearchQuery = "";
 let chatSearchResults = [];
 let chatSearchBusy = false;
@@ -511,21 +518,63 @@ function renderNativeChatThreads() {
     const query = text.toLocaleLowerCase(locale);
     const deepSearch = ready && text.length >= 2;
     const searching = deepSearch && (chatSearchBusy || chatSearchQuery !== text);
+    const browseProject = ready && !deepSearch && chatProjectId !== null;
     const threads = !ready ? [] : deepSearch
         ? chatSearchQuery === text ? chatSearchResults.map(result => {
             const known = chatThreadList.find(thread => thread.conversationId === result.conversationId);
             return { ...result, projectId: known?.projectId || null, projectName: known?.projectName || null };
         }) : []
-        : chatThreadList.filter(thread => String(thread.title || "ChatGPT conversation").toLocaleLowerCase(locale).includes(query));
-    const signature = JSON.stringify([state.language, ready, query, searching, chatSearchError, threads.map(thread => [thread.conversationId, thread.tabId, thread.title, thread.opened, thread.projectId,
+        : browseProject ? chatProjectThreads : chatThreadList.filter(thread => String(thread.title || "ChatGPT conversation").toLocaleLowerCase(locale).includes(query));
+    const signature = JSON.stringify([state.language, ready, query, searching, chatSearchError,
+        chatProjectCatalog.map(p => [p.id, p.name]), chatProjectId, chatProjectBusy, chatProjectError,
+        threads.map(thread => [thread.conversationId, thread.tabId, thread.title, thread.opened, thread.projectId,
             thread.projectName, isSelectedNativeChatThread(thread)])]);
     const list = $("native-chat-thread-list");
     if (signature !== chatThreadRenderSignature) {
         chatThreadRenderSignature = signature;
         const focused = document.activeElement instanceof HTMLButtonElement && list.contains(document.activeElement)
             ? document.activeElement.dataset.conversationId : null;
+        const focusedProject = document.activeElement instanceof HTMLButtonElement && list.contains(document.activeElement)
+            ? document.activeElement.dataset.projectId : null;
+        const projectExpanded = list.querySelector(".native-chat-project-index")?.open ?? true;
         const next = document.createDocumentFragment();
         let nextFocus;
+        if (ready && !deepSearch && chatProjectCatalog.length) {
+            const details = document.createElement("details");
+            details.className = "native-chat-project-index";
+            details.open = projectExpanded;
+            const summary = document.createElement("summary");
+            summary.textContent = localizeUiText("Projects") + " · " + chatProjectCatalog.length;
+            details.append(summary);
+            const choices = document.createElement("div");
+            choices.className = "native-chat-project-choices";
+            const recent = document.createElement("button");
+            recent.type = "button";
+            recent.className = "native-chat-project-choice";
+            recent.dataset.projectId = "__recent__";
+            if (!chatProjectId)
+                recent.classList.add("is-active");
+            recent.textContent = localizeUiText("Recent conversations");
+            recent.addEventListener("click", () => { void browseNativeChatProject(null); });
+            choices.append(recent);
+            if (focusedProject === "__recent__")
+                nextFocus = recent;
+            for (const item of chatProjectCatalog) {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "native-chat-project-choice";
+                button.dataset.projectId = String(item.id);
+                button.textContent = String(item.name);
+                if (chatProjectId === item.id)
+                    button.classList.add("is-active");
+                button.addEventListener("click", () => { void browseNativeChatProject(String(item.id)); });
+                choices.append(button);
+                if (focusedProject === item.id)
+                    nextFocus = button;
+            }
+            details.append(choices);
+            next.append(details);
+        }
         const groups = new Map();
         for (const thread of threads) {
             const project = typeof thread.projectId === "string" && thread.projectId
@@ -533,7 +582,8 @@ function renderNativeChatThreads() {
             const groupKey = project || "__recent__";
             const title = project
                 ? String(thread.projectName || "ChatGPT project")
-                : localizeUiText(deepSearch ? "Search results" : "Recent conversations");
+                : localizeUiText(deepSearch ? "Search results"
+                    : browseProject ? chatProjectName || "ChatGPT project" : "Recent conversations");
             if (!groups.has(groupKey))
                 groups.set(groupKey, { title, rows: [] });
             groups.get(groupKey).rows.push(thread);
@@ -581,10 +631,13 @@ function renderNativeChatThreads() {
             empty.className = "native-chat-list-empty";
             empty.textContent = localizeUiText(searching
                 ? "Searching your ChatGPT history…"
-                : deepSearch && chatSearchError ? chatSearchError
-                    : deepSearch ? "No confirmed conversation results. Try another search."
-                        : chatThreadList.length ? "No conversations match your search."
-                            : "Open ChatGPT in Chrome to discover your conversations.");
+                : browseProject && chatProjectBusy ? "Loading project conversations…"
+                    : browseProject && chatProjectError ? chatProjectError
+                        : browseProject ? "No visible conversations in this project."
+                            : deepSearch && chatSearchError ? chatSearchError
+                                : deepSearch ? "No confirmed conversation results. Try another search."
+                                    : chatThreadList.length ? "No conversations match your search."
+                                        : "Open ChatGPT in Chrome to discover your conversations.");
             next.append(empty);
         }
         list.replaceChildren(next);
@@ -606,6 +659,47 @@ function renderNativeChatThreads() {
     const detail = details.map(localizeUiText).join(" ");
     setNativeChatCopy("native-chat-list-detail", detail);
     $("native-chat-list-detail").hidden = !detail;
+}
+async function browseNativeChatProject(projectId) {
+    if (chatProjectBusy)
+        return;
+    if (!projectId) {
+        chatProjectId = null;
+        chatProjectName = "";
+        chatProjectThreads = [];
+        chatProjectError = "";
+        chatProjectGeneration++;
+        renderNativeChatThreads();
+        return;
+    }
+    const item = chatProjectCatalog.find(project => project.id === projectId);
+    if (!item)
+        return;
+    chatProjectId = projectId;
+    chatProjectName = String(item.name);
+    chatProjectThreads = [];
+    chatProjectError = "";
+    chatProjectBusy = true;
+    const generation = ++chatProjectGeneration;
+    renderNativeChatThreads();
+    try {
+        const data = await mutationJson("/api/v1/chat/project", "POST", { projectId });
+        if (generation !== chatProjectGeneration || chatProjectId !== projectId)
+            return;
+        chatProjectName = String(data.project?.name || item.name);
+        chatProjectThreads = Array.isArray(data.project?.threads) ? data.project.threads : [];
+    }
+    catch (error) {
+        if (generation !== chatProjectGeneration || chatProjectId !== projectId)
+            return;
+        chatProjectError = nativeChatErrorMessage(error);
+    }
+    finally {
+        if (generation === chatProjectGeneration) {
+            chatProjectBusy = false;
+            renderNativeChatThreads();
+        }
+    }
 }
 function scheduleNativeChatSearch() {
     const text = $("native-chat-filter").value.trim();
@@ -1269,6 +1363,7 @@ async function refreshNativeChat(withThreads = false) {
             if (selectionGeneration !== chatSelectionGeneration || chatNewDraft)
                 return;
             chatThreadList = Array.isArray(result.chat?.threads) ? result.chat.threads : [];
+            chatProjectCatalog = Array.isArray(result.chat?.projects) ? result.chat.projects : [];
             chatThreadBrowserInstanceId = typeof result.chat?.browserInstanceId === "string" ? result.chat.browserInstanceId : null;
             chatDuplicateCount = Number.isSafeInteger(result.chat?.duplicateCount) ? Math.max(0, result.chat.duplicateCount) : 0;
             chatHistoryPartial = result.chat?.partial === true;
@@ -1288,6 +1383,7 @@ async function refreshNativeChat(withThreads = false) {
         const message = nativeChatErrorMessage(error);
         if (chatRefreshingThreads) {
             chatThreadList = [];
+            chatProjectCatalog = [];
             chatThreadBrowserInstanceId = null;
             chatDuplicateCount = 0;
             chatHistoryPartial = false;
@@ -1338,6 +1434,10 @@ async function selectNativeChat(thread) {
         if (selectionGeneration !== chatSelectionGeneration)
             return;
         renderNativeChatState(data.chat);
+        chatProjectId = null;
+        chatProjectName = "";
+        chatProjectThreads = [];
+        chatProjectGeneration++;
         const filter = $("native-chat-filter");
         if (filter.value) {
             filter.value = "";

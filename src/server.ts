@@ -3150,6 +3150,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   configManager: equinoxLocalConfigManager,
   getChatThreads: () => nativeChatController.list(),
   searchChatThreads: (value) => nativeChatController.search(value),
+  browseChatProject: (value) => nativeChatController.project(value),
   selectChatThread: (value) => nativeChatController.select(value),
   getChatState: () => nativeChatController.read(),
   sendChatText: (value) => nativeChatController.send(value),

@@ -43,6 +43,9 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
   let blocked=false;
   let creationBlocked=false;
   let selectedRevision=0;
+  let browsedProject:{projectId:string;tabId:number;browserInstanceId:string;checkedAt:number;
+    threads:Array<{tabId:number;conversationId:string;title:string;canonicalUrl:string;
+      opened:false;projectId:string;projectName:string;searchTicket:string}>}|null=null;
   let searched:{query:string;ticket:string;tabId:number;browserInstanceId:string;
     checkedAt:number;threads:Array<{tabId:number;conversationId:string;title:string;
       canonicalUrl:string;opened:false;projectId:null;projectName:null;excerpt:string;searchTicket:string}>}|null=null;
@@ -126,6 +129,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       ||[...open.values()][0])?.tabId;
     const ordered=new Map<string,Thread>();
     let sidebarPartial=true;
+    let projects:Array<{id:string;name:string}>=[];
     if(observer && Number(browserBridge.snapshot()?.contexts?.user?.extension?.capabilityVersions?.chatBridge||0)>=13){
       try{
         const report=await call("chat_bridge.sidebar",{tabId:observer},12_000) as any;
@@ -143,6 +147,10 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
                 canonicalUrl:entry.canonicalUrl,opened:false,
                 projectId:entry.projectId||null,projectName:safeTitle(entry.projectName||"")||null});
           }
+          if(Array.isArray(report.projects))projects=report.projects.slice(0,50)
+            .filter((item:any)=>typeof item?.id==="string"&&/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(item.id)
+              &&typeof item?.name==="string"&&item.name.trim())
+            .map((item:any)=>({id:item.id,name:safeTitle(item.name)}));
           sidebarPartial=true;
         }
       }catch{
@@ -152,7 +160,7 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     for(const thread of open.values())if(!duplicated.has(thread.conversationId)&&!ordered.has(thread.conversationId))
       ordered.set(thread.conversationId,thread);
     return{browserInstanceId,duplicateCount:duplicated.size,
-      source:"visible-sidebar",partial:sidebarPartial,
+      source:"visible-sidebar",partial:sidebarPartial,projects,
       threads:[...ordered.values()].slice(0,100).map(t=>({...t,
         selected:selected?.conversationId===t.conversationId&&selected?.tabId===t.tabId}))};
   };
@@ -192,6 +200,40 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       browserInstanceId,checkedAt:Date.now(),threads};
     return{query:searched.query,threads,partial:true,source:"provider-search-dialog"};
   };
+  const project=async(value:unknown)=>{
+    if(!value||typeof value!=="object"||Array.isArray(value))invalid("Invalid ChatGPT project request.");
+    const body=value as Record<string,unknown>;
+    if(Object.keys(body).length!==1||typeof body.projectId!=="string"
+      ||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId))
+      invalid("Project browsing requires an observed ChatGPT project.");
+    const available=await list();
+    const choice=available.projects.find(item=>item.id===body.projectId);
+    if(!choice)invalid("The selected project is not present in the current ChatGPT sidebar.");
+    const browserInstanceId=available.browserInstanceId;
+    const observer=selected?.tabId??available.threads.find(thread=>thread.opened)?.tabId;
+    if(!observer)invalid("A connected ChatGPT conversation is required to browse projects.");
+    const revision=selectedRevision;
+    const report=await call("chat_bridge.project",{tabId:observer,projectId:body.projectId},16_000) as any;
+    if(context()!==browserInstanceId||revision!==selectedRevision
+      ||report?.tabId!==observer||report?.projectId!==body.projectId
+      ||typeof report.ticket!=="string"||!Array.isArray(report.items))
+      invalid("The project or Chrome session changed during browsing.");
+    const threads:Array<{tabId:number;conversationId:string;title:string;canonicalUrl:string;
+      opened:false;projectId:string;projectName:string;searchTicket:string}>=[];
+    const seen=new Set<string>();
+    for(const item of report.items.slice(0,100)){
+      if(typeof item?.conversationId!=="string"||typeof item?.canonicalUrl!=="string"
+        ||typeof item.title!=="string"||seen.has(item.conversationId)
+        ||chatGptConversationIdFromUrl(item.canonicalUrl)!==item.conversationId)continue;
+      seen.add(item.conversationId);
+      threads.push({tabId:observer,conversationId:item.conversationId,title:safeTitle(item.title),
+        canonicalUrl:item.canonicalUrl,opened:false,projectId:choice.id,
+        projectName:choice.name,searchTicket:report.ticket});
+    }
+    browsedProject={projectId:choice.id,tabId:observer,browserInstanceId,
+      checkedAt:Date.now(),threads};
+    return{projectId:choice.id,name:choice.name,threads,partial:true,source:"visible-project"};
+  };
   const model=async(value:{action:"read"|"discover"|"choose"|"power";
     choice?:string;direction?:"left"|"right"})=>{
     const target=selected;
@@ -222,6 +264,10 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
       ||(searched&&Date.now()-searched.checkedAt<90_000
         &&searched.browserInstanceId===available.browserInstanceId
         ?searched.threads.find(t=>t.tabId===object.tabId&&t.conversationId===object.conversationId)
+        :null)
+      ||(browsedProject&&Date.now()-browsedProject.checkedAt<90_000
+        &&browsedProject.browserInstanceId===available.browserInstanceId
+        ?browsedProject.threads.find(t=>t.tabId===object.tabId&&t.conversationId===object.conversationId)
         :null);
     if(!tab)invalid("This ChatGPT conversation is no longer in recent history or the current search.");
     // For a historical sidebar row, navigate the one verified user browser
@@ -588,5 +634,5 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     return attempt;
   };
 
-  return Object.freeze({list,search,select,read,send,startNew,model});
+  return Object.freeze({list,search,project,select,read,send,startNew,model});
 }

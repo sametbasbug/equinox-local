@@ -19,6 +19,8 @@ const TR_UI = Object.freeze({
     "Latest messages": "Son mesajlar",
     "Jump to latest message": "Son mesaja git",
     "This quotation is too long for the message limit. Select a shorter excerpt.": "Bu alıntı mesaj sınırını aşıyor. Daha kısa bir bölüm seçin.",
+    "Loading project conversations…": "Proje sohbetleri yükleniyor…",
+    "No visible conversations in this project.": "Bu projede görünür sohbet bulunamadı.",
     "Search all chats": "Tüm sohbetlerde ara",
     "Search results": "Arama sonuçları",
     "Searching your ChatGPT history…": "ChatGPT geçmişinde aranıyor…",
