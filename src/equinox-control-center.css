@@ -778,7 +778,15 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .native-chat-action-rename { display:flex; gap:8px; align-items:center; }
 .native-chat-action-rename input { flex:1; min-width:0; }
 .native-chat-action-rename .button { flex: none; }
+ .native-chat-action-move { display:flex; gap:8px; align-items:center; margin-bottom: 14px; }
+.native-chat-action-move select { flex: 1; min-width:0; }
+.native-chat-action-move .button { flex:none; }
+.native-chat-action-rename { margin-bottom: 16px; }
 .native-chat-action-footer { display:flex; justify-content:space-between; gap: 8px; margin-top: 16px; }
+.native-chat-action-archive { margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--line); }
+.native-chat-action-confirm { padding: 9px 11px; margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.native-chat-action-confirm p { margin: 0 0 10px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.native-chat-action-confirm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .native-chat-action-status { min-height: 19px; margin: 14px 0 0; color: var(--muted); font-size: 12px; }
 .native-chat-thread {
   display: block;

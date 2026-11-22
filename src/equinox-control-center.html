@@ -676,9 +676,26 @@
             <input id="native-chat-action-name" type="text" maxlength="120" autocomplete="off" disabled>
             <button id="native-chat-action-rename" class="button secondary" type="button" disabled>Rename</button>
           </div>
+          <label class="native-chat-action-label" for="native-chat-action-project">Move to project</label>
+          <div class="native-chat-action-move">
+            <select id="native-chat-action-project" aria-label="Destination project" disabled>
+              <option value="">Choose a project</option>
+            </select>
+            <button id="native-chat-action-move" class="button secondary" type="button" disabled>Move</button>
+          </div>
           <div class="native-chat-action-footer">
             <button id="native-chat-action-pin" class="button secondary" type="button" disabled>Pin chat</button>
             <button id="native-chat-action-done" class="button secondary" type="button">Close</button>
+          </div>
+          <div class="native-chat-action-archive">
+            <button id="native-chat-action-archive" class="text-button" type="button" disabled>Archive conversation</button>
+            <div id="native-chat-action-archive-confirm" class="native-chat-action-confirm" hidden>
+              <p id="native-chat-action-archive-question">Archive this conversation?</p>
+              <div class="native-chat-action-confirm-actions">
+                <button id="native-chat-action-archive-yes" class="button secondary" type="button">Confirm archive</button>
+                <button id="native-chat-action-archive-no" class="button secondary" type="button">Cancel</button>
+              </div>
+            </div>
           </div>
           <p id="native-chat-action-status" class="native-chat-action-status" role="status" aria-live="polite"></p>
         </dialog>

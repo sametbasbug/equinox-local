@@ -389,11 +389,14 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 authorizeMutation();
                 if (typeof controlChatConversation !== "function")
                     throw badRequest("ChatGPT conversation actions are unavailable.");
-                const body = validateExactObject(await readBody(), ["tabId", "conversationId", "action", "expectedTitle", "title", "mutationId"], "ChatGPT conversation action");
+                const body = validateExactObject(await readBody(), ["tabId", "conversationId", "action", "expectedTitle", "title", "mutationId", "targetProjectId"], "ChatGPT conversation action");
                 if (!Number.isSafeInteger(body.tabId) || body.tabId < 1
                     || typeof body.conversationId !== "string"
                     || !/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
-                    || !["inspect", "pin", "rename"].includes(String(body.action))
+                    || !["inspect", "pin", "rename", "move", "archive"].includes(String(body.action))
+                    || (body.action === "move" && (typeof body.targetProjectId !== "string"
+                        || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.targetProjectId)))
+                    || (body.action !== "move" && body.targetProjectId !== undefined)
                     || (body.action !== "inspect" && (typeof body.expectedTitle !== "string"
                         || !body.expectedTitle.trim() || body.expectedTitle.length > 120))
                     || (body.action === "rename" && (typeof body.title !== "string"

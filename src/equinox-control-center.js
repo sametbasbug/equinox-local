@@ -461,6 +461,7 @@ let chatActionProvider = null;
 let chatActionGeneration = 0;
 let chatActionBusy = false;
 let chatActionMutating = false;
+let chatActionArchivePending = false;
 let chatProjectCatalog = [];
 let chatProjectId = null;
 let chatProjectName = "";
@@ -733,6 +734,16 @@ function updateNativeChatActionControls() {
     name.disabled = !canEdit || chatActionProvider.rename !== true;
     $("native-chat-action-rename").disabled = !changed || chatActionProvider.rename !== true;
     $("native-chat-action-pin").disabled = !canEdit || chatActionProvider.pin !== true;
+    const projectSelect = $("native-chat-action-project");
+    const selectedProject = chatProjectCatalog.find(p => p.id === projectSelect.value);
+    const taskBound = chatActionThread?.conversationId === chatActive?.conversationId
+        && chatActionThread?.tabId === chatActive?.tabId;
+    projectSelect.disabled = !canEdit || chatActionProvider.move !== true || taskBound
+        || chatProjectCatalog.length === 0;
+    $("native-chat-action-archive").disabled = !canEdit || chatActionProvider.archive !== true || taskBound;
+    $("native-chat-action-move").disabled = projectSelect.disabled || !selectedProject
+        || selectedProject.id === chatActionThread?.projectId
+        || chatProjectCatalog.filter(p => p.name === selectedProject.name).length !== 1;
     setNativeChatCopy("native-chat-action-pin", chatActionProvider?.pinned === true
         ? "Unpin chat" : "Pin chat");
 }
@@ -743,6 +754,8 @@ async function openNativeChatActions(thread) {
     const generation = ++chatActionGeneration;
     chatActionThread = thread;
     chatActionProvider = null;
+    chatActionArchivePending = false;
+    $("native-chat-action-archive-confirm").hidden = true;
     chatActionBusy = true;
     setNativeChatCopy("native-chat-action-title", "Conversation actions");
     setNativeChatCopy("native-chat-action-subtitle", String(thread.title || "ChatGPT conversation"));
@@ -764,6 +777,11 @@ async function openNativeChatActions(thread) {
         chatActionThread = { ...thread, title: name };
         $("native-chat-action-name").value = name;
         setNativeChatCopy("native-chat-action-subtitle", name);
+        const selector = $("native-chat-action-project");
+        const options = [new Option(localizeUiText("Choose a project"), ""),
+            ...chatProjectCatalog.map(project => new Option(String(project.name), String(project.id)))];
+        selector.replaceChildren(...options);
+        selector.value = "";
         setNativeChatCopy("native-chat-action-status", "Account actions are ready.");
     }
     catch (error) {
@@ -787,6 +805,15 @@ async function applyNativeChatAction(action) {
     const title = $("native-chat-action-name").value.trim();
     if (action === "rename" && (!title || title === thread.title || title.length > 120))
         return;
+    const projectId = $("native-chat-action-project").value;
+    const targetProject = action === "move" ? chatProjectCatalog.find(p => p.id === projectId) : null;
+    if (action === "move" && (!targetProject || !projectId || targetProject.id === thread.projectId
+        || chatProjectCatalog.filter(p => p.name === targetProject.name).length !== 1))
+        return;
+    if (action === "archive" && !chatActionArchivePending)
+        return;
+    chatActionArchivePending = false;
+    $("native-chat-action-archive-confirm").hidden = true;
     chatActionBusy = true;
     chatActionMutating = true;
     $("native-chat-action-close").setAttribute("aria-disabled", "true");
@@ -798,23 +825,47 @@ async function applyNativeChatAction(action) {
             tabId: thread.tabId, conversationId: thread.conversationId, action,
             expectedTitle: String(thread.title), mutationId: "cma-" + crypto.randomUUID(),
             ...(action === "rename" ? { title } : {}),
+            ...(targetProject ? { targetProjectId: targetProject.id } : {}),
         });
         const confirmed = result.conversationAction;
         if (confirmed?.confirmed !== true || confirmed?.conversationId !== thread.conversationId)
             throw new Error("ChatGPT did not confirm the conversation change.");
         const actual = String(confirmed.title || thread.title);
+        if (action === "archive") {
+            for (const threads of [chatThreadList, chatSearchResults, chatProjectThreads]) {
+                const index = threads.findIndex(item => item.conversationId === thread.conversationId);
+                if (index >= 0)
+                    threads.splice(index, 1);
+            }
+            chatThreadRenderSignature = "";
+            renderNativeChatThreads();
+            chatThreadRefreshRequested = true;
+            if (dialog.open)
+                dialog.close();
+            showToast("Conversation archived in ChatGPT.");
+            if (state.activeSection === "chat")
+                void refreshNativeChat(true);
+            return;
+        }
         for (const threads of [chatThreadList, chatSearchResults, chatProjectThreads]) {
             for (const item of threads)
                 if (item.conversationId === thread.conversationId) {
                     item.title = actual;
+                    if (targetProject) {
+                        item.projectId = String(targetProject.id);
+                        item.projectName = String(targetProject.name);
+                    }
                 }
         }
         if (generation === chatActionGeneration && dialog.open) {
             chatActionProvider = confirmed;
-            chatActionThread = { ...thread, title: actual };
+            chatActionThread = { ...thread, title: actual,
+                ...(targetProject ? { projectId: targetProject.id, projectName: targetProject.name } : {}) };
             $("native-chat-action-name").value = actual;
             setNativeChatCopy("native-chat-action-subtitle", actual);
-            setNativeChatCopy("native-chat-action-status", action === "rename" ? "Conversation renamed in ChatGPT." : "Pin preference updated in ChatGPT.");
+            setNativeChatCopy("native-chat-action-status", action === "rename" ? "Conversation renamed in ChatGPT."
+                : action === "move" ? "Conversation moved to project in ChatGPT."
+                    : "Pin preference updated in ChatGPT.");
         }
         chatThreadRenderSignature = "";
         renderNativeChatThreads();
@@ -5341,10 +5392,28 @@ function bindEvents() {
     });
     $("native-chat-action-dialog").addEventListener("close", () => {
         chatActionGeneration++;
+        chatActionArchivePending = false;
         chatActionThread = null;
         chatActionProvider = null;
     });
     $("native-chat-action-name").addEventListener("input", updateNativeChatActionControls);
+    $("native-chat-action-project").addEventListener("change", updateNativeChatActionControls);
+    $("native-chat-action-move").addEventListener("click", () => void applyNativeChatAction("move"));
+    $("native-chat-action-archive").addEventListener("click", () => {
+        if ($("native-chat-action-archive").disabled)
+            return;
+        chatActionArchivePending = true;
+        const title = String(chatActionThread?.title || "ChatGPT conversation");
+        setNativeChatCopy("native-chat-action-archive-question", localizeUiText("Archive this conversation?") + " " + title);
+        $("native-chat-action-archive-confirm").hidden = false;
+        $("native-chat-action-archive-yes").focus();
+    });
+    $("native-chat-action-archive-no").addEventListener("click", () => {
+        chatActionArchivePending = false;
+        $("native-chat-action-archive-confirm").hidden = true;
+        $("native-chat-action-archive").focus();
+    });
+    $("native-chat-action-archive-yes").addEventListener("click", () => void applyNativeChatAction("archive"));
     $("native-chat-action-pin").addEventListener("click", () => void applyNativeChatAction("pin"));
     $("native-chat-action-rename").addEventListener("click", () => void applyNativeChatAction("rename"));
     $("native-chat-filter").addEventListener("input", scheduleNativeChatSearch);

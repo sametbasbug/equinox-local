@@ -242,10 +242,14 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
     if(!value||typeof value!=="object"||Array.isArray(value))
       invalid("Invalid ChatGPT conversation action request.");
     const body=value as Record<string,unknown>;
-    if(Object.keys(body).some(k=>!["tabId","conversationId","action","expectedTitle","title","mutationId"].includes(k))
+    if(Object.keys(body).some(k=>!["tabId","conversationId","action","expectedTitle","title","mutationId",
+      "targetProjectId"].includes(k))
       ||!Number.isSafeInteger(body.tabId)||Number(body.tabId)<1
       ||typeof body.conversationId!=="string"||!/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
-      ||!["inspect","pin","rename"].includes(String(body.action))
+      ||!["inspect","pin","rename","move","archive"].includes(String(body.action))
+      ||(body.action==="move"&&(typeof body.targetProjectId!=="string"
+        ||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.targetProjectId)))
+      ||(body.action!=="move"&&body.targetProjectId!==undefined)
       ||(body.action!=="inspect"&&(typeof body.expectedTitle!=="string"
         ||!body.expectedTitle.trim()||body.expectedTitle.length>120))
       ||(body.action==="rename"&&(typeof body.title!=="string"
@@ -283,6 +287,18 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
         if(!thread)invalid("The selected chat is not in the current provider history.");
         if(key&&body.expectedTitle!==thread.title)
           invalid("The selected chat title changed. Refresh its actions.");
+        const destination=body.action==="move"
+          ?available.projects.find(project=>project.id===body.targetProjectId):null;
+        if(body.action==="move"){
+          if(!destination||available.projects.filter(project=>project.name===destination.name).length!==1)
+            invalid("The requested ChatGPT project is missing or its name is ambiguous.");
+          if(thread.projectId===destination.id)
+            invalid("This conversation is already in the selected project.");
+          if(selected?.conversationId===id&&selected?.tabId===tabId)
+            invalid("The active Native Chat conversation cannot move projects until its Task Capsule binding is safely refreshed. Select another chat first.");
+        }
+        if(body.action==="archive"&&selected?.conversationId===id&&selected?.tabId===tabId)
+          invalid("The active Native Chat conversation cannot be archived until its Task Capsule binding is safely detached.");
         const revision=selectedRevision;
         const response=await call("chat_bridge.conversation_action",{
           tabId,conversationId:id,canonicalUrl:thread.canonicalUrl,
@@ -290,10 +306,12 @@ export function createNativeChatController({browserBridge,chatBridge,taskStore}:
           action:body.action,
           ...(key?{expectedTitle:thread.title}:{}),
           ...(body.action==="rename"?{title:String(body.title).trim()}:{}),
+          ...(destination?{targetProjectId:destination.id,targetProjectName:destination.name}:{}),
         },20_000) as any;
         if(context()!==available.browserInstanceId||selectedRevision!==revision
           ||response?.tabId!==tabId||response?.conversationId!==id
-          ||response?.action!==body.action||response?.available!==true)
+          ||response?.action!==body.action||response?.available!==true
+          ||(destination&&response.projectId!==destination.id))
           throw new Error("The ChatGPT conversation action lost its exact identity.");
         if(key&&response.confirmed!==true)
           throw new Error("ChatGPT did not confirm this change. Check the provider before retrying.");

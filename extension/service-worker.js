@@ -2470,13 +2470,18 @@ async function openChatBridgeHistory({ tabId, conversationId, canonicalUrl, sear
 }
 /** A native conversation action always targets an exact provider conversation,
  * rendered in a disposable Your Browser tab. Never mutate the task tab. */
-async function controlChatBridgeConversation({ tabId, conversationId, canonicalUrl, searchTicket, action = "inspect", expectedTitle, title } = {}) {
+async function controlChatBridgeConversation({ tabId, conversationId, canonicalUrl, searchTicket, action = "inspect", expectedTitle, title, targetProjectId, targetProjectName } = {}) {
     if (!Number.isSafeInteger(tabId) || Number(tabId) < 1
         || typeof conversationId !== "string" || !/^[a-zA-Z0-9-]{8,160}$/u.test(conversationId)
         || typeof canonicalUrl !== "string" || canonicalUrl.length > 400
         || chatGptConversationIdentity(canonicalUrl)?.conversationId !== conversationId
         || !canonicalUrl.startsWith("https://chatgpt.com/")
-        || !["inspect", "pin", "rename"].includes(action)
+        || !["inspect", "pin", "rename", "move", "archive"].includes(action)
+        || (action === "move" && (typeof targetProjectId !== "string"
+            || !/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(targetProjectId)
+            || typeof targetProjectName !== "string" || !targetProjectName.trim()
+            || targetProjectName.length > 120))
+        || (action !== "move" && (targetProjectId !== undefined || targetProjectName !== undefined))
         || (action !== "inspect" && (typeof expectedTitle !== "string" || !expectedTitle.trim()
             || expectedTitle.length > 120))
         || (action === "rename" && (typeof title !== "string" || !title.trim()
@@ -2522,6 +2527,8 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
       const mode=${JSON.stringify(action)};
       const expected=${JSON.stringify(expectedTitle ?? "")};
       const replacement=${JSON.stringify(title ?? "")};
+      const destinationId=${JSON.stringify(targetProjectId ?? "")};
+      const destinationName=${JSON.stringify(targetProjectName ?? "")};
       const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
       const getRow=()=>document.querySelector('[data-sidebar-archive-chatgpt-id="'+conversation+'"]');
       let row=null;
@@ -2569,10 +2576,64 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
       if(!currentMenu)return{status:'menu-unavailable'};
       const rename=[...currentMenu.querySelectorAll('[role="menuitem"]')]
         .filter(m=>m.getClientRects().length&&m.getAttribute('aria-keyshortcuts')==='R');
-      const capabilities={pin:!!pinButton(),rename:rename.length===1};
+      const moveButton=[...currentMenu.querySelectorAll('[role="menuitem"][aria-haspopup="menu"]')]
+        .filter(x=>/^(Move to project|Projeye taşı)$/iu.test(String(x.innerText||'').trim()));
+      const archiveButton=[...currentMenu.querySelectorAll('[role="menuitem"][aria-keyshortcuts="A"]')]
+        .filter(x=>x.getClientRects().length);
+      const capabilities={pin:!!pinButton(),rename:rename.length===1,move:moveButton.length===1,
+        archive:archiveButton.length===1};
       if(mode==='inspect'){
         await dismiss();
         return{status:'ready',title:before,pinned:pinned(),...capabilities};
+      }
+      if(mode==='archive'){
+        if(archiveButton.length!==1){await dismiss();return{status:'controls-unavailable'};}
+        archiveButton[0].click();
+        let absentChecks=0;
+        for(let n=0;n<50;n++){
+          await pause(100);
+          const modal=[...document.querySelectorAll('[role="dialog"]')]
+            .find(x=>x.getClientRects().length);
+          if(modal)return{status:'provider-confirmation-required'};
+          const existing=getRow();
+          const navigation=document.querySelector('nav,aside');
+          if((!existing||!existing.isConnected)&&navigation&&navigation.getClientRects().length)
+            absentChecks++;
+          else absentChecks=0;
+          // Require stable absence, not a momentary React sidebar re-render.
+          if(absentChecks>=7)
+            return{status:'confirmed',title:before,pinned:false,...capabilities,archived:true};
+        }
+        return{status:'unconfirmed',title:label(),pinned:pinned()};
+      }
+      if(mode==='move'){
+        if(moveButton.length!==1){await dismiss();return{status:'controls-unavailable'};}
+        const row=[...document.querySelectorAll('[data-app-action-sidebar-project-id]')]
+          .filter(x=>x.getClientRects().length
+            &&x.getAttribute('data-app-action-sidebar-project-label')===destinationName);
+        if(row.length!==1||row[0].getAttribute('data-app-action-sidebar-project-id')!==destinationId){
+          await dismiss();return{status:'project-drifted'};
+        }
+        moveButton[0].click();
+        for(let n=0;n<15&&moveButton[0].getAttribute('aria-expanded')!=='true';n++)await pause(80);
+        if(moveButton[0].getAttribute('aria-expanded')!=='true'){
+          await dismiss();return{status:'project-menu-unavailable'};
+        }
+        const choices=[...currentMenu.querySelectorAll('[role="menuitem"]')]
+          .filter(x=>x.getClientRects().length
+            &&String(x.innerText||'').trim()===destinationName);
+        if(choices.length!==1){await dismiss();return{status:'project-ambiguous'};}
+        choices[0].click();
+        for(let n=0;n<55;n++){
+          await pause(100);
+          const path=location.pathname;
+          const link=getRow()?.querySelector('a[href*="/c/"]')?.getAttribute('href')||'';
+          const correct='/g/'+destinationId+'/c/'+conversation;
+          if(path===correct||link===correct)
+            return{status:'confirmed',title:before,pinned:pinned(),...capabilities,
+              projectId:destinationId};
+        }
+        return{status:'unconfirmed',title:label(),pinned:pinned()};
       }
       if(mode!=='rename'||rename.length!==1){await dismiss();return{status:'controls-unavailable'};}
       rename[0].click();
@@ -2622,7 +2683,9 @@ async function controlChatBridgeConversation({ tabId, conversationId, canonicalU
         return { chatBridgeVersion: CHAT_BRIDGE_VERSION, tabId: Number(tabId), conversationId,
             action, confirmed: value.status === "confirmed", available: true,
             title: String(value.title || "").slice(0, 120),
-            pinned: value.pinned === true, pin: value.pin === true, rename: value.rename === true };
+            pinned: value.pinned === true, pin: value.pin === true, rename: value.rename === true,
+            move: value.move === true, archive: value.archive === true, archived: value.archived === true,
+            projectId: typeof value.projectId === "string" ? value.projectId : null };
     }
     finally {
         if (tempId !== null) {
