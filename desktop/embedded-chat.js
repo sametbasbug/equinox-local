@@ -31,6 +31,14 @@ function warnGoogleRestriction(win, language) {
         noLink: true,
     }).catch(() => { }).finally(() => { googleNoticeOpen = false; });
 }
+function isChatGPTOrigin(value) {
+    try {
+        return new URL(value).origin === CHATGPT;
+    }
+    catch {
+        return false;
+    }
+}
 function admitted(value) {
     try {
         const url = new URL(value);
@@ -96,8 +104,6 @@ export function openEmbeddedChatPilot(language = "en") {
         return;
     }
     const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
-    isolated.setPermissionRequestHandler((_contents, _permission, done) => done(false));
-    isolated.setPermissionCheckHandler(() => false);
     const win = new BaseWindow({
         title: "Equinox · ChatGPT Web (experimental)", width: 1180, height: 790,
         minWidth: 700, minHeight: 520, show: true, backgroundColor: "#17171d",
@@ -111,6 +117,68 @@ export function openEmbeddedChatPilot(language = "en") {
             spellcheck: true, devTools: false,
         },
     });
+    // Only this exact provider view can request a basic clipboard write or an
+    // audio-only microphone grant. No camera, screen capture, clipboard read,
+    // notifications, or arbitrary-origin permission escalation is permitted.
+    let microphoneGranted = false;
+    const isProviderView = (contents, origin) => contents?.id === view.webContents.id && isChatGPTOrigin(origin);
+    isolated.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
+        if (!isProviderView(contents, requestingOrigin))
+            return false;
+        if (permission === "clipboard-sanitized-write")
+            return true;
+        return permission === "media" && microphoneGranted && details.mediaType === "audio";
+    });
+    isolated.setPermissionRequestHandler((contents, permission, reply, details) => {
+        if (!isProviderView(contents, details.requestingUrl)) {
+            reply(false);
+            return;
+        }
+        if (permission === "clipboard-sanitized-write") {
+            reply(true);
+            return;
+        }
+        if (permission !== "media") {
+            reply(false);
+            return;
+        }
+        const mediaTypes = "mediaTypes" in details ? details.mediaTypes : undefined;
+        if (!mediaTypes || mediaTypes.length !== 1 || mediaTypes[0] !== "audio") {
+            reply(false);
+            return;
+        }
+        if (microphoneGranted) {
+            reply(true);
+            return;
+        }
+        void dialog.showMessageBox(win, {
+            type: "question",
+            title: language === "tr" ? "ChatGPT mikrofon izni" : "ChatGPT microphone access",
+            message: language === "tr"
+                ? "ChatGPT'nin bu pencerede mikrofonu kullanmasına izin verilsin mi?"
+                : "Allow ChatGPT to use your microphone in this window?",
+            detail: language === "tr"
+                ? "Yalnızca bu ChatGPT oturumuna ve mikrofon sesine izin verilir. Kamera, ekran paylaşımı ve diğer siteler engellenmeye devam eder."
+                : "Only this ChatGPT view and microphone audio are permitted. Camera, screen sharing and other sites remain blocked.",
+            buttons: language === "tr" ? ["İzin ver", "Şimdi değil"] : ["Allow", "Not now"],
+            defaultId: 1, cancelId: 1, noLink: true,
+        }).then(({ response }) => {
+            microphoneGranted = response === 0 && !win.isDestroyed() && !view.webContents.isDestroyed();
+            reply(microphoneGranted);
+        }).catch(() => reply(false));
+    });
+    // A real file chooser can attach files; downloaded ChatGPT attachments must
+    // additionally use Electron's native Save dialog rather than a silent path.
+    const onDownload = (event, item, contents) => {
+        if (contents.id !== view.webContents.id || !isChatGPTOrigin(item.getInitiatorOrigin())) {
+            event.preventDefault();
+            return;
+        }
+        item.setSaveDialogOptions({
+            title: language === "tr" ? "ChatGPT dosyasını kaydet" : "Save ChatGPT download",
+        });
+    };
+    isolated.on("will-download", onDownload);
     // Own the chrome, but never mirror or reimplement any of ChatGPT's
     // account-specific model / effort / project / tool controls.
     const bar = new WebContentsView({ webPreferences: {
@@ -177,6 +245,10 @@ export function openEmbeddedChatPilot(language = "en") {
         catch { /* Ignore intermediate navigation state. */ }
     });
     win.on("closed", () => {
+        microphoneGranted = false;
+        isolated.setPermissionCheckHandler(() => false);
+        isolated.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
+        isolated.removeListener("will-download", onDownload);
         if (!view.webContents.isDestroyed())
             view.webContents.close();
         if (!bar.webContents.isDestroyed())
