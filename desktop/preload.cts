@@ -29,6 +29,7 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
       return () => ipcRenderer.removeListener("equinox-shell:companion-changed", listener);
     },
     requestJson: (request: unknown) => ipcRenderer.invoke("equinox-shell:control-request", request),
+    openEmbeddedChat: () => ipcRenderer.invoke("equinox-shell:open-embedded-chat"),
     setLanguage: (language: unknown) => {
       if (language === "en" || language === "tr") {
         void ipcRenderer.invoke("equinox-shell:language", language).catch(() => {});

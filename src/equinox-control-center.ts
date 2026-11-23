@@ -14,7 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;pickChatFile:(multiple?:boolean)=>Promise<{cancelled:boolean;path:string|null;name:string|null;size:number;files:Array<{path:string;name:string;size:number;preview?:string|null}>}>;clearChatFile:()=>Promise<{cleared:boolean}>;removeChatFile:(name:string)=>Promise<{removed:boolean}>;setLanguage:(language:string)=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;pickChatFile:(multiple?:boolean)=>Promise<{cancelled:boolean;path:string|null;name:string|null;size:number;files:Array<{path:string;name:string;size:number;preview?:string|null}>}>;clearChatFile:()=>Promise<{cleared:boolean}>;removeChatFile:(name:string)=>Promise<{removed:boolean}>;setLanguage:(language:string)=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;openEmbeddedChat:()=>Promise<{opened:boolean}>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -6915,6 +6915,22 @@ function bindEvents() {
       event.preventDefault();
       agentMenu.open = false;
       (agentMenu.querySelector("summary") as HTMLElement)?.focus();
+    }
+  });
+  $("native-chat-open-embedded").addEventListener("click", async () => {
+    const button = document.getElementById("native-chat-open-embedded");
+    if (!(button instanceof HTMLButtonElement)) return;
+    if (!window.equinoxShell?.openEmbeddedChat) {
+      showToast("Embedded ChatGPT preview is unavailable in this installation.");
+      return;
+    }
+    button.disabled = true;
+    try {
+      await window.equinoxShell.openEmbeddedChat();
+    } catch {
+      showToast("Could not open the embedded ChatGPT preview.");
+    } finally {
+      button.disabled = false;
     }
   });
   $("native-chat-copy-link").addEventListener("click", async () => {

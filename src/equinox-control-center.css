@@ -1528,6 +1528,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   white-space: nowrap;
   cursor: pointer;
 }
+#native-chat-open-embedded {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 34px;
+  font-size: 12px;
+  border-color: var(--line);
+  background: var(--surface-hover);
+}
+#native-chat-open-embedded svg { width: 16px; height: 16px; flex: none; }
+#native-chat-open-embedded:hover, #native-chat-open-embedded:focus-visible { border-color: var(--accent); }
 .native-chat-web-action svg { width: 15px; height: 15px; }
 .native-chat-web-action:hover, .native-chat-web-action:focus-visible {
   border-color: var(--line);

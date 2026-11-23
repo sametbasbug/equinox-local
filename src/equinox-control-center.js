@@ -7293,6 +7293,25 @@ function bindEvents() {
             agentMenu.querySelector("summary")?.focus();
         }
     });
+    $("native-chat-open-embedded").addEventListener("click", async () => {
+        const button = document.getElementById("native-chat-open-embedded");
+        if (!(button instanceof HTMLButtonElement))
+            return;
+        if (!window.equinoxShell?.openEmbeddedChat) {
+            showToast("Embedded ChatGPT preview is unavailable in this installation.");
+            return;
+        }
+        button.disabled = true;
+        try {
+            await window.equinoxShell.openEmbeddedChat();
+        }
+        catch {
+            showToast("Could not open the embedded ChatGPT preview.");
+        }
+        finally {
+            button.disabled = false;
+        }
+    });
     $("native-chat-copy-link").addEventListener("click", async () => {
         const url = selectedNativeChatWebUrl();
         if (!url)

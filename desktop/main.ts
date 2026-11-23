@@ -699,6 +699,14 @@ function createWindow(): void {
   void contents.loadURL(controlPageURL()).catch(() => { rendererFailed = true; });
 }
 
+// Explicit fixed action, only from the trusted local Control Center document.
+// Do not expose a generic URL opener or any provider-facing privileged IPC.
+ipcMain.handle("equinox-shell:open-embedded-chat", (event) => {
+  if (!trustedSender(event) || quitting) throw new Error("Untrusted embedded chat request.");
+  openEmbeddedChatPilot(language === "tr" ? "tr" : "en");
+  return { opened: true };
+});
+
 ipcMain.handle("equinox-shell:control-request", async (event, value: unknown) => {
   if (!trustedSender(event) || quitting) throw new Error("Untrusted desktop control request.");
   // The native picker is the only authorization for sending a local file.
