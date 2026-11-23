@@ -138,6 +138,18 @@ Installed signed Mac Source Factory still reports source SHA 141b3d0c6ecaaf79d17
 
 **Desktop automation limitation**: Peekaboo click/typing/key actions often returned ambiguous outcomes despite the real UI visibly advancing; tool refresh and macOS Accessibility/Event Synthesizing preflight were normal. All provider mutations were corroborated by screenshots. Do not blindly repeat uncertain sends or automation mutations.
 
+## 2026-11-23 checkpoint 18: durable PNG history and message editing
+
+Installed macOS Source Factory exact SHA 141b3d0c6ecaaf79d179430f7158145ee12c72d1, role source, version 7.0.0, strict deep codesign PASS, runtime_health HEALTHY without reasons, and authenticated secondary Free session. No executable source changes this checkpoint.
+
+**Historical PNG readback ACCEPTED**: created one disposable nonpersonal 192x160 PNG (496 bytes) showing a blue central square (RGB 28,100,214) on white. The genuine provider composer Add photos & files opened native NSOpenPanel; selected PNG rendered in the composer. Sent the image with a separate text prompt, ChatGPT answered Blue. Navigated to New chat and reopened the named historical chat from Recent; the blue PNG thumbnail, user question and Blue answer reappeared.
+
+**Edit and new response ACCEPTED**: hovered saved user turn, clicked native provider Edit, replaced the question with a shape-identification prompt without removing PNG, then used Send edit once. The provider updated the user turn and responded Square. Moved to New chat and reopened the same conversation: edited prompt, blue PNG and Square persisted. This supports one edited PNG-bearing user turn and regenerated answer in signed-in Mac Free, not all branch/retry/version-history flows.
+
+**Cleanup**: deleted temporary Identify Square Color chat via exact provider Delete chat confirmation with Also delete files uploaded or created in this chat checked. The Recent entry disappeared and Library returned to empty. Local disposable PNG and current-turn desktop screenshots removed during safe checkpoint. No QA chat/project/image intentionally retained.
+
+**Scheduled differential**: official OpenAI help says eligible Free users can create Scheduled tasks subject to account and workspace settings. A public October 19, 2026 GitHub report in openai/codex issue [#55403](https://github.com/openai/codex/issues/55403) documented exactly the same Scheduled tasks could not be loaded text in the official macOS ChatGPT desktop application on a Pro subscription. This demonstrates the symptom is not unique to our embedded Free pilot but does NOT establish the same root cause. Task list/create still unaccepted; no task created.
+
 ## Current product contract: Method 3
 
 On 2026-11-23 the user selected genuine embedded ChatGPT Web. The provider page owns real history, composer, model/thinking options, projects, plugins and all plan entitlements, rather than duplicating them in brittle first-party code. Equinox owns a sandboxed persistent-session Electron WebContentsView, its branded navigation toolbar, permission/URL/download boundaries and the Control Center entry point. No independent Chrome ChatGPT tab is required. Support Free and paid tiers through whatever the real provider exposes, not a hardcoded catalog. The secondary Free-account trial is partially accepted; Plus/Pro and Windows are unverified. No public release or CWS submission before complete user acceptance.
@@ -151,12 +163,12 @@ The earlier Browser Bridge Native Chat stays as a fallback, NOT the current sele
 | Isolated login/session | Secondary Free login survives Factory updates and preview reopen | Paid account and cross-platform long-term persistence |
 | Model/effort | Real Free Think control toggles on/off, no invented model selector | Plus/Pro observed model/effort menus |
 | History/search | Older chat found and transcript opened in original provider UI | Broad history completeness, project moves, deep links |
-| Messages/file-only/image | Text, TXT-only and one PNG-plus-text prompt produced real provider answers; PNG thumbnail and color interpretation visually verified | Historical PNG readback, other formats, edit/retry/version |
+| Messages/file-only/image | TXT-only and PNG-plus-text sent; historical PNG and edited user text/image reopened, Square regenerated | Other formats, regenerate/branch variants, edit version history |
 | Rich response / tool picker | Markdown table, code block and code copy; Web search pill selection/send and Sketch editor open | Confirm external search/citations, image/audio output and other tools |
 | Projects/sources | Create/settings/delete, Paste Text source and exact readback | Other source/import flows, project instruction mutation |
 | Library download | 96-byte TXT uploaded, native Save dialog opened, saved bytes and SHA-256 identical, QA removed | Other file types and Windows |
 | Images/Plugins/Sketch | Gallery and plugin directory loaded; Sketch modal/editor opened and closed | Generated output, actual plugin action, Work |
-| Scheduled | Page/examples loaded; list still says Scheduled tasks could not be loaded; New task click had ambiguous outcome/no form observed | Determine list backend/account/embed cause and actual create capability |
+| Scheduled | Free task list still failed; external Pro/macOS desktop report has identical error text, causality unknown | Determine failing request/account/service scope and create capability |
 | Microphone | Native Allow/Cancel Cancel verified again after toolbar theme change; old provider Voice prompted for microphone settings | Owner-approved actual Voice and OS TCC |
 | Chrome dependency | Embedded window used without separate Chrome ChatGPT tab | Windows managed install |
 | Design | New light system palette physically verified in signed Factory; 760x560 and 700x520 layouts stayed usable | Dark-system and Control Center manual-theme override QA |
