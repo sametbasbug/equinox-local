@@ -1,4 +1,5 @@
-import { BaseWindow, WebContentsView, dialog, nativeTheme, session, shell } from "electron";
+import { BaseWindow, WebContentsView, app, dialog, nativeTheme, session, shell } from "electron";
+import { appendFileSync, existsSync, statSync } from "node:fs";
 import path from "node:path";
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
@@ -258,9 +259,11 @@ export function openEmbeddedChatPilot(language = "en") {
         });
     };
     isolated.on("will-download", onDownload);
-    // TEMPORARY CP19 diagnostic: status only, never log URL, request/response
-    // headers, cookies, account data or payload. Remove after cause is isolated.
-    // This is passive and cannot change or retry provider traffic.
+    // TEMPORARY CP21 diagnostic. The installed macOS applet routes Electron
+    // stdout/stderr to /dev/null, so CP20 console messages could not be collected
+    // from Source.log. Persist only literal stages, allowlisted filter names and
+    // bounded HTTP status codes. Never store URLs, headers, cookies, credentials,
+    // bodies, account details or arbitrary provider errors. Remove after diagnosis.
     const scheduledFilter = { urls: ["https://chatgpt.com/backend-api/automations*"] };
     const scheduledPhase = (url) => {
         try {
@@ -274,30 +277,47 @@ export function openEmbeddedChatPilot(language = "en") {
             return null;
         }
     };
-    // An Electron service-worker request may not carry the main view's webContentsId.
-    // This is a single-purpose isolated partition, so matching the exact provider
-    // origin/path and allowlisted filter is the correct diagnostic boundary.
-    console.info("[Embedded Chat Scheduled CP20] status observer armed");
+    const recordScheduled = (phase, filter, status) => {
+        try {
+            const file = path.join(app.getPath("logs"), "embedded-scheduled-cp21.log");
+            if (existsSync(file) && statSync(file).size >= 16384)
+                return;
+            const safeStatus = typeof status === "number" && Number.isInteger(status) &&
+                status >= 100 && status <= 599 ? ` HTTP ${status}` : "";
+            appendFileSync(file, `[Embedded Chat Scheduled CP21] ${phase}${filter ? ` ${filter}` : ""}${safeStatus}\n`, { encoding: "utf8", mode: 0o600 });
+        }
+        catch { /* Optional bounded diagnostic must never affect chat. */ }
+    };
+    // Service-worker requests can have a different webContentsId. The dedicated
+    // ChatGPT partition and exact provider origin/path/filter form the boundary.
+    recordScheduled("armed");
+    isolated.webRequest.onSendHeaders(scheduledFilter, details => {
+        if (details.method !== "GET")
+            return;
+        const filter = scheduledPhase(details.url);
+        if (filter)
+            recordScheduled("requested", filter);
+    });
     isolated.webRequest.onResponseStarted(scheduledFilter, details => {
         if (details.method !== "GET")
             return;
         const filter = scheduledPhase(details.url);
         if (filter)
-            console.info("[Embedded Chat Scheduled CP20] " + filter + " response HTTP " + details.statusCode);
+            recordScheduled("response", filter, details.statusCode);
     });
     isolated.webRequest.onCompleted(scheduledFilter, details => {
         if (details.method !== "GET")
             return;
         const filter = scheduledPhase(details.url);
         if (filter)
-            console.info("[Embedded Chat Scheduled CP20] " + filter + " completed HTTP " + details.statusCode);
+            recordScheduled("completed", filter, details.statusCode);
     });
     isolated.webRequest.onErrorOccurred(scheduledFilter, details => {
         if (details.method !== "GET")
             return;
         const filter = scheduledPhase(details.url);
         if (filter)
-            console.info("[Embedded Chat Scheduled CP20] " + filter + " network failure");
+            recordScheduled("network failure", filter);
     });
     // Own the chrome, but never mirror or reimplement any of ChatGPT's
     // account-specific model / effort / project / tool controls.
@@ -413,6 +433,7 @@ export function openEmbeddedChatPilot(language = "en") {
         isolated.setPermissionCheckHandler(() => false);
         isolated.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
         isolated.removeListener("will-download", onDownload);
+        isolated.webRequest.onSendHeaders(null);
         isolated.webRequest.onResponseStarted(null);
         isolated.webRequest.onCompleted(null);
         isolated.webRequest.onErrorOccurred(null);
