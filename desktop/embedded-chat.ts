@@ -1,4 +1,5 @@
 import { BaseWindow, WebContentsView, dialog, session, shell } from "electron";
+import path from "node:path";
 
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
@@ -133,16 +134,45 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
   // audio-only microphone grant. No camera, screen capture, clipboard read,
   // notifications, or arbitrary-origin permission escalation is permitted.
   let microphoneGranted = false;
+  const approvedFileWrites = new Set<string>();
   const isProviderView = (contents: { id: number } | null, origin: string): boolean =>
     contents?.id === view.webContents.id && isChatGPTOrigin(origin);
   isolated.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
     if (!isProviderView(contents, requestingOrigin)) return false;
     if (permission === "clipboard-sanitized-write") return true;
+    if (permission === "fileSystem") {
+      return details.fileAccessType === "writable" && !details.isDirectory &&
+        !!details.filePath && approvedFileWrites.has(details.filePath);
+    }
     return permission === "media" && microphoneGranted && details.mediaType === "audio";
   });
   isolated.setPermissionRequestHandler((contents, permission, reply, details) => {
     if (!isProviderView(contents, details.requestingUrl)) { reply(false); return; }
     if (permission === "clipboard-sanitized-write") { reply(true); return; }
+    if (permission === "fileSystem") {
+      const request = details as Electron.FilesystemPermissionRequest;
+      const file = request.filePath;
+      if (request.fileAccessType !== "writable" || request.isDirectory ||
+          !file || !path.isAbsolute(file)) { reply(false); return; }
+      if (approvedFileWrites.has(file)) { reply(true); return; }
+      // Chromium's File System Access API has its own permission gate,
+      // distinct from Electron's ordinary will-download Save dialog.
+      void dialog.showMessageBox(win, {
+        type: "question",
+        title: language === "tr" ? "ChatGPT dosya kaydetme izni" : "ChatGPT save-file permission",
+        message: language === "tr"
+          ? "ChatGPT'nin seçilen dosyaya yazmasına izin verilsin mi?"
+          : "Allow ChatGPT to write to the selected file?",
+        detail: file,
+        buttons: language === "tr" ? ["İzin ver", "Vazgeç"] : ["Allow", "Cancel"],
+        defaultId: 1, cancelId: 1, noLink: true,
+      }).then(({ response }) => {
+        const accepted = response === 0 && !win.isDestroyed() && !view.webContents.isDestroyed();
+        if (accepted) approvedFileWrites.add(file);
+        reply(accepted);
+      }).catch(() => reply(false));
+      return;
+    }
     if (permission !== "media") { reply(false); return; }
     const mediaTypes = "mediaTypes" in details ? details.mediaTypes : undefined;
     if (!mediaTypes || mediaTypes.length !== 1 || mediaTypes[0] !== "audio") {
@@ -172,10 +202,12 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
   const onDownload = (
     event: Electron.Event, item: Electron.DownloadItem, contents: Electron.WebContents,
   ): void => {
-    // Provider attachments may be served from signed CDN or blob URLs.
-    // Gate on the exact owning WebContents and its top-level ChatGPT page,
-    // not on the download CDN/initiator origin.
-    if (contents.id !== view.webContents.id || !isChatGPTOrigin(contents.getURL())) {
+    // CDN/blob download URLs may differ from the provider's origin. Electron
+    // explicitly documents getInitiatorOrigin() as the security identity.
+    // Never trust top-level WebContents alone: untrusted subframes could
+    // otherwise initiate their own file downloads under ChatGPT's page.
+    if (contents.id !== view.webContents.id || !isChatGPTOrigin(contents.getURL()) ||
+        item.getInitiatorOrigin() !== CHATGPT) {
       event.preventDefault();
       return;
     }
@@ -269,6 +301,7 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
   });
   win.on("closed", () => {
     microphoneGranted = false;
+    approvedFileWrites.clear();
     isolated.setPermissionCheckHandler(() => false);
     isolated.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
     isolated.removeListener("will-download", onDownload);
