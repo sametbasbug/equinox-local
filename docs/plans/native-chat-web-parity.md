@@ -116,6 +116,18 @@ Cleanup also found two earlier QA uploads still in ChatGPT Library despite prior
 
 **Voice limitation observed**: pressing Voice inside installed signed-in Free ChatGPT WebContentsView led to the provider's "Enable microphone access in Settings" state and no working voice call. Current permission checking starts denied and appears to prevent the provider reaching the native request handler. A source change adds an explicit microphone permission control to the first-party Equinox toolbar. It opens a native TR/EN Allow/Cancel dialog bound only to the isolated ChatGPT view, retains audio-only privileges for that window after approval, and reloads the provider page after approval. Camera and screen-capture permissions remain denied; the existing provider-triggered request handler reuses the same dialog. In a disposable unauthenticated Mac Electron development shell, the toolbar control opened an actual native Allow/Cancel sheet and Cancel was selected. **No microphone access was granted and no audio recorded.** Actual user-approved audio transport, OS TCC permission and voice-session functionality are NOT accepted. The new toolbar is source-only until installed Factory physical checks.
 
+## 2026-11-23 checkpoint 16: installed theme, rich rendering and tools
+
+Actual installed macOS Source Factory is SHA 141b3d0c6ecaaf79d179430f7158145ee12c72d1, version 7.0.0, strict deep codesign PASS, runtime_health HEALTHY without reasons. Secondary Free account persisted. The revised Control Center-matching light-purple/white Equinox toolbar was seen in the signed installed preview, with no separate Chrome tab. Free Think toggled from ON to OFF; an existing conversation opened with transcript intact. Native microphone consent opened again and Cancel was used. No microphone authorization, no audio capture, and no completed Voice call.
+
+**Rich response acceptance for one Free chat**: a nonpersonal test prompt produced an actual two-column Markdown table, JavaScript fenced code block, and bullet in the genuine provider response. The code-block Copy control placed the exact expected console.log sample on macOS clipboard; original clipboard was restored. The temporary chat was deleted via the actual provider Delete confirmation and disappeared from sidebar. Other media types remain unverified.
+
+**Provider tool/editor exploration**: selected Web search from ChatGPT's own composer Add menu; the provider-owned Web search pill appeared and a nonpersonal CERN-domain test question was sent. A real conversation and assistant answer appeared, then the disposable chat was deleted via provider confirmation. No distinct external search trace/cited URL was visible, so this verifies mode selection, send and answer only, **not** actual external retrieval or linked sources. Selected Sketch from the same Add menu; the drawing modal with pens, shape tools, undo and color palette appeared and was closed without creating an attachment. This is editor access, not a completed drawing.
+
+**Responsive layout**: physically resized signed installed preview to 760x560 and minimum 700x520. ChatGPT collapsed its own sidebar and the Equinox navigation and microphone icons remained legible, with no observed clipping. Restored original 1180x790. Dark-system appearance and Control Center manual-theme override remain untested.
+
+**Scheduled remains failing**: installed Free account Scheduled section rendered examples but also showed exact Scheduled tasks could not be loaded error again. OpenAI's [Scheduled Tasks guidance](https://help.openai.com/en/articles/10291617-scheduled-tasks-in-chatgpt) supports eligible Free users up to three active tasks, so the failure cannot be dismissed as a universal Free entitlement restriction. Exact account eligibility, provider service and embedded-session cause remain unknown. No task created, no account settings mutated. Paid model/effort, approved Voice, image generation, plugin actions and Windows still open.
+
 ## Current product contract: Method 3
 
 On 2026-11-23 the user selected genuine embedded ChatGPT Web. The provider page owns real history, composer, model/thinking options, projects, plugins and all plan entitlements, rather than duplicating them in brittle first-party code. Equinox owns a sandboxed persistent-session Electron WebContentsView, its branded navigation toolbar, permission/URL/download boundaries and the Control Center entry point. No independent Chrome ChatGPT tab is required. Support Free and paid tiers through whatever the real provider exposes, not a hardcoded catalog. The secondary Free-account trial is partially accepted; Plus/Pro and Windows are unverified. No public release or CWS submission before complete user acceptance.
@@ -130,13 +142,14 @@ The earlier Browser Bridge Native Chat stays as a fallback, NOT the current sele
 | Model/effort | Real Free Think control toggles on/off, no invented model selector | Plus/Pro observed model/effort menus |
 | History/search | Older chat found and transcript opened in original provider UI | Broad history completeness, project moves, deep links |
 | Messages/file-only | Text and TXT-only user turns received real provider answers, persisted across reload | Mixed media/formats and edit/retry/version |
+| Rich response / tool picker | Markdown table, code block and code copy; Web search pill selection/send and Sketch editor open | Confirm external search/citations, image/audio output and other tools |
 | Projects/sources | Create/settings/delete, Paste Text source and exact readback | Other source/import flows, project instruction mutation |
 | Library download | 96-byte TXT uploaded, native Save dialog opened, saved bytes and SHA-256 identical, QA removed | Other file types and Windows |
-| Images/Plugins | Gallery/templates and installed/popular plugin directory loaded | Actual creation, tools, connectors, Work |
+| Images/Plugins/Sketch | Gallery and plugin directory loaded; Sketch modal/editor opened and closed | Generated output, actual plugin action, Work |
 | Scheduled | Page and examples appeared; task list said Scheduled tasks could not be loaded, Retry unchanged | Free entitlement versus provider/embed limitation |
-| Microphone | Installed native Allow/Cancel dialog opened, Cancel verified; old provider Voice prompted for microphone settings | Owner-approved actual Voice and OS TCC |
+| Microphone | Native Allow/Cancel Cancel verified again after toolbar theme change; old provider Voice prompted for microphone settings | Owner-approved actual Voice and OS TCC |
 | Chrome dependency | Embedded window used without separate Chrome ChatGPT tab | Windows managed install |
-| Design | ChatGPT owns its UI; isolated Equinox toolbar now source-styled to match Control Center light/dark system palette | Physical installed themed shell QA, responsive windows |
+| Design | New light system palette physically verified in signed Factory; 760x560 and 700x520 layouts stayed usable | Dark-system and Control Center manual-theme override QA |
 
 ## Historical Browser Bridge product contract
 
