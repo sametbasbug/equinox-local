@@ -248,15 +248,24 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
       return filter === "scheduled" || filter === "paused" || filter === "finished" ? filter : null;
     } catch { return null; }
   };
-  isolated.webRequest.onCompleted(scheduledFilter, details => {
-    if (details.method !== "GET" || (details.webContentsId !== undefined && details.webContentsId !== view.webContents.id)) return;
+  // An Electron service-worker request may not carry the main view's webContentsId.
+  // This is a single-purpose isolated partition, so matching the exact provider
+  // origin/path and allowlisted filter is the correct diagnostic boundary.
+  console.info("[Embedded Chat Scheduled CP20] status observer armed");
+  isolated.webRequest.onResponseStarted(scheduledFilter, details => {
+    if (details.method !== "GET") return;
     const filter = scheduledPhase(details.url);
-    if (filter) console.info("[Embedded Chat Scheduled CP19] " + filter + " HTTP " + details.statusCode);
+    if (filter) console.info("[Embedded Chat Scheduled CP20] " + filter + " response HTTP " + details.statusCode);
+  });
+  isolated.webRequest.onCompleted(scheduledFilter, details => {
+    if (details.method !== "GET") return;
+    const filter = scheduledPhase(details.url);
+    if (filter) console.info("[Embedded Chat Scheduled CP20] " + filter + " completed HTTP " + details.statusCode);
   });
   isolated.webRequest.onErrorOccurred(scheduledFilter, details => {
-    if (details.method !== "GET" || (details.webContentsId !== undefined && details.webContentsId !== view.webContents.id)) return;
+    if (details.method !== "GET") return;
     const filter = scheduledPhase(details.url);
-    if (filter) console.info("[Embedded Chat Scheduled CP19] " + filter + " network failure");
+    if (filter) console.info("[Embedded Chat Scheduled CP20] " + filter + " network failure");
   });
 
   // Own the chrome, but never mirror or reimplement any of ChatGPT's
@@ -353,6 +362,7 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
     isolated.setPermissionCheckHandler(() => false);
     isolated.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
     isolated.removeListener("will-download", onDownload);
+    isolated.webRequest.onResponseStarted(null);
     isolated.webRequest.onCompleted(null);
     isolated.webRequest.onErrorOccurred(null);
     if (!view.webContents.isDestroyed()) view.webContents.close();
