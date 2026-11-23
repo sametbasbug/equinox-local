@@ -76,6 +76,14 @@ The ChatGPT-owned attachment menu exposed **Add photos & files**. Selecting it o
 
 Subsequent source work is deliberately narrow: allow sanitized clipboard writes only to the exact ChatGPT WebContentsView, offer a native user consent dialog for audio-only microphone permission requests from chatgpt.com, and use a native Save dialog for ChatGPT-originated downloads. Camera, screen capture, clipboard reads, unrelated origins and other permissions remain denied. These permission and download changes are **source-only until installed real-user verification** and must not be counted as accepted voice, clipboard or download functionality.
 
+## 2026-11-23 checkpoint 10: installed permission build and outbound link consent
+
+Mac Source Factory was read from its installed app.asar at exact SHA 3533954, role=source; deep strict codesign PASS and runtime HEALTHY with no reasons. The isolated logged-in Free account was still present under the Equinox toolbar. The physical microphone/clipboard/download end-to-end QA is **still open**: a microphone UI interaction through the desktop bridge did not produce an observable permissions dialog. This is not evidence of permission success and should not be represented as a passing audio test.
+
+Source now handles non-provider HTTPS links from ChatGPT via an explicit native bilingual confirmation showing the destination before opening in the OS default browser. Internal ChatGPT/OpenAI login links remain inside the isolated provider WebContentsView; Google embedded OAuth remains blocked; redirects to unknown origins never auto-launch the browser. In a disposable unauthenticated Mac Electron source shell, ChatGPT's **See plans and pricing** link triggered a real native dialog for https://openai.com/chatgpt/pricing/ with Open/Cancel options. Cancel was clicked; the dialog closed without opening an external browser. Opening the link after accepting and authenticated link handling are not yet accepted.
+
+Provider downloads may start from blob or signed CDN URLs, so the source download handler now validates the exact provider WebContents plus its currently loaded top-level ChatGPT origin, rather than requiring the attachment initiator origin to equal chatgpt.com. Download location remains a native user Save dialog, never a silent filesystem write. The revised download handling still requires physical acceptance with real benign file content.
+
 ## Product contract
 
 Native Chat is a full-featured desktop client for the person's real signed-in ChatGPT account, not an open-tab preview. Equinox owns the desktop layout, history, composer and tools. Equinox Browser bridges the consented user Chrome session, not a second API subscription, credential extractor, or quota bypass. Controls must reflect account-observed availability. All mutations bind exact browser instance, tab, conversation and provider state; uncertain sends are never replayed.

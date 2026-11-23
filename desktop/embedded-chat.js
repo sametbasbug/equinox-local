@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, dialog, session } from "electron";
+import { BaseWindow, WebContentsView, dialog, session, shell } from "electron";
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
 const HOSTS = new Set(["chatgpt.com", "auth.openai.com"]);
@@ -47,6 +47,23 @@ function admitted(value) {
     }
     catch {
         return false;
+    }
+}
+// Only open real web URLs from provider links. The remote page cannot ask the
+// host to open local files, custom URI schemes or loopback services.
+function permittedExternalLink(value) {
+    try {
+        const url = new URL(value);
+        if (url.protocol !== "https:" || url.username || url.password || url.port)
+            return null;
+        if (["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+            return null;
+        if (!url.hostname.includes("."))
+            return null;
+        return url.href;
+    }
+    catch {
+        return null;
     }
 }
 // Keep ChatGPT's own theme, model controls and DOM logic intact. Only add
@@ -170,7 +187,10 @@ export function openEmbeddedChatPilot(language = "en") {
     // A real file chooser can attach files; downloaded ChatGPT attachments must
     // additionally use Electron's native Save dialog rather than a silent path.
     const onDownload = (event, item, contents) => {
-        if (contents.id !== view.webContents.id || !isChatGPTOrigin(item.getInitiatorOrigin())) {
+        // Provider attachments may be served from signed CDN or blob URLs.
+        // Gate on the exact owning WebContents and its top-level ChatGPT page,
+        // not on the download CDN/initiator origin.
+        if (contents.id !== view.webContents.id || !isChatGPTOrigin(contents.getURL())) {
             event.preventDefault();
             return;
         }
@@ -217,23 +237,59 @@ export function openEmbeddedChatPilot(language = "en") {
     fit();
     win.on("resize", fit);
     void bar.webContents.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(toolbarMarkup(language))).catch(() => { });
-    // The website's Google button must not send credentials through an embedded
-    // user agent. Surface the actual OAuth policy limitation instead of evading it.
-    // All other popups are denied; remote content never receives Equinox IPC.
+    // A provider link opens inside this webview if it is a supported provider
+    // origin; otherwise open the person's normal browser only after an explicit
+    // native confirmation. Never grant remote content shell/OS or Equinox IPC.
+    let externalPromptOpen = false;
+    const offerExternalLink = (value) => {
+        if (externalPromptOpen || win.isDestroyed())
+            return;
+        const destination = permittedExternalLink(value);
+        if (!destination)
+            return;
+        externalPromptOpen = true;
+        void dialog.showMessageBox(win, {
+            type: "question",
+            title: language === "tr" ? "Bağlantıyı tarayıcıda aç" : "Open link in browser",
+            message: language === "tr"
+                ? "Bu bağlantı varsayılan tarayıcıda açılsın mı?"
+                : "Open this link in your default browser?",
+            detail: destination.slice(0, 512),
+            buttons: language === "tr" ? ["Aç", "Vazgeç"] : ["Open", "Cancel"],
+            defaultId: 1, cancelId: 1, noLink: true,
+        }).then(({ response }) => {
+            if (response !== 0 || win.isDestroyed())
+                return;
+            void shell.openExternal(destination).catch(() => { });
+        }).catch(() => { }).finally(() => { externalPromptOpen = false; });
+    };
     view.webContents.setWindowOpenHandler(({ url }) => {
         if (isEmbeddedGoogleAuth(url))
             warnGoogleRestriction(win, language);
+        else if (admitted(url))
+            void view.webContents.loadURL(url).catch(() => { });
+        else
+            offerExternalLink(url);
         return { action: "deny" };
     });
-    const authorizeNavigation = (event, url) => {
+    view.webContents.on("will-navigate", (event, url) => {
+        if (admitted(url))
+            return;
+        event.preventDefault();
+        if (isEmbeddedGoogleAuth(url))
+            warnGoogleRestriction(win, language);
+        else
+            offerExternalLink(url);
+    });
+    // A redirect is not an intentional external-link click. Block it without
+    // showing an external-launch prompt.
+    view.webContents.on("will-redirect", (event, url) => {
         if (!admitted(url)) {
             event.preventDefault();
             if (isEmbeddedGoogleAuth(url))
                 warnGoogleRestriction(win, language);
         }
-    };
-    view.webContents.on("will-navigate", authorizeNavigation);
-    view.webContents.on("will-redirect", authorizeNavigation);
+    });
     view.webContents.on("did-finish-load", () => {
         if (view.webContents.isDestroyed())
             return;
