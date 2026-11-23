@@ -135,6 +135,15 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
     title: "Equinox · ChatGPT Web (experimental)", width: 1180, height: 790,
     minWidth: 700, minHeight: 520, show: true, backgroundColor: nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5",
   });
+  // The provider and toolbar react to theme changes automatically, but a
+  // BaseWindow's backing color is fixed unless we update it explicitly.
+  // Keep the exposed window background aligned during system auto-switches.
+  const syncWindowBackground = () => {
+    if (!win.isDestroyed()) {
+      win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5");
+    }
+  };
+  nativeTheme.on("updated", syncWindowBackground);
   const view = new WebContentsView({
     webPreferences: {
       session: isolated, sandbox: true, contextIsolation: true,
@@ -330,6 +339,7 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
     } catch { /* Ignore intermediate navigation state. */ }
   });
   win.on("closed", () => {
+    nativeTheme.removeListener("updated", syncWindowBackground);
     microphoneGranted = false;
     microphonePromptOpen = false;
     approvedFileWrites.clear();
