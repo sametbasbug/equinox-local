@@ -128,6 +128,16 @@ Actual installed macOS Source Factory is SHA 141b3d0c6ecaaf79d179430f7158145ee12
 
 **Scheduled remains failing**: installed Free account Scheduled section rendered examples but also showed exact Scheduled tasks could not be loaded error again. OpenAI's [Scheduled Tasks guidance](https://help.openai.com/en/articles/10291617-scheduled-tasks-in-chatgpt) supports eligible Free users up to three active tasks, so the failure cannot be dismissed as a universal Free entitlement restriction. Exact account eligibility, provider service and embedded-session cause remain unknown. No task created, no account settings mutated. Paid model/effort, approved Voice, image generation, plugin actions and Windows still open.
 
+## 2026-11-23 checkpoint 17: Mac Free mixed-image analysis and Scheduled diagnosis
+
+Installed signed Mac Source Factory still reports source SHA 141b3d0c6ecaaf79d179430f7158145ee12c72d1, strict deep signature PASS and runtime_health HEALTHY. Main was clean at start (7b9892310275a85f29185c3ea510b6becd845929). This checkpoint makes no executable-code change.
+
+**Mixed PNG plus text message accepted**: created one isolated disposable 240x180, 587-byte PNG depicting a large purple rectangle on a white canvas, with no private data. In the real authenticated Free ChatGPT Web preview, Add photos & files opened a genuine macOS file picker, the selected PNG rendered a purple attachment thumbnail, and a separate text question asking the rectangle's English color was entered. One Enter sent the combined image-and-text user turn and ChatGPT responded exactly Purple in a real durable conversation named Identify Color. This is strong physical evidence of image+text attachment sending and model interpretation in the current Mac Free embedded session. It does NOT establish image attachment historical readback or all media formats. The test conversation was deleted via the provider's final Delete chat confirmation with uploaded-file deletion checked; a subsequent visit to provider Library showed its empty state. No image or chat was retained on the provider.
+
+**Scheduled remains unresolved**: the provider's own Scheduled screen still showed Scheduled tasks could not be loaded. The New task control visually responded to pointer interaction but no task form opened; the macOS desktop bridge reported an ambiguous click result, so this is not proof that task creation itself fails. No scheduled task was created. Do not assume it is a Free-plan restriction, as prior official provider help says eligible Free accounts have task access. Isolate list-fetch status/provider entitlement/backend behavior before changing code.
+
+**Desktop automation limitation**: Peekaboo click/typing/key actions often returned ambiguous outcomes despite the real UI visibly advancing; tool refresh and macOS Accessibility/Event Synthesizing preflight were normal. All provider mutations were corroborated by screenshots. Do not blindly repeat uncertain sends or automation mutations.
+
 ## Current product contract: Method 3
 
 On 2026-11-23 the user selected genuine embedded ChatGPT Web. The provider page owns real history, composer, model/thinking options, projects, plugins and all plan entitlements, rather than duplicating them in brittle first-party code. Equinox owns a sandboxed persistent-session Electron WebContentsView, its branded navigation toolbar, permission/URL/download boundaries and the Control Center entry point. No independent Chrome ChatGPT tab is required. Support Free and paid tiers through whatever the real provider exposes, not a hardcoded catalog. The secondary Free-account trial is partially accepted; Plus/Pro and Windows are unverified. No public release or CWS submission before complete user acceptance.
@@ -141,12 +151,12 @@ The earlier Browser Bridge Native Chat stays as a fallback, NOT the current sele
 | Isolated login/session | Secondary Free login survives Factory updates and preview reopen | Paid account and cross-platform long-term persistence |
 | Model/effort | Real Free Think control toggles on/off, no invented model selector | Plus/Pro observed model/effort menus |
 | History/search | Older chat found and transcript opened in original provider UI | Broad history completeness, project moves, deep links |
-| Messages/file-only | Text and TXT-only user turns received real provider answers, persisted across reload | Mixed media/formats and edit/retry/version |
+| Messages/file-only/image | Text, TXT-only and one PNG-plus-text prompt produced real provider answers; PNG thumbnail and color interpretation visually verified | Historical PNG readback, other formats, edit/retry/version |
 | Rich response / tool picker | Markdown table, code block and code copy; Web search pill selection/send and Sketch editor open | Confirm external search/citations, image/audio output and other tools |
 | Projects/sources | Create/settings/delete, Paste Text source and exact readback | Other source/import flows, project instruction mutation |
 | Library download | 96-byte TXT uploaded, native Save dialog opened, saved bytes and SHA-256 identical, QA removed | Other file types and Windows |
 | Images/Plugins/Sketch | Gallery and plugin directory loaded; Sketch modal/editor opened and closed | Generated output, actual plugin action, Work |
-| Scheduled | Page and examples appeared; task list said Scheduled tasks could not be loaded, Retry unchanged | Free entitlement versus provider/embed limitation |
+| Scheduled | Page/examples loaded; list still says Scheduled tasks could not be loaded; New task click had ambiguous outcome/no form observed | Determine list backend/account/embed cause and actual create capability |
 | Microphone | Native Allow/Cancel Cancel verified again after toolbar theme change; old provider Voice prompted for microphone settings | Owner-approved actual Voice and OS TCC |
 | Chrome dependency | Embedded window used without separate Chrome ChatGPT tab | Windows managed install |
 | Design | New light system palette physically verified in signed Factory; 760x560 and 700x520 layouts stayed usable | Dark-system and Control Center manual-theme override QA |
