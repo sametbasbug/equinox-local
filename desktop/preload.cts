@@ -28,6 +28,11 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
       ipcRenderer.on("equinox-shell:companion-changed", listener);
       return () => ipcRenderer.removeListener("equinox-shell:companion-changed", listener);
     },
+    setAppearance: (value: unknown) => {
+      if (value === "system" || value === "light" || value === "dark") {
+        void ipcRenderer.invoke("equinox-shell:appearance", value).catch(() => {});
+      }
+    },
     requestJson: (request: unknown) => ipcRenderer.invoke("equinox-shell:control-request", request),
     openEmbeddedChat: () => ipcRenderer.invoke("equinox-shell:open-embedded-chat"),
     setLanguage: (language: unknown) => {

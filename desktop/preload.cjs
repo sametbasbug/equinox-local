@@ -32,6 +32,11 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
             ipcRenderer.on("equinox-shell:companion-changed", listener);
             return () => ipcRenderer.removeListener("equinox-shell:companion-changed", listener);
         },
+        setAppearance: (value) => {
+            if (value === "system" || value === "light" || value === "dark") {
+                void ipcRenderer.invoke("equinox-shell:appearance", value).catch(() => { });
+            }
+        },
         requestJson: (request) => ipcRenderer.invoke("equinox-shell:control-request", request),
         openEmbeddedChat: () => ipcRenderer.invoke("equinox-shell:open-embedded-chat"),
         setLanguage: (language) => {

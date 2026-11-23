@@ -14,7 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;pickChatFile:(multiple?:boolean)=>Promise<{cancelled:boolean;path:string|null;name:string|null;size:number;files:Array<{path:string;name:string;size:number;preview?:string|null}>}>;clearChatFile:()=>Promise<{cleared:boolean}>;removeChatFile:(name:string)=>Promise<{removed:boolean}>;setLanguage:(language:string)=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;openEmbeddedChat:()=>Promise<{opened:boolean}>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;pickChatFile:(multiple?:boolean)=>Promise<{cancelled:boolean;path:string|null;name:string|null;size:number;files:Array<{path:string;name:string;size:number;preview?:string|null}>}>;clearChatFile:()=>Promise<{cleared:boolean}>;removeChatFile:(name:string)=>Promise<{removed:boolean}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;openEmbeddedChat:()=>Promise<{opened:boolean}>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -73,6 +73,9 @@ function applyTheme() {
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themePreference = preference;
   document.documentElement.style.colorScheme = resolved;
+  // Synchronize Electron's app-scoped color scheme for the separate preview
+  // window; the provider's own explicit theme setting remains authoritative.
+  window.equinoxShell?.setAppearance(preference);
   const themeMeta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement|null;
   if (themeMeta) themeMeta.content = resolved === "dark" ? "#19191d" : "#f6f5f2";
   for (const button of document.querySelectorAll<HTMLElement>("[data-theme-value]")) {

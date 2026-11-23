@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification as DesktopNotification, screen, session, shell, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification as DesktopNotification, screen, session, shell, Tray } from "electron";
 import fs from "node:fs";
 import os from "node:os";
 import { execFile as execFileCallback } from "node:child_process";
@@ -878,6 +878,15 @@ function createWindow() {
 }
 // Explicit fixed action, only from the trusted local Control Center document.
 // Do not expose a generic URL opener or any provider-facing privileged IPC.
+// A fixed three-value appearance bridge keeps the Equinox-owned preview chrome
+// aligned with the user's Control Center preference. ChatGPT still owns its
+// own provider theme/account setting and all DOM/content permissions.
+ipcMain.handle("equinox-shell:appearance", (event, value) => {
+    if (!trustedSender(event) || quitting || (value !== "system" && value !== "light" && value !== "dark"))
+        throw new Error("Untrusted appearance preference.");
+    nativeTheme.themeSource = value;
+    return true;
+});
 ipcMain.handle("equinox-shell:open-embedded-chat", (event) => {
     if (!trustedSender(event) || quitting)
         throw new Error("Untrusted embedded chat request.");

@@ -53,6 +53,9 @@ function applyTheme() {
     document.documentElement.dataset.theme = resolved;
     document.documentElement.dataset.themePreference = preference;
     document.documentElement.style.colorScheme = resolved;
+    // Synchronize Electron's app-scoped color scheme for the separate preview
+    // window; the provider's own explicit theme setting remains authoritative.
+    window.equinoxShell?.setAppearance(preference);
     const themeMeta = document.querySelector('meta[name="theme-color"]');
     if (themeMeta)
         themeMeta.content = resolved === "dark" ? "#19191d" : "#f6f5f2";
