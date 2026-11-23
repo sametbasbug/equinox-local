@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, dialog, session, shell } from "electron";
+import { BaseWindow, WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import path from "node:path";
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
@@ -86,25 +86,30 @@ function toolbarMarkup(language) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 *{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#19191d;color:#f1f0f5}
-header{height:52px;display:flex;align-items:center;gap:14px;padding:0 17px;
-  border-bottom:1px solid #41404a;background:linear-gradient(105deg,#26232f 0%,#1b1a20 55%,#19191d 100%)}
-.brand{display:flex;gap:10px;align-items:center;min-width:0}
-.mark{width:29px;height:29px;display:grid;place-items:center;border-radius:9px;
-  background:linear-gradient(145deg,#a58cf4,#6554a8);color:#fff;font-weight:800;font-size:14px;box-shadow:0 2px 12px #9e7dec26}
-.name{font-size:12px;font-weight:760;letter-spacing:.115em;color:#f8f6ff}
-.separator{height:18px;width:1px;background:#585363;margin-left:2px}
-.product{font-size:12px;font-weight:570;color:#d9d5e6;white-space:nowrap}
-.preview{font-size:10px;border:1px solid #625677;border-radius:40px;background:#393245;
-color:#d6c6ff;padding:4px 8px;white-space:nowrap}
+:root{color-scheme:light;--eq-surface:#fff;--eq-line:#e5e3e9;--eq-text:#282432;
+--eq-muted:#615d6c;--eq-accent:#6954b8;--eq-soft:#f0ecfa}
+@media(prefers-color-scheme:dark){:root{color-scheme:dark;--eq-surface:#242429;--eq-line:#41404a;
+--eq-text:#f0edf5;--eq-muted:#c4bdce;--eq-accent:#c3b2fa;--eq-soft:#3b3252}}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--eq-surface);color:var(--eq-text)}
+header{height:52px;display:flex;align-items:center;gap:13px;padding:0 17px;
+  border-bottom:1px solid var(--eq-line);
+  background:linear-gradient(100deg,color-mix(in srgb,var(--eq-accent) 5%,var(--eq-surface)),var(--eq-surface) 46%)}
+.brand{display:flex;gap:9px;align-items:center;min-width:0}
+.mark{width:28px;height:28px;display:grid;place-items:center;border-radius:9px;
+  background:linear-gradient(145deg,#9076d7,#6954b8);color:#fff;font-weight:800;font-size:13px;box-shadow:0 1px 5px #6954b826}
+.name{font-size:12px;font-weight:760;letter-spacing:.105em;color:var(--eq-text)}
+.separator{height:18px;width:1px;background:var(--eq-line);margin-left:2px}
+.product{font-size:12px;font-weight:570;color:var(--eq-muted);white-space:nowrap}
+.preview{font-size:10px;border:1px solid color-mix(in srgb,var(--eq-accent) 25%,var(--eq-line));
+  border-radius:40px;background:var(--eq-soft);color:var(--eq-accent);padding:4px 8px;white-space:nowrap}
 nav{margin-left:auto;display:flex;align-items:center;gap:5px}
 .action{width:31px;height:29px;display:grid;place-items:center;border-radius:8px;text-decoration:none;
-color:#d1cadd;font-size:18px;line-height:1;border:1px solid transparent;transition:background .12s,border-color .12s}
-.action:hover{background:#393643;border-color:#625b71;color:#fff}
-.action:focus-visible{outline:2px solid #c3b2fa;outline-offset:2px}
-.action:active{background:#544967}
+color:var(--eq-muted);font-size:18px;line-height:1;border:1px solid transparent;transition:background .12s,border-color .12s}
+.action:hover{background:var(--eq-soft);border-color:color-mix(in srgb,var(--eq-accent) 22%,var(--eq-line));color:var(--eq-accent)}
+.action:focus-visible{outline:2px solid var(--eq-accent);outline-offset:2px}
+.action:active{background:var(--eq-soft);color:var(--eq-accent)}
 .action svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-nav .action:last-child{margin-left:7px;border-left:1px solid #585363;border-radius:0 8px 8px 0;padding-left:7px;width:38px}
+nav .action:last-child{margin-left:7px;border-left:1px solid var(--eq-line);border-radius:0 8px 8px 0;padding-left:7px;width:38px}
 @media(max-width:650px){.preview,.separator{display:none}.product{font-size:11px}header{gap:9px;padding:0 10px}}
 @media(prefers-reduced-motion:reduce){.action{transition:none}}
 </style></head><body><header>
@@ -127,7 +132,7 @@ export function openEmbeddedChatPilot(language = "en") {
     const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
     const win = new BaseWindow({
         title: "Equinox · ChatGPT Web (experimental)", width: 1180, height: 790,
-        minWidth: 700, minHeight: 520, show: true, backgroundColor: "#17171d",
+        minWidth: 700, minHeight: 520, show: true, backgroundColor: nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5",
     });
     const view = new WebContentsView({
         webPreferences: {
