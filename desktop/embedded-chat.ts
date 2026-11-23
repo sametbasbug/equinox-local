@@ -126,6 +126,12 @@ ${link("microphone", '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y=
 export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
   if (host && !host.isDestroyed()) { host.show(); host.focus(); return; }
   const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
+  // Electron's default UA adds a non-browser product token to the actual
+  // Chromium build. Use that Chromium build's normal browser UA for this
+  // single provider-only partition, including service-worker requests.
+  // No OS, Chromium version, credentials or request header is invented.
+  const providerUserAgent = isolated.getUserAgent().replace(/\sElectron\/[^\s]+(?=\s|$)/, "");
+  isolated.setUserAgent(providerUserAgent);
   const win = new BaseWindow({
     title: "Equinox · ChatGPT Web (experimental)", width: 1180, height: 790,
     minWidth: 700, minHeight: 520, show: true, backgroundColor: nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5",
