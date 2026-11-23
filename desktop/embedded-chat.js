@@ -74,12 +74,12 @@ const STYLE = [
     ":focus-visible { outline: 2px solid #8e77da !important; outline-offset: 2px !important; }",
     "aside.app-shell-left-panel { border-inline-end: 1px solid rgba(130,112,191,.22) !important; }",
 ].join("\n");
-const TOOLBAR_ACTIONS = new Set(["back", "forward", "reload", "home"]);
+const TOOLBAR_ACTIONS = new Set(["back", "forward", "reload", "home", "microphone"]);
 const TOOLBAR_ACTION_ORIGIN = "https://preview.equinox.invalid";
 function toolbarMarkup(language) {
     const labels = language === "tr"
-        ? { back: "Geri", forward: "İleri", reload: "Yenile", home: "Ana sayfa", preview: "Deneysel önizleme" }
-        : { back: "Back", forward: "Forward", reload: "Reload", home: "Home", preview: "Experimental preview" };
+        ? { back: "Geri", forward: "İleri", reload: "Yenile", home: "Ana sayfa", microphone: "Mikrofon izni", preview: "Deneysel önizleme" }
+        : { back: "Back", forward: "Forward", reload: "Reload", home: "Home", microphone: "Microphone permission", preview: "Experimental preview" };
     const link = (action, icon, label) => `<a class="action" href="${TOOLBAR_ACTION_ORIGIN}/${action}" target="_blank" rel="noopener" aria-label="${label}" title="${label}">${icon}</a>`;
     return `<!doctype html><html lang="${language}"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none';">
@@ -103,6 +103,8 @@ color:#d1cadd;font-size:18px;line-height:1;border:1px solid transparent;transiti
 .action:hover{background:#393643;border-color:#625b71;color:#fff}
 .action:focus-visible{outline:2px solid #c3b2fa;outline-offset:2px}
 .action:active{background:#544967}
+.action svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+nav .action:last-child{margin-left:7px;border-left:1px solid #585363;border-radius:0 8px 8px 0;padding-left:7px;width:38px}
 @media(max-width:650px){.preview,.separator{display:none}.product{font-size:11px}header{gap:9px;padding:0 10px}}
 @media(prefers-reduced-motion:reduce){.action{transition:none}}
 </style></head><body><header>
@@ -113,6 +115,7 @@ ${link("back", "&#x2039;", labels.back)}
 ${link("forward", "&#x203A;", labels.forward)}
 ${link("reload", "&#x21bb;", labels.reload)}
 ${link("home", "&#x2302;", labels.home)}
+${link("microphone", '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg>', labels.microphone)}
 </nav></header></body></html>`;
 }
 export function openEmbeddedChatPilot(language = "en") {
@@ -139,7 +142,37 @@ export function openEmbeddedChatPilot(language = "en") {
     // audio-only microphone grant. No camera, screen capture, clipboard read,
     // notifications, or arbitrary-origin permission escalation is permitted.
     let microphoneGranted = false;
+    let microphonePromptOpen = false;
     const approvedFileWrites = new Set();
+    const askMicrophonePermission = async () => {
+        if (microphoneGranted)
+            return true;
+        if (microphonePromptOpen || win.isDestroyed())
+            return false;
+        microphonePromptOpen = true;
+        try {
+            const { response } = await dialog.showMessageBox(win, {
+                type: "question",
+                title: language === "tr" ? "ChatGPT mikrofon izni" : "ChatGPT microphone access",
+                message: language === "tr"
+                    ? "ChatGPT'nin bu pencerede mikrofonu kullanmasına izin verilsin mi?"
+                    : "Allow ChatGPT to use your microphone in this window?",
+                detail: language === "tr"
+                    ? "Yalnızca bu pencerede geçerlidir. İzin verirsen ChatGPT sayfası yenilenir ve sesli görüşme başlattığında mikrofon etkinleşebilir. Kamera ve ekran paylaşımı engelli kalır."
+                    : "This applies only to this window. The ChatGPT page reloads after approval and may use your microphone when you start voice. Camera and screen capture remain blocked.",
+                buttons: language === "tr" ? ["İzin ver", "Vazgeç"] : ["Allow", "Cancel"],
+                defaultId: 1, cancelId: 1, noLink: true,
+            });
+            microphoneGranted = response === 0 && !win.isDestroyed() && !view.webContents.isDestroyed();
+            return microphoneGranted;
+        }
+        catch {
+            return false;
+        }
+        finally {
+            microphonePromptOpen = false;
+        }
+    };
     const isProviderView = (contents, origin) => contents?.id === view.webContents.id && isChatGPTOrigin(origin);
     isolated.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
         if (!isProviderView(contents, requestingOrigin))
@@ -201,25 +234,7 @@ export function openEmbeddedChatPilot(language = "en") {
             reply(false);
             return;
         }
-        if (microphoneGranted) {
-            reply(true);
-            return;
-        }
-        void dialog.showMessageBox(win, {
-            type: "question",
-            title: language === "tr" ? "ChatGPT mikrofon izni" : "ChatGPT microphone access",
-            message: language === "tr"
-                ? "ChatGPT'nin bu pencerede mikrofonu kullanmasına izin verilsin mi?"
-                : "Allow ChatGPT to use your microphone in this window?",
-            detail: language === "tr"
-                ? "Yalnızca bu ChatGPT oturumuna ve mikrofon sesine izin verilir. Kamera, ekran paylaşımı ve diğer siteler engellenmeye devam eder."
-                : "Only this ChatGPT view and microphone audio are permitted. Camera, screen sharing and other sites remain blocked.",
-            buttons: language === "tr" ? ["İzin ver", "Şimdi değil"] : ["Allow", "Not now"],
-            defaultId: 1, cancelId: 1, noLink: true,
-        }).then(({ response }) => {
-            microphoneGranted = response === 0 && !win.isDestroyed() && !view.webContents.isDestroyed();
-            reply(microphoneGranted);
-        }).catch(() => reply(false));
+        void askMicrophonePermission().then(reply).catch(() => reply(false));
     });
     // A real file chooser can attach files; downloaded ChatGPT attachments must
     // additionally use Electron's native Save dialog rather than a silent path.
@@ -257,6 +272,12 @@ export function openEmbeddedChatPilot(language = "en") {
                     view.webContents.reload();
                 if (action === "home")
                     void view.webContents.loadURL(CHATGPT + "/").catch(() => { });
+                if (action === "microphone") {
+                    void askMicrophonePermission().then(granted => {
+                        if (granted && !view.webContents.isDestroyed())
+                            view.webContents.reload();
+                    });
+                }
             }
         }
         catch { /* Toolbar cannot navigate the provider or execute code. */ }
@@ -341,6 +362,7 @@ export function openEmbeddedChatPilot(language = "en") {
     });
     win.on("closed", () => {
         microphoneGranted = false;
+        microphonePromptOpen = false;
         approvedFileWrites.clear();
         isolated.setPermissionCheckHandler(() => false);
         isolated.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
