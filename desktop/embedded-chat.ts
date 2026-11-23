@@ -1,5 +1,4 @@
-import { BaseWindow, WebContentsView, app, dialog, nativeTheme, session, shell } from "electron";
-import { appendFileSync, existsSync, statSync } from "node:fs";
+import { BaseWindow, WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import path from "node:path";
 
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
@@ -243,60 +242,6 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
   };
   isolated.on("will-download", onDownload);
 
-  // TEMPORARY CP21 diagnostic. The installed macOS applet routes Electron
-  // stdout/stderr to /dev/null, so CP20 console messages could not be collected
-  // from Source.log. Persist only literal stages, allowlisted filter names and
-  // bounded HTTP status codes. Never store URLs, headers, cookies, credentials,
-  // bodies, account details or arbitrary provider errors. Remove after diagnosis.
-  const scheduledFilter = { urls: ["https://chatgpt.com/backend-api/automations*"] };
-  type ScheduledFilter = "scheduled" | "paused" | "finished";
-  const scheduledPhase = (url: string): ScheduledFilter | null => {
-    try {
-      const target = new URL(url);
-      if (target.origin !== CHATGPT || target.pathname !== "/backend-api/automations") return null;
-      const filter = target.searchParams.get("filter");
-      return filter === "scheduled" || filter === "paused" || filter === "finished" ? filter : null;
-    } catch { return null; }
-  };
-  const recordScheduled = (
-    phase: "armed" | "requested" | "response" | "completed" | "network failure",
-    filter?: ScheduledFilter,
-    status?: number,
-  ): void => {
-    try {
-      const file = path.join(app.getPath("logs"), "embedded-scheduled-cp21.log");
-      if (existsSync(file) && statSync(file).size >= 16384) return;
-      const safeStatus = typeof status === "number" && Number.isInteger(status) &&
-        status >= 100 && status <= 599 ? ` HTTP ${status}` : "";
-      appendFileSync(file,
-        `[Embedded Chat Scheduled CP21] ${phase}${filter ? ` ${filter}` : ""}${safeStatus}\n`,
-        { encoding: "utf8", mode: 0o600 });
-    } catch { /* Optional bounded diagnostic must never affect chat. */ }
-  };
-  // Service-worker requests can have a different webContentsId. The dedicated
-  // ChatGPT partition and exact provider origin/path/filter form the boundary.
-  recordScheduled("armed");
-  isolated.webRequest.onSendHeaders(scheduledFilter, details => {
-    if (details.method !== "GET") return;
-    const filter = scheduledPhase(details.url);
-    if (filter) recordScheduled("requested", filter);
-  });
-  isolated.webRequest.onResponseStarted(scheduledFilter, details => {
-    if (details.method !== "GET") return;
-    const filter = scheduledPhase(details.url);
-    if (filter) recordScheduled("response", filter, details.statusCode);
-  });
-  isolated.webRequest.onCompleted(scheduledFilter, details => {
-    if (details.method !== "GET") return;
-    const filter = scheduledPhase(details.url);
-    if (filter) recordScheduled("completed", filter, details.statusCode);
-  });
-  isolated.webRequest.onErrorOccurred(scheduledFilter, details => {
-    if (details.method !== "GET") return;
-    const filter = scheduledPhase(details.url);
-    if (filter) recordScheduled("network failure", filter);
-  });
-
   // Own the chrome, but never mirror or reimplement any of ChatGPT's
   // account-specific model / effort / project / tool controls.
   const bar = new WebContentsView({ webPreferences: {
@@ -391,10 +336,6 @@ export function openEmbeddedChatPilot(language: "en" | "tr" = "en"): void {
     isolated.setPermissionCheckHandler(() => false);
     isolated.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
     isolated.removeListener("will-download", onDownload);
-    isolated.webRequest.onSendHeaders(null);
-    isolated.webRequest.onResponseStarted(null);
-    isolated.webRequest.onCompleted(null);
-    isolated.webRequest.onErrorOccurred(null);
     if (!view.webContents.isDestroyed()) view.webContents.close();
     if (!bar.webContents.isDestroyed()) bar.webContents.close();
     if (host === win) host = null;
