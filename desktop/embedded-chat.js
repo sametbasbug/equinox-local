@@ -71,10 +71,11 @@ function permittedExternalLink(value) {
 // semantic class names; no provider action is replaced or programmatically invoked.
 const STYLE = String.raw `
 html.chatgpt-theme {
-  --eq-canvas: #fafafb;
-  --eq-sidebar: #f5f5f7;
-  --eq-paper: #ffffff;
-  --eq-border: #e1e0e5;
+  --eq-canvas: #fafbfc;
+  --eq-sidebar: #f0f1f4;
+  --eq-paper: #f8f9fb;
+  --eq-editor: #ffffff;
+  --eq-border: #dfe1e7;
   --eq-text: #242329;
   --eq-secondary: #66646d;
   --eq-muted: #82808a;
@@ -83,7 +84,7 @@ html.chatgpt-theme {
   --eq-active: #eae6f3;
   --eq-bubble: #eeebf5;
   --eq-bubble-text: #30283e;
-  --eq-composer-shadow: 0 2px 5px #19151d08, 0 7px 28px #19151d06;
+  --eq-composer-shadow: 0 1px 3px #19151d0b, 0 12px 30px #19151d09;
   --color-surface: var(--eq-canvas) !important;
   --color-surface-secondary: var(--eq-canvas) !important;
   --color-surface-tertiary: var(--eq-sidebar) !important;
@@ -99,17 +100,18 @@ html.chatgpt-theme {
   --color-text-tertiary: var(--eq-muted) !important;
   --color-background-user-message: var(--eq-bubble) !important;
   --color-text-user-message: var(--eq-bubble-text) !important;
-  --color-background-composer-surface: var(--eq-paper) !important;
+  --color-background-composer-surface: var(--eq-editor) !important;
   --color-background-composer-primary: var(--eq-accent) !important;
   --color-text-composer-primary: var(--eq-composer-ink) !important;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   html.chatgpt-theme {
-    --eq-canvas: #1c1c20;
-    --eq-sidebar: #202025;
-    --eq-paper: #27272d;
-    --eq-border: #38363f;
+    --eq-canvas: #1e2025;
+    --eq-sidebar: #191b20;
+    --eq-paper: #272a31;
+    --eq-editor: #272a31;
+    --eq-border: #383b44;
     --eq-text: #eeedf2;
     --eq-secondary: #b6b3bf;
     --eq-muted: #96939f;
@@ -156,14 +158,14 @@ html.chatgpt-theme #app-shell-sidebar :is(button,a) { border-radius: 7px; }
   html.chatgpt-theme [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) {
     --app-shell-left-panel-width: 274px !important;
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar > div:has(> nav[data-app-navigation-rail]):has(> .sidebar-navigation) {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div:has(> nav[data-app-navigation-rail]):has(> .sidebar-navigation) {
     position: relative;
     flex-direction: column !important;
     padding-bottom: 46px;
     min-height: 0;
     background: var(--eq-sidebar);
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar > div > nav[data-app-navigation-rail] {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > nav[data-app-navigation-rail] {
     flex: 0 0 auto !important;
     width: 100% !important;
     min-width: 0;
@@ -171,7 +173,7 @@ html.chatgpt-theme #app-shell-sidebar :is(button,a) { border-radius: 7px; }
     padding: 7px 9px !important;
     border-bottom: 1px solid var(--eq-border);
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] {
     flex: 0 0 auto !important;
     flex-direction: row !important;
     flex-wrap: wrap;
@@ -184,26 +186,26 @@ html.chatgpt-theme #app-shell-sidebar :is(button,a) { border-radius: 7px; }
     mask-image: none !important;
     padding: 0 !important;
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div:not([data-appearance]) { width: auto !important; }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > [data-appearance="plain"] {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div:not([data-appearance]) { width: auto !important; }
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > [data-appearance="plain"] {
     flex-direction: row !important;
     flex-wrap: wrap;
     gap: 3px !important;
     width: auto !important;
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] button {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] button {
     width: 32px !important;
     height: 32px !important;
     flex: 0 0 32px !important;
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div.border-t {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div.border-t {
     width: 1px !important;
     height: 18px;
     margin: 0 1px !important;
     border-top: 0;
     border-inline-start: 1px solid var(--eq-border);
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child {
     position: absolute !important;
     inset-inline: 0;
     bottom: 0;
@@ -214,37 +216,133 @@ html.chatgpt-theme #app-shell-sidebar :is(button,a) { border-radius: 7px; }
     background: var(--eq-sidebar);
     z-index: 2;
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div {
     flex-direction: row !important;
     justify-content: space-between;
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div > div { width: auto !important; }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar > div > .sidebar-navigation {
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div > div { width: auto !important; }
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > .sidebar-navigation {
     border-radius: 0 !important;
     background: var(--eq-sidebar) !important;
   }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) aside[data-app-shell-left-panel-appearance] > div:first-child { width: 274px !important; min-width: 274px !important; max-width: 100% !important; }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
-  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) aside[data-app-shell-left-panel-appearance] > div:first-child > div:has(> #app-shell-sidebar) { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child { width: 274px !important; min-width: 274px !important; max-width: 100% !important; }
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  html.chatgpt-theme :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child > div:has(> #app-shell-sidebar) { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
 }
-/* Real conversation content, not a projected second message tree. */
-html.chatgpt-theme .bg-user-message.text-user-message {
-  background: var(--eq-bubble) !important;
-  color: var(--eq-bubble-text) !important;
-  border-radius: 14px !important;
+/* Task-oriented workspace, not a second renderer of the provider conversation.
+   The actual conversation tree, menus, streaming and message actions stay intact.
+   The native application header above this view owns the Equinox branding. */
+html.chatgpt-theme main[data-app-shell-main-surface] {
+  --thread-content-max-width: 55rem !important;
+  --thread-content-compact-max-width: 48rem !important;
+  --thread-content-expanded-max-width: 55rem !important;
+  background: var(--eq-canvas) !important;
+}
+html.chatgpt-theme [data-app-shell-titlebar] {
+  border-bottom: 1px solid var(--eq-border);
+  background: var(--eq-canvas);
+}
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation {
+  background: var(--eq-sidebar) !important;
+}
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation nav {
+  padding-inline: 7px;
+}
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation {
+  --height-token-row: 32px;
+  --height-token-nav-row: 32px;
+}
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation a[href="/"] > span {
+  position: relative;
+  font-size: 0 !important;
+}
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation a[href="/"] > span > span:has(> svg):not(:has(button,a,input)) {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip-path: inset(50%) !important;
+}
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
+  content: "Conversations";
+  font-size: 15px;
+  letter-spacing: -.025em;
+  font-weight: 650;
+}
+html.chatgpt-theme:lang(tr) #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
+  content: "Sohbetler";
+}
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation a[href*="/c/"] {
+  font-size: 13px;
+  line-height: 1.4;
+}
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation [role="heading"] {
+  font-size: 11px;
+  letter-spacing: .015em;
+  font-weight: 600;
+}
+html.chatgpt-theme :is([data-markdown-text-style="assistant-message"],[data-virtualized-turn-content] .markdown) {
+  font-size: 15px;
+  line-height: 1.7;
+}
+html.chatgpt-theme [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
+  background: var(--eq-paper) !important;
+  border: 1px solid var(--eq-border) !important;
+  border-radius: 9px !important;
+}
+html.chatgpt-theme [data-markdown-text-style="assistant-message"] [data-code-block="true"] pre {
+  font-size: 13px;
+  line-height: 1.65;
+}
+html.chatgpt-theme [data-markdown-text-style="assistant-message"] table {
+  font-size: 13px;
+  line-height: 1.5;
+}
+html.chatgpt-theme [data-user-message-bubble="true"] {
+  font-size: 15px;
+  line-height: 1.65;
 }
 html.chatgpt-theme [data-virtualized-turn-content] .markdown :is(pre,table) {
-  border-radius: 9px;
+  border-radius: 7px;
+  border-color: var(--eq-border);
 }
-html.chatgpt-theme [data-app-shell-titlebar] { border-bottom: 1px solid var(--color-border-subtle); }
+html.chatgpt-theme [data-virtualized-turn-content] .markdown pre {
+  border: 1px solid var(--eq-border);
+  background: var(--eq-paper);
+}
+html.chatgpt-theme .bg-user-message.text-user-message {
+  background: var(--eq-paper) !important;
+  color: var(--eq-text) !important;
+  border: 1px solid var(--eq-border);
+  border-inline-start: 3px solid var(--eq-accent);
+  border-radius: 9px !important;
+  padding: 13px 16px !important;
+  max-width: min(100%, 55rem) !important;
+  box-shadow: none !important;
+}
+/* The provider may align the user turn to the opposite edge. Align its real
+   message container to the task column, without moving any React-owned nodes. */
+html.chatgpt-theme :is([data-virtualized-turn-content], [class~="group/user-message"]) :is(div,section):has(> .bg-user-message.text-user-message),
+html.chatgpt-theme [class~="group/user-message"]:has(> [data-user-message-bubble="true"]) {
+  justify-content: flex-start !important;
+  align-items: flex-start !important;
+}
+html.chatgpt-theme [data-message-author-role="user"] {
+  align-self: stretch !important;
+  max-width: 100% !important;
+}
+html.chatgpt-theme [data-message-author-role="user"] :is(div,section):has(> .bg-user-message.text-user-message) {
+  justify-content: flex-start !important;
+  align-items: flex-start !important;
+}
 /* The same native input, attachment and action controls stay mounted. A
    two-row editor matches the Codex reference in both new and ongoing chats. */
 html.chatgpt-theme form[data-chatgpt-composer] [class*="ComposerSurface-"] {
-  background: var(--eq-paper) !important;
+  background: var(--eq-editor) !important;
   border: 1px solid var(--eq-border) !important;
-  border-radius: 19px !important;
+  border-radius: 12px !important;
   box-shadow: var(--eq-composer-shadow) !important;
-  --composer-layout-surface-background: var(--eq-paper);
+  --composer-layout-surface-background: var(--eq-editor);
 }
 html.chatgpt-theme form[data-chatgpt-composer] [data-composer-body]:has([data-composer-footer-responsive][data-composer-rows="responsive"]) {
   height: auto !important;
@@ -252,7 +350,7 @@ html.chatgpt-theme form[data-chatgpt-composer] [data-composer-body]:has([data-co
 html.chatgpt-theme form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) auto !important;
-  grid-template-rows: minmax(48px, auto) auto !important;
+  grid-template-rows: minmax(68px, auto) auto !important;
   align-items: center;
   gap: 2px 8px !important;
   padding: 8px 9px !important;
@@ -283,18 +381,65 @@ html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="respons
   justify-self: end;
 }
 html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
-  min-height: 40px;
+  min-height: 56px;
 }
-/* Position the new-chat composer toward the bottom, while retaining real
-   greeting/suggestion regions and their scroll/expanded-state behavior. */
+html.chatgpt-theme form[data-chatgpt-composer] [data-composer-markdown] p[data-empty-paragraph="true"][data-placeholder]::before {
+  content: "Describe a task or ask a question..." !important;
+  color: var(--eq-muted) !important;
+}
+html.chatgpt-theme:lang(tr) form[data-chatgpt-composer] [data-composer-markdown] p[data-empty-paragraph="true"][data-placeholder]::before {
+  content: "Bir görev tarif et veya soru sor..." !important;
+}
+/* The new-task page is an actual workspace: a focused task heading above
+   the same real provider composer, with suggestions kept available. Only the
+   non-interactive generic greeting is replaced visually. */
+html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"])) {
+  position: relative;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px;
+  padding: 24px 16px !important;
+  text-align: center;
+}
+html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"])) > div {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip-path: inset(50%) !important;
+}
+html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::before {
+  content: "EQUINOX  /  WORKSPACE";
+  color: var(--eq-accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .16em;
+}
+html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::after {
+  content: "What are we working on?";
+  color: var(--eq-text);
+  font-size: clamp(22px, 2.6vw, 29px);
+  line-height: 1.18;
+  letter-spacing: -.04em;
+  font-weight: 650;
+}
+html.chatgpt-theme:lang(tr) [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::before {
+  content: "EQUINOX  /  ÇALIŞMA ALANI";
+}
+html.chatgpt-theme:lang(tr) [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::after {
+  content: "Bugün ne üzerinde çalışıyoruz?";
+}
 @media (min-height: 460px) and (min-width: 640px) {
   html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-composer-expanded])):has(form[data-composer-placement="home"]) [class*="StreamedComposer-"] {
     grid-template-rows: minmax(0,1fr) auto auto !important;
     padding-bottom: 16px;
   }
-  html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-composer-expanded])) [class*="GreetingRegion-"] { justify-content: center !important; }
-  html.chatgpt-theme [class~="group/home-composer-layout"] [class*="Greeting-"] { align-items: center; }
+  html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-composer-expanded])) [class*="GreetingRegion-"] {
+    justify-content: center !important;
+  }
 }
+
 `;
 // The provider is a child of the existing trusted Control Center window.
 // Its separate session and webPreferences never receive the Control Center preload.

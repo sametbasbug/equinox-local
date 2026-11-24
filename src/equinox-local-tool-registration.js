@@ -1,24 +1,45 @@
-// Never retain arbitrary arguments, shell scripts, paths, or result bodies.
-// Only exact, known-safe command forms may appear in this local-only view.
+// Record only known public command tokens, never arbitrary arguments, paths,
+// scripts, or result bodies. A complex command should still communicate the
+// actual operation where it can be identified without exposing its input.
+const SAFE_COMMAND = /^(?:pwd|git status(?: --short| --branch| --short --branch| -sb)?|git diff(?: --stat| --check| --cached --stat)?|git log -1 --oneline|git rev-parse HEAD|npm run (?:build|typecheck|check|lint|(?:build|verify):typed-(?:runtime|desktop|browser|tooling)))$/u;
 function safeCommandPreview(name, input) {
+    const hidden = { command: null, commandRedacted: name === "terminal_exec" };
     if (name !== "terminal_exec" || !input || typeof input !== "object")
-        return null;
+        return hidden;
     const command = input.command;
     if (typeof command !== "string")
-        return null;
+        return hidden;
     const trimmed = command.trim();
-    const safe = /^(?:pwd|git status(?: --short| --branch| --short --branch| -sb)?|git diff(?: --stat| --check| --cached --stat)?|git log -1 --oneline|git rev-parse HEAD|npm run (?:build|typecheck|check|lint|(?:build|verify):typed-(?:runtime|desktop|browser|tooling)))$/u;
     if (trimmed.length <= 500) {
-        if (safe.test(trimmed))
-            return trimmed;
+        if (SAFE_COMMAND.test(trimmed))
+            return { command: trimmed, commandRedacted: false };
         const segments = trimmed.split(/\s*(?:&&|\|\||;|\r?\n)\s*/u);
-        if (segments.length > 1 && segments.length <= 12 && segments.every(segment => safe.test(segment)))
-            return trimmed;
+        if (segments.length > 1 && segments.length <= 12 && segments.every(segment => SAFE_COMMAND.test(segment))) {
+            return { command: trimmed, commandRedacted: false };
+        }
     }
-    // These are fixed public executable names, not caller-controlled arguments.
-    // Do not expose paths, scripts, variable values, command substitutions or output.
+    // Fixed allowlists include real subcommands where identifiable. Never
+    // parse arbitrary shell source or infer commands from quoted/script bodies.
+    const git = /^git[ \t]+(status|diff|log|show|fetch|pull|push|commit|add|restore|switch|branch|merge|rev-parse|worktree|ls-files|tag)(?:[ \t]|$)/u.exec(trimmed)?.[1];
+    if (git)
+        return { command: "git " + git + " …", commandRedacted: true };
+    const npm = /^npm[ \t]+(install|ci|update|outdated|audit|run|exec|pack|view|publish)(?:[ \t]|$)/u.exec(trimmed)?.[1];
+    if (npm)
+        return { command: "npm " + npm + " …", commandRedacted: true };
+    const gh = /^gh[ \t]+(run|pr|issue|release|api|workflow)(?:[ \t]|$)/u.exec(trimmed)?.[1];
+    if (gh)
+        return { command: "gh " + gh + " …", commandRedacted: true };
     const family = /^(git|npm|npx|node|python3|python|rg|sed|awk|cat|find|ls|curl|pwsh|powershell|bash|zsh|make|cmake|cargo|go|docker|gh)(?:[ \t]|$)/u.exec(trimmed)?.[1];
-    return family ? family + " …" : null;
+    return { command: family ? family + " …" : null, commandRedacted: true };
+}
+function countOutputLines(value) {
+    if (typeof value !== "string" || value.length === 0)
+        return 0;
+    let lines = 1;
+    for (let i = 0; i < value.length; i++)
+        if (value.charCodeAt(i) === 10)
+            lines++;
+    return value.endsWith("\n") ? lines - 1 : lines;
 }
 function createGuardedInvocation({ name, config, handler, options, exposeToMcp, beforeHandler, errorResult, runtimeRestartGuardError, agentControl, noteManagedAgentCommand, observeInvocation, }) {
     return async (...args) => {
@@ -63,12 +84,18 @@ export function createEquinoxLocalToolRegistrar({ server, capabilityRegistry, ru
         }
         const row = {
             id: ++activitySequence, operation: name,
-            command: safeCommandPreview(name, input), startedAt: new Date().toISOString(),
+            ...safeCommandPreview(name, input), resultSummary: null, startedAt: new Date().toISOString(),
             finishedAt: null, state: "running", exitCode: null,
         };
         recentActivity.unshift(row);
-        if (recentActivity.length > 40)
-            recentActivity.length = 40;
+        if (recentActivity.length > 80) {
+            // A long-running command should not disappear just because many fast
+            // operations completed after it. Keep the same hard memory bound.
+            let oldestFinished = recentActivity.length - 1;
+            while (oldestFinished > 0 && recentActivity[oldestFinished]?.state === "running")
+                oldestFinished--;
+            recentActivity.splice(oldestFinished > 0 ? oldestFinished : recentActivity.length - 1, 1);
+        }
         try {
             const result = await invoke();
             row.state = result && result.isError ? "failed" : "completed";
@@ -78,6 +105,10 @@ export function createEquinoxLocalToolRegistrar({ server, capabilityRegistry, ru
                     const payload = JSON.parse(extractTextContent(result));
                     if (Number.isInteger(payload?.exitCode))
                         row.exitCode = payload.exitCode;
+                    if (typeof payload?.stdout === "string" || typeof payload?.stderr === "string") {
+                        row.resultSummary = { stdoutLines: countOutputLines(payload.stdout), stderrLines: countOutputLines(payload.stderr),
+                            truncated: payload.stdoutTruncated === true || payload.stderrTruncated === true };
+                    }
                     if (payload?.ok === false)
                         row.state = "failed";
                     else if (payload?.promoted === true && payload?.completed === false)

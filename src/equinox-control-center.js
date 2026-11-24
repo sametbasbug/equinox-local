@@ -176,7 +176,7 @@ function localizeUiText(value) {
 }
 const DYNAMIC_TEXT_IDS = new Set([
     "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-kicker", "section-title", "last-refreshed",
-    "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
+    "chat-run-status-preview", "chat-run-status-outcome", "chat-activity-count", "chat-activity-expand", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
     "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
     "runtime-health-badge", "overview-title", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
     "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
@@ -468,7 +468,6 @@ function switchSection(section, { remember = false } = {}) {
     state.activeSection = section;
     document.body.classList.toggle("chat-workspace-active", section === "chat");
     $("chat-microphone-button").hidden = section !== "chat";
-    $("chat-activity-toggle").hidden = section !== "chat";
     if (remember && section !== "setup") {
         try {
             localStorage.setItem(SECTION_STORAGE_KEY, section);
@@ -2058,62 +2057,143 @@ function activityTone(event) {
         return "good";
     return "neutral";
 }
+let chatActivityFilter = "terminal";
+let chatActivityFollow = true;
+let chatActivityRenderKey = "";
+let chatActivitySearch = "";
+const chatRunLabels = { running: "Running", completed: "Completed", failed: "Failed", background: "Handed to background" };
+function chatRunOutcome(event) {
+    return Number.isInteger(event.exitCode) ? localizeUiText("Exit code") + " " + event.exitCode : localizeUiText(chatRunLabels[event.state] || "Completed");
+}
 function setChatActivityOpen(open) {
     $("chat-local-activity").hidden = !open;
-    $("chat-activity-toggle").setAttribute("aria-expanded", String(open));
-    $("chat-activity-toggle").classList.toggle("is-active", open);
-    if (open)
+    $("chat-run-status").setAttribute("aria-expanded", String(open));
+    if (open) {
+        chatActivityRenderKey = "";
         renderChatLocalActivity();
+    }
     syncEmbeddedChatLayout();
 }
 function renderChatLocalActivity() {
+    const all = state.toolActivity;
+    const running = all.filter(event => event.state === "running").length;
+    const latest = all.find(event => event.state === "running" && event.operation === "terminal_exec")
+        || all.find(event => event.state === "running") || all.find(event => event.operation === "terminal_exec") || all[0];
+    const status = $("chat-run-status");
+    status.classList.toggle("has-running-tools", running > 0);
+    $("chat-run-status-preview").textContent = latest
+        ? latest.operation === "terminal_exec" ? "$ " + (latest.command || localizeUiText("Command details hidden")) : latest.operation.replace(/_/g, " ")
+        : localizeUiText("No Local tool calls yet.");
+    $("chat-run-status-outcome").textContent = running
+        ? String(running) + " " + localizeUiText("Running")
+        : latest ? chatRunOutcome(latest) : "";
+    status.classList.toggle("has-failure", !running && latest?.state === "failed");
     if ($("chat-local-activity").hidden)
         return;
+    const term = chatActivitySearch.trim().toLowerCase();
+    const events = all.filter(event => (chatActivityFilter === "all" || event.operation === "terminal_exec")
+        && (!term || [event.command, event.operation, event.state, chatRunOutcome(event)].some(value => String(value || "").toLowerCase().includes(term)))).slice().reverse();
+    const runningVisible = events.filter(event => event.state === "running").length;
+    $("chat-activity-expand").textContent = localizeUiText($("chat-local-activity").classList.contains("is-expanded") ? "Shrink" : "Expand");
+    $("chat-activity-count").textContent = String(events.length) + (runningVisible ? " · " + runningVisible + " " + localizeUiText("Running") : "");
+    // Preserve scroll, open details and keyboard focus during regular polling.
+    const key = JSON.stringify([chatActivityFilter, chatActivitySearch, state.language, events]);
+    if (key === chatActivityRenderKey)
+        return;
+    chatActivityRenderKey = key;
     const list = $("chat-activity-list");
     const scroll = list.scrollTop;
+    const expanded = new Set([...list.querySelectorAll("details[open]")].map(item => item.dataset.runId));
+    const active = document.activeElement?.closest("[data-run-id]")?.dataset.runId;
     list.replaceChildren();
-    if (!state.toolActivity.length) {
+    if (!events.length) {
         const empty = document.createElement("p");
         empty.className = "chat-activity-empty";
-        empty.textContent = localizeUiText("No Local tool calls yet.");
+        empty.textContent = localizeUiText(term ? "No matching runs." : chatActivityFilter === "terminal" ? "No terminal runs yet. Commands appear here when Local executes them." : "No Local tool calls yet.");
         list.append(empty);
         return;
     }
-    for (const event of state.toolActivity) {
-        const item = document.createElement("article");
-        item.className = "chat-tool-row";
-        const heading = document.createElement("div");
-        heading.className = "chat-tool-heading";
-        const dot = document.createElement("span");
+    for (const event of events) {
         const status = ["running", "completed", "failed", "background"].includes(event.state) ? event.state : "completed";
-        dot.className = "chat-tool-dot is-" + status;
-        dot.setAttribute("aria-hidden", "true");
-        const name = document.createElement("strong");
-        name.textContent = event.operation || "";
-        heading.append(dot, name);
-        item.append(heading);
+        const item = document.createElement("details");
+        item.className = "chat-tool-row is-" + status;
+        item.dataset.runId = String(event.id);
+        item.open = expanded.has(item.dataset.runId);
+        const summary = document.createElement("summary");
+        const indicator = document.createElement("span");
+        indicator.className = "chat-tool-indicator";
+        indicator.setAttribute("aria-hidden", "true");
+        indicator.textContent = status === "running" ? "●" : status === "completed" ? "✓" : status === "failed" ? "!" : "↗";
+        const time = document.createElement("time");
+        time.className = "chat-tool-time";
+        time.dateTime = event.startedAt;
+        const started = new Date(event.startedAt);
+        time.textContent = Number.isFinite(started.getTime()) ? started.toLocaleTimeString(localeForLanguage(state.language), { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+        const command = document.createElement(event.operation === "terminal_exec" ? "code" : "span");
+        command.className = "chat-tool-command";
+        command.textContent = event.operation === "terminal_exec"
+            ? "$ " + (event.command || localizeUiText("Command details hidden"))
+            : String(event.operation || "").replace(/_/g, " ");
+        const outcome = document.createElement("span");
+        outcome.className = "chat-tool-outcome";
+        outcome.textContent = chatRunOutcome(event);
+        const duration = document.createElement("span");
+        duration.className = "chat-tool-duration";
+        const elapsed = event.finishedAt ? new Date(event.finishedAt).getTime() - new Date(event.startedAt).getTime() : null;
+        duration.textContent = elapsed !== null && Number.isFinite(elapsed) ? elapsed < 1000 ? elapsed + " ms" : (elapsed / 1000).toFixed(1) + " s" : "";
+        const chevron = document.createElement("span");
+        chevron.className = "chat-tool-chevron";
+        chevron.setAttribute("aria-hidden", "true");
+        chevron.textContent = "›";
+        summary.append(indicator, time, command, outcome, duration, chevron);
+        item.append(summary);
+        const detail = document.createElement("div");
+        detail.className = "chat-tool-detail";
+        for (const [label, value] of [
+            ["Operation", event.operation],
+            ["Started", formatDate(event.startedAt)],
+            ["Status", localizeUiText(chatRunLabels[status])],
+            ["Finished", event.finishedAt ? formatDate(event.finishedAt) : localizeUiText("Running")],
+        ]) {
+            const field = document.createElement("div");
+            const title = document.createElement("span");
+            title.textContent = localizeUiText(label);
+            const body = document.createElement("strong");
+            body.textContent = String(value || "");
+            field.append(title, body);
+            detail.append(field);
+        }
         if (event.operation === "terminal_exec") {
-            const command = document.createElement("code");
-            command.className = "chat-tool-command";
-            command.textContent = event.command || localizeUiText("Command details hidden");
-            item.append(command);
+            if (event.resultSummary) {
+                for (const [label, value] of [["Stdout lines", event.resultSummary.stdoutLines], ["Stderr lines", event.resultSummary.stderrLines]]) {
+                    const field = document.createElement("div");
+                    const title = document.createElement("span");
+                    title.textContent = localizeUiText(label);
+                    const body = document.createElement("strong");
+                    body.textContent = String(value);
+                    field.append(title, body);
+                    detail.append(field);
+                }
+                if (event.resultSummary.truncated) {
+                    const notice = document.createElement("p");
+                    notice.className = "chat-run-notice";
+                    notice.textContent = localizeUiText("Output was truncated by Local.");
+                    detail.append(notice);
+                }
+            }
+            if (event.commandRedacted) {
+                const notice = document.createElement("p");
+                notice.className = "chat-run-notice";
+                notice.textContent = localizeUiText("Only the recognized command is shown. Arguments are hidden.");
+                detail.append(notice);
+            }
         }
-        const meta = document.createElement("div");
-        meta.className = "chat-tool-meta";
-        const labels = { running: "Running", completed: "Completed", failed: "Failed", background: "Handed to background" };
-        const parts = [localizeUiText(labels[status]), formatDate(event.startedAt)];
-        if (event.finishedAt) {
-            const duration = new Date(event.finishedAt).getTime() - new Date(event.startedAt).getTime();
-            if (Number.isFinite(duration))
-                parts.push(duration < 1000 ? duration + " ms" : (duration / 1000).toFixed(1) + " s");
-        }
-        if (Number.isInteger(event.exitCode))
-            parts.push(localizeUiText("Exit code") + " " + event.exitCode);
-        meta.textContent = parts.join(" · ");
-        item.append(meta);
+        item.append(detail);
         list.append(item);
     }
-    list.scrollTop = scroll;
+    if (active)
+        [...list.querySelectorAll("details")].find(item => item.dataset.runId === active)?.querySelector("summary")?.focus({ preventScroll: true });
+    list.scrollTop = chatActivityFollow ? list.scrollHeight : scroll;
 }
 function renderActivity() {
     renderChatLocalActivity();
@@ -2247,7 +2327,7 @@ function renderAgentControl() {
     setBadge("agent-control-badge", paused ? "Paused" : "Active", paused ? "warn" : "good");
     setText("agent-control-copy", paused
         ? "Agent mutations are paused. Read-only status remains available until you resume."
-        : "Agent mutations are active. Emergency Stop is available from the navigation rail at any time.");
+        : "Agent mutations are active. Emergency Stop is available from the workspace header at any time.");
     setText("active-terminal-count", String(activeWork.terminals ?? 0));
     setText("active-process-count", String(activeWork.processes ?? 0));
     setText("active-work-count", String(activeWork.total ?? 0));
@@ -4028,8 +4108,40 @@ function bindEvents() {
     });
     $("language-select").addEventListener("change", (event) => setLanguage(event.target.value));
     bindEmbeddedChatLayout();
-    $("chat-activity-toggle").addEventListener("click", () => setChatActivityOpen(Boolean($("chat-local-activity").hidden)));
+    $("chat-run-status").addEventListener("click", () => setChatActivityOpen(Boolean($("chat-local-activity").hidden)));
     $("chat-activity-close").addEventListener("click", () => setChatActivityOpen(false));
+    for (const button of document.querySelectorAll("[data-chat-activity-filter]")) {
+        button.addEventListener("click", () => {
+            chatActivityFilter = button.dataset.chatActivityFilter === "all" ? "all" : "terminal";
+            for (const choice of document.querySelectorAll("[data-chat-activity-filter]")) {
+                choice.setAttribute("aria-pressed", String(choice === button));
+            }
+            renderChatLocalActivity();
+        });
+    }
+    $("chat-activity-search").addEventListener("input", () => {
+        chatActivitySearch = $("chat-activity-search").value;
+        renderChatLocalActivity();
+    });
+    $("chat-activity-expand").addEventListener("click", () => {
+        const expanded = $("chat-local-activity").classList.toggle("is-expanded");
+        $("chat-activity-expand").setAttribute("aria-pressed", String(expanded));
+        $("chat-activity-expand").textContent = localizeUiText(expanded ? "Shrink" : "Expand");
+        syncEmbeddedChatLayout();
+    });
+    $("chat-activity-follow").addEventListener("click", () => {
+        chatActivityFollow = !chatActivityFollow;
+        $("chat-activity-follow").setAttribute("aria-pressed", String(chatActivityFollow));
+        if (chatActivityFollow)
+            $("chat-activity-list").scrollTop = $("chat-activity-list").scrollHeight;
+    });
+    $("chat-activity-list").addEventListener("scroll", () => {
+        const list = $("chat-activity-list");
+        if (chatActivityFollow && list.scrollHeight - list.clientHeight - list.scrollTop > 40) {
+            chatActivityFollow = false;
+            $("chat-activity-follow").setAttribute("aria-pressed", "false");
+        }
+    });
     const settingsDialog = $("settings-dialog");
     $("settings-open-button").addEventListener("click", () => settingsDialog.showModal());
     $("settings-close-button").addEventListener("click", () => settingsDialog.close());
