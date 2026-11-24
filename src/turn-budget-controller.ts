@@ -201,7 +201,7 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
       if (!result || typeof result !== "object") return Object.freeze({ status: "unknown" });
       if (result.status === "idle") {
         const idleContexts = Array.isArray(result.idleContexts)
-          ? result.idleContexts.filter((value) => value === "agent" || value === "user")
+          ? result.idleContexts.filter((value) => value === "agent" || value === "user" || value === "native")
           : [];
         return Object.freeze({ status: "idle", idleContexts: Object.freeze([...new Set(idleContexts)]), pinned: result.pinned === true });
       }

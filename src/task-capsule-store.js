@@ -101,7 +101,7 @@ function normalizeContinuationTarget(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("Auto Continue target must be an object.");
     const browserContext = value.browserContext;
-    if (!["agent", "user"].includes(browserContext))
+    if (!["agent", "user", "native"].includes(browserContext))
         throw new Error("Auto Continue browser context is invalid.");
     if (!["task-tab", "pinned"].includes(value.mode))
         throw new Error("Auto Continue target mode is invalid.");
@@ -124,7 +124,7 @@ function normalizeFreshResumeSource(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("Fresh Chat Resume source must be an object.");
     const browserContext = value.browserContext;
-    if (!["agent", "user"].includes(browserContext))
+    if (!["agent", "user", "native"].includes(browserContext))
         throw new Error("Fresh Chat Resume browser context is invalid.");
     if (!["task-tab", "pinned"].includes(value.mode))
         throw new Error("Fresh Chat Resume source mode is invalid.");
@@ -149,7 +149,7 @@ function normalizeChatBinding(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("Chat binding must be an object.");
     const browserContext = value.browserContext;
-    if (!["agent", "user"].includes(browserContext))
+    if (!["agent", "user", "native"].includes(browserContext))
         throw new Error("Chat binding browser context is invalid.");
     const browserInstanceId = boundedText(value.browserInstanceId, { label: "chat binding browserInstanceId", maxChars: 128 });
     if (!Number.isInteger(value.tabId) || value.tabId < 1)

@@ -1,3 +1,4 @@
+import { createNativeChatContinuity } from "./native-chat-continuity.js";
 import { WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import path from "node:path";
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
@@ -348,7 +349,9 @@ export function createEmbeddedChat(win, initialLanguage = "en") {
     };
     isolated.on("will-download", onDownload);
     view.setVisible(false);
+    let chatVisible = false;
     win.contentView.addChildView(view);
+    const continuity = createNativeChatContinuity(win, view.webContents, () => chatVisible);
     const syncViewBackground = () => {
         if (!view.webContents.isDestroyed())
             view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5");
@@ -423,6 +426,8 @@ export function createEmbeddedChat(win, initialLanguage = "en") {
         if (disposed)
             return;
         disposed = true;
+        chatVisible = false;
+        continuity.dispose();
         nativeTheme.removeListener("updated", syncViewBackground);
         microphoneGranted = false;
         microphonePromptOpen = false;
@@ -441,6 +446,7 @@ export function createEmbeddedChat(win, initialLanguage = "en") {
         setBounds(bounds) {
             if (disposed || view.webContents.isDestroyed())
                 return;
+            chatVisible = Boolean(bounds);
             if (!bounds) {
                 view.setVisible(false);
                 if (view.webContents.isFocused() && !win.isDestroyed())

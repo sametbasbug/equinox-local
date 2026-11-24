@@ -2293,7 +2293,7 @@ function taskTargetLabel(continuation) {
     const target = continuation?.target;
     if (!target)
         return localizeUiText("No browser target");
-    const context = target.browserContext === "agent" ? "Agent Browser" : "Your Browser";
+    const context = target.browserContext === "native" ? "Native Chat" : target.browserContext === "agent" ? "Agent Browser" : "Your Browser";
     return `${localizeUiText(context)} · ${String(target.title || "ChatGPT").slice(0, 72)}`;
 }
 function freshResumeReasonMessage(freshResume) {

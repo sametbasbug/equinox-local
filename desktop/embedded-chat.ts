@@ -1,3 +1,4 @@
+import { createNativeChatContinuity } from "./native-chat-continuity.js";
 import { WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import type { BrowserWindow, Rectangle } from "electron";
 import path from "node:path";
@@ -328,7 +329,9 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
   isolated.on("will-download", onDownload);
 
   view.setVisible(false);
+  let chatVisible = false;
   win.contentView.addChildView(view);
+  const continuity = createNativeChatContinuity(win, view.webContents, () => chatVisible);
   const syncViewBackground = () => {
     if (!view.webContents.isDestroyed()) view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5");
   };
@@ -389,6 +392,8 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    chatVisible = false;
+    continuity.dispose();
     nativeTheme.removeListener("updated", syncViewBackground);
     microphoneGranted = false;
     microphonePromptOpen = false;
@@ -404,6 +409,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
   return {
     setBounds(bounds: Rectangle | null): void {
       if (disposed || view.webContents.isDestroyed()) return;
+      chatVisible = Boolean(bounds);
       if (!bounds) {
         view.setVisible(false);
         if (view.webContents.isFocused() && !win.isDestroyed()) win.webContents.focus();

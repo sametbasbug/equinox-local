@@ -17,11 +17,11 @@ export function registerTaskCapsuleTools({ registerRawTool, z, store, autoContin
     const jsonResult = (value) => ({ content: [{ type: "text", text: JSON.stringify(value, null, 2) }] });
     registerRawTool("task_checkpoint", {
         description: "Create or update a durable bounded Task Capsule checkpoint for long-running work. Updating an existing task invalidates any older pending continuation.",
-        inputSchema: { task_id: taskIdSchema.optional(), ...snapshotSchema },
+        inputSchema: { task_id: taskIdSchema.optional(), chat_context: z.enum(["agent", "user", "native"]).optional().describe("Optional exact context for binding a new task; existing bindings are not transferred between contexts."), ...snapshotSchema },
         annotations: { title: "Save task checkpoint", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     }, async (input) => {
         const task = await store.checkpoint({ ...input, taskId: input.task_id });
-        const bound = await autoContinueController.captureBinding(task.taskId);
+        const bound = await autoContinueController.captureBinding(task.taskId, input.chat_context);
         return jsonResult(bound);
     }, { capabilityDomain: "runtime" });
     registerRawTool("task_read", {

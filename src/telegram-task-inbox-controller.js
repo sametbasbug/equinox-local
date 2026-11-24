@@ -552,7 +552,7 @@ export function createTelegramTaskInboxController({ store, autoContinueControlle
                     referencedTask = await store.readInternal(state.taskCreation.taskId);
                 }
                 catch { }
-                if (referencedTask?.status === "active" && referencedTask.chatBinding?.canonicalUrl && !state.chatBridgeTurn && !state.chatBridgeAttachment) {
+                if (referencedTask?.status === "active" && referencedTask.chatBinding?.canonicalUrl && referencedTask.chatBinding.browserContext !== "native" && !state.chatBridgeTurn && !state.chatBridgeAttachment) {
                     try {
                         state.chatBridge = normalizeChatBridgeBinding({
                             sourceTaskId: referencedTask.taskId,
@@ -628,7 +628,7 @@ export function createTelegramTaskInboxController({ store, autoContinueControlle
         const internal = await store.readInternal(taskId);
         return {
             canonicalUrl: internal.chatBinding?.canonicalUrl || internal.continuation?.target?.canonicalUrl || null,
-            chatBindable: Boolean(internal.chatBinding),
+            chatBindable: Boolean(internal.chatBinding && internal.chatBinding.browserContext !== "native"),
             chatSelected: state.chatBridge?.sourceTaskId === taskId,
         };
     };
@@ -641,6 +641,8 @@ export function createTelegramTaskInboxController({ store, autoContinueControlle
         const binding = task.chatBinding;
         if (!binding?.canonicalUrl)
             throw new Error("This task does not have a verified ChatGPT conversation binding yet.");
+        if (binding.browserContext === "native")
+            throw new Error("This task is bound to Native Chat. Telegram Chat Bridge still requires a verified Chrome conversation.");
         state.chatBridge = normalizeChatBridgeBinding({
             sourceTaskId: taskId,
             browserContext: binding.browserContext,
@@ -1104,7 +1106,7 @@ export function createTelegramTaskInboxController({ store, autoContinueControlle
             }
             if (task?.taskId) {
                 const recoveredTask = await store.readInternal(task.taskId).catch(() => null);
-                if (recoveredTask?.status === "active" && recoveredTask.chatBinding?.canonicalUrl) {
+                if (recoveredTask?.status === "active" && recoveredTask.chatBinding?.canonicalUrl && recoveredTask.chatBinding.browserContext !== "native") {
                     try {
                         state.chatBridge = normalizeChatBridgeBinding({
                             sourceTaskId: recoveredTask.taskId,

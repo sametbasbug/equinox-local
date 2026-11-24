@@ -176,12 +176,18 @@ async function readPrivateControlDescriptor(): Promise<{endpoint: string; token:
 // Reuse the already-running, private current-user CLI bridge. Main alone reads
 // its credential-bearing descriptor. No token, endpoint, arbitrary path or
 // generic socket API is exposed to the sandboxed renderer.
+export async function exchangeNativeChat(exchange: {instanceId: string; state: unknown; reply?: unknown}): Promise<Record<string, any>> {
+  const result = await callAuthenticatedControlSocket({nativeExchange: exchange});
+  if (result.status !== 200 || result.body.ok !== true) throw new Error("Native Chat exchange unavailable.");
+  return result.body;
+}
+
 async function callAuthenticatedControlSocket(request: {
   method: string; path: string; body?: string; backgroundRefresh: boolean;
-}): Promise<{ status: number; body: Record<string, any> }> {
+} | {nativeExchange: unknown}): Promise<{ status: number; body: Record<string, any> }> {
   const descriptor = await readPrivateControlDescriptor();
   const { endpoint } = descriptor;
-  const message = JSON.stringify({ token: descriptor.token, action: "control.request", ...request });
+  const message = JSON.stringify("nativeExchange" in request ? {token: descriptor.token, action: "native-chat.exchange", exchange: request.nativeExchange} : { token: descriptor.token, action: "control.request", ...request });
   // Serialized JSON bodies are escaped again by the socket envelope. Bound
   // the encoded representation separately from the decoded 256 KiB body.
   if (Buffer.byteLength(message, "utf8") > MAX_REQUEST_BYTES * 2 + 4096) {
@@ -198,7 +204,7 @@ async function callAuthenticatedControlSocket(request: {
       socket.destroy();
       reject(error);
     };
-    socket.setTimeout(150_000, () => fail(new Error("Desktop control IPC timed out; mutation outcome may be ambiguous.")));
+    socket.setTimeout("nativeExchange" in request ? 2_500 : 150_000, () => fail(new Error("Desktop control IPC timed out; mutation outcome may be ambiguous.")));
     socket.once("connect", () => socket.write(`${message}\n`));
     socket.on("data", (chunk: string) => {
       if (settled) return;

@@ -6,6 +6,7 @@ type ReferenceType = "project" | "branch" | "commit" | "file" | "url" | "note";
 type TaskReference = Readonly<{ type: ReferenceType; label: string; value: string }>;
 type TaskSnapshot = {
   task_id?: string | undefined;
+  chat_context?: "agent" | "user" | "native" | undefined;
   title: string;
   objective: string;
   completed: string[];
@@ -50,7 +51,7 @@ type Store = {
   cancel: (taskId: TaskId) => Promise<unknown>;
 };
 type AutoContinueController = {
-  captureBinding: (taskId: TaskId) => Promise<unknown>;
+  captureBinding: (taskId: TaskId, preferredContext?: "agent" | "user" | "native") => Promise<unknown>;
   armBound: (input: {taskId: TaskId;ttlMinutes: number}) => Promise<unknown>;
   cancel: (taskId: TaskId, reason: "agent_cancelled") => Promise<unknown>;
 };
@@ -86,11 +87,11 @@ export function registerTaskCapsuleTools({ registerRawTool, z, store, autoContin
 
   registerRawTool("task_checkpoint", {
     description: "Create or update a durable bounded Task Capsule checkpoint for long-running work. Updating an existing task invalidates any older pending continuation.",
-    inputSchema: { task_id: taskIdSchema.optional(), ...snapshotSchema },
+    inputSchema: { task_id: taskIdSchema.optional(), chat_context: z.enum(["agent", "user", "native"]).optional().describe("Optional exact context for binding a new task; existing bindings are not transferred between contexts."), ...snapshotSchema },
     annotations: { title: "Save task checkpoint", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (input) => {
     const task = await store.checkpoint({ ...input, taskId: input.task_id });
-    const bound = await autoContinueController.captureBinding(task.taskId);
+    const bound = await autoContinueController.captureBinding(task.taskId, input.chat_context);
     return jsonResult(bound);
   }, { capabilityDomain: "runtime" });
 

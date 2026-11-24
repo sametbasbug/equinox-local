@@ -221,6 +221,7 @@ import {
 } from "./capability-registry.js";
 import { createTaskCapsuleStore } from "./task-capsule-store.js";
 import { deriveEquinoxLocalPresentationState } from "./equinox-local-presentation-state.js";
+import { createNativeChatChannel } from "./native-chat-channel.js";
 import { createAutoContinueController } from "./auto-continue-controller.js";
 import { createFreshChatResumeController } from "./fresh-chat-resume-controller.js";
 import { registerTaskCapsuleTools } from "./task-capsule-tools.js";
@@ -2159,6 +2160,9 @@ equinoxAgentBrowser = createEquinoxAgentBrowser({
   recordEvent: recordRuntimeEvent,
 });
 
+const nativeChatChannel = createNativeChatChannel({assertMutationAllowed: () => agentControl.assertMutationAllowed("native_chat_delivery")});
+const continuityBridge = nativeChatChannel.adapt(equinoxBrowserBridge);
+
 async function resolveTurnBudgetIdentity() {
   const snapshot = equinoxBrowserBridge.snapshot();
   const candidates = [];
@@ -2207,6 +2211,9 @@ async function resolveTurnBudgetIdentity() {
     // conversation's timer or fall back to another browser profile.
     return { status: "idle", pinned: true, idleContexts: ["agent", "user"] };
   }
+  const native = nativeChatChannel.current()?.state;
+  if (native?.generationActive && (native.userEpoch || native.assistantTurnKey)) candidates.push({browserContext: "native", target: native});
+  else if (nativeChatChannel.hasFreshObservation()) idleContexts.push("native");
   const selected = candidates.length === 1 ? candidates[0] : null;
   if (!selected) {
     return idleContexts.length > 0
@@ -2443,14 +2450,14 @@ const taskCapsuleStore:RuntimeBoundary = createTaskCapsuleStore({
 await taskCapsuleStore.initialize();
 const autoContinueController:RuntimeBoundary = createAutoContinueController({
   store: taskCapsuleStore,
-  browserBridge: equinoxBrowserBridge,
+  browserBridge: continuityBridge,
   agentControl,
   onEvent: recordRuntimeEvent,
   getMaxChainHops: () => turnBudgetController.snapshot().autoContinueMaxHops,
 });
 const freshChatResumeController:RuntimeBoundary = createFreshChatResumeController({
   store: taskCapsuleStore,
-  browserBridge: equinoxBrowserBridge,
+  browserBridge: continuityBridge,
   autoContinueController,
   agentControl,
   onEvent: recordRuntimeEvent,
@@ -2744,6 +2751,7 @@ await registerRuntimeObservabilityTools({
       allowedToolCount: PEEKABOO_ALLOWED_TOOLS.length,
     },
     equinoxBrowser: equinoxBrowserBridge.snapshot(),
+    nativeChat: nativeChatChannel.status(),
     config: {
       version: EQUINOX_LOCAL_CONFIG.version,
       revision: EQUINOX_LOCAL_CONFIG_SNAPSHOT.revision,
@@ -3250,6 +3258,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       },
       agentControl: agentControl.snapshot(),
       turnBudget: await turnBudgetController.refreshSnapshot(),
+      nativeChat: nativeChatChannel.status(),
       capabilities: capabilityRegistry.summary(),
     };
     const [tasks, onboarding] = await Promise.all([
@@ -3589,6 +3598,7 @@ const cliBridge = createEquinoxLocalCliBridge({
   },
   tasks: taskCapsuleStore,
   control: equinoxLocalControlApi,
+  nativeChatExchange: nativeChatChannel.exchange,
   chat: telegramChatBridgeController,
   assertMutationAllowed: (name: string) => agentControl.assertMutationAllowed(name),
 });
@@ -3601,6 +3611,7 @@ async function shutdownLocalResources({ reason = "api" } = {}) {
   }
 
   localShutdownStarted = true;
+  nativeChatChannel.close();
 
   await recordRuntimeEvent({
     component: "runtime",

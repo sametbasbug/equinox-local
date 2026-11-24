@@ -97,7 +97,7 @@ function normalizeContinuationTarget(value:Target|null|undefined):Target|null {
   if (value === null || value === undefined) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Auto Continue target must be an object.");
   const browserContext = value.browserContext;
-  if (!["agent", "user"].includes(browserContext)) throw new Error("Auto Continue browser context is invalid.");
+  if (!["agent", "user", "native"].includes(browserContext)) throw new Error("Auto Continue browser context is invalid.");
   if (!["task-tab", "pinned"].includes(value.mode)) throw new Error("Auto Continue target mode is invalid.");
   if (!Number.isInteger(value.tabId) || value.tabId < 1) throw new Error("Auto Continue target tab id is invalid.");
   const browserInstanceId = boundedText(value.browserInstanceId, { label: "browserInstanceId", maxChars: 128 });
@@ -114,7 +114,7 @@ function normalizeContinuationTarget(value:Target|null|undefined):Target|null {
 function normalizeFreshResumeSource(value:Source|null):Source {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Fresh Chat Resume source must be an object.");
   const browserContext = value.browserContext;
-  if (!["agent", "user"].includes(browserContext)) throw new Error("Fresh Chat Resume browser context is invalid.");
+  if (!["agent", "user", "native"].includes(browserContext)) throw new Error("Fresh Chat Resume browser context is invalid.");
   if (!["task-tab", "pinned"].includes(value.mode)) throw new Error("Fresh Chat Resume source mode is invalid.");
   if (!Number.isInteger(value.tabId) || value.tabId < 1) throw new Error("Fresh Chat Resume source tab id is invalid.");
   const browserInstanceId = boundedText(value.browserInstanceId, { label: "fresh resume browserInstanceId", maxChars: 128 });
@@ -132,7 +132,7 @@ function normalizeChatBinding(value:Binding|null|undefined):Binding|null {
   if (value === null || value === undefined) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Chat binding must be an object.");
   const browserContext = value.browserContext;
-  if (!["agent", "user"].includes(browserContext)) throw new Error("Chat binding browser context is invalid.");
+  if (!["agent", "user", "native"].includes(browserContext)) throw new Error("Chat binding browser context is invalid.");
   const browserInstanceId = boundedText(value.browserInstanceId, { label: "chat binding browserInstanceId", maxChars: 128 });
   if (!Number.isInteger(value.tabId) || value.tabId < 1) throw new Error("Chat binding tab id is invalid.");
   const conversationId = boundedText(value.conversationId, { label: "chat binding conversationId", maxChars: 160 });

@@ -46,11 +46,13 @@ export function createAutoContinueController({ store, browserBridge, agentContro
         timers.set(continuationId, timer);
     };
     const callContext = async (context, method, args, timeoutMs = 5_000) => (browserBridge.call(method, args, { context, timeoutMs }));
-    const resolveTarget = async () => {
+    const resolveTarget = async (preferredContext) => {
         const snapshot = browserBridge.snapshot();
         const contexts = [];
         const outdated = [];
-        for (const context of ["agent", "user"]) {
+        for (const context of ["agent", "user", "native"]) {
+            if (preferredContext && context !== preferredContext)
+                continue;
             const state = snapshot?.contexts?.[context];
             if (!state?.ready)
                 continue;
@@ -80,10 +82,10 @@ export function createAutoContinueController({ store, browserBridge, agentContro
             const ready = contexts.filter((item) => item.result?.mode === "task-tab" && item.result?.status === "ready");
             if (ready.length !== 1) {
                 if (ready.length > 1)
-                    throw new Error("More than one Chrome profile has a generating ChatGPT task. Pin the intended conversation in the extension popup.");
+                    throw new Error("More than one ChatGPT target is generating. Select the intended context explicitly or pin the Chrome conversation.");
                 if (outdated.length > 0 && contexts.length === 0)
                     throw new Error("Auto Continue requires the current Equinox Browser extension in the active Chrome profile.");
-                throw new Error("Auto Continue could not identify exactly one generating ChatGPT conversation. Keep the task response generating, or pin its tab in the extension popup.");
+                throw new Error("Auto Continue could not identify exactly one generating ChatGPT conversation. Keep the intended task response generating.");
             }
             selected = ready[0];
         }
@@ -151,6 +153,8 @@ export function createAutoContinueController({ store, browserBridge, agentContro
             inspected = null;
         }
         if (inspected?.conversationId !== binding.conversationId) {
+            if (binding.browserContext === "native")
+                throw new Error("The bound native Chat conversation is not open.");
             const reacquired = await reacquireBoundTab({ context: binding.browserContext, conversationId: binding.conversationId });
             tabId = reacquired.tabId;
             canonicalUrl = reacquired.canonicalUrl || canonicalUrl;
@@ -180,9 +184,17 @@ export function createAutoContinueController({ store, browserBridge, agentContro
             autoContinueVersion,
         };
     };
-    const captureBinding = async (taskId) => {
+    const captureBinding = async (taskId, preferredContext) => {
         try {
-            const target = await resolveTarget();
+            const task = await store.readInternal(taskId);
+            const existing = task.chatBinding;
+            // Checkpoints must not silently transfer a live Chrome task to another
+            // native/account context, or vice versa.
+            if (existing && preferredContext && existing.browserContext !== preferredContext)
+                return store.read(taskId);
+            const target = await resolveTarget(existing?.browserContext || preferredContext);
+            if (existing && (target.browserContext !== existing.browserContext || target.conversationId !== existing.conversationId))
+                return store.read(taskId);
             return await store.bindChat({ taskId, binding: { browserContext: target.browserContext, browserInstanceId: target.browserInstanceId, tabId: target.tabId, conversationId: target.conversationId, canonicalUrl: target.canonicalUrl } });
         }
         catch {
@@ -233,6 +245,9 @@ export function createAutoContinueController({ store, browserBridge, agentContro
         }
         let state;
         try {
+            const context = browserBridge.snapshot()?.contexts?.[target.browserContext];
+            if (target.browserContext === "native" && (context?.extension?.instanceId !== target.browserInstanceId))
+                throw new Error("Native view identity changed.");
             state = await callContext(target.browserContext, "continuation.inspect", { tabId: target.tabId });
         }
         catch {
@@ -285,6 +300,7 @@ export function createAutoContinueController({ store, browserBridge, agentContro
             try {
                 result = await callContext(target.browserContext, "continuation.deliver", {
                     continuationId,
+                    ...(target.browserContext === "native" ? { browserInstanceId: target.browserInstanceId } : {}),
                     tabId: target.tabId,
                     conversationId: target.conversationId,
                     userEpoch: target.userEpoch,

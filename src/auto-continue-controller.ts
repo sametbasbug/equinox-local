@@ -1,4 +1,4 @@
-type BrowserContext = "agent" | "user";
+type BrowserContext = "agent" | "user" | "native";
 type BrowserInstance = {
   ready?: boolean;
   extension?: { instanceId?: string; capabilityVersions?: { autoContinue?: number } };
@@ -90,9 +90,9 @@ type AutoContinueController = {
   cancel: (taskId: string, reason?: string) => Promise<unknown>;
   start: () => Promise<{resumed: number; retired: number}>;
   shutdown: () => Promise<void>;
-  resolveTarget: () => Promise<BrowserTarget>;
+  resolveTarget: (preferredContext?: BrowserContext) => Promise<BrowserTarget>;
   resolveBoundTarget: (taskId: string) => Promise<BrowserTarget>;
-  captureBinding: (taskId: string) => Promise<unknown>;
+  captureBinding: (taskId: string, preferredContext?: BrowserContext) => Promise<unknown>;
 };
 
 const REQUIRED_AUTO_CONTINUE_VERSION = 1;
@@ -165,11 +165,12 @@ export function createAutoContinueController({
     browserBridge.call(method, args, { context, timeoutMs })
   );
 
-  const resolveTarget = async (): Promise<BrowserTarget> => {
+  const resolveTarget = async (preferredContext?: BrowserContext): Promise<BrowserTarget> => {
     const snapshot = browserBridge.snapshot();
     const contexts: {context: BrowserContext; instanceId: string | null; result: TargetResponse}[] = [];
     const outdated: BrowserContext[] = [];
-    for (const context of ["agent", "user"] as const) {
+    for (const context of ["agent", "user", "native"] as const) {
+      if (preferredContext && context !== preferredContext) continue;
       const state = snapshot?.contexts?.[context];
       if (!state?.ready) continue;
       if (extensionAutoContinueVersion(state) < REQUIRED_AUTO_CONTINUE_VERSION) {
@@ -195,9 +196,9 @@ export function createAutoContinueController({
     } else {
       const ready = contexts.filter((item) => item.result?.mode === "task-tab" && item.result?.status === "ready");
       if (ready.length !== 1) {
-        if (ready.length > 1) throw new Error("More than one Chrome profile has a generating ChatGPT task. Pin the intended conversation in the extension popup.");
+        if (ready.length > 1) throw new Error("More than one ChatGPT target is generating. Select the intended context explicitly or pin the Chrome conversation.");
         if (outdated.length > 0 && contexts.length === 0) throw new Error("Auto Continue requires the current Equinox Browser extension in the active Chrome profile.");
-        throw new Error("Auto Continue could not identify exactly one generating ChatGPT conversation. Keep the task response generating, or pin its tab in the extension popup.");
+        throw new Error("Auto Continue could not identify exactly one generating ChatGPT conversation. Keep the intended task response generating.");
       }
       selected = ready[0]!;
     }
@@ -260,6 +261,7 @@ export function createAutoContinueController({
       inspected = null;
     }
     if (inspected?.conversationId !== binding.conversationId) {
+      if (binding.browserContext === "native") throw new Error("The bound native Chat conversation is not open.");
       const reacquired = await reacquireBoundTab({ context: binding.browserContext, conversationId: binding.conversationId });
       tabId = reacquired.tabId;
       canonicalUrl = reacquired.canonicalUrl || canonicalUrl;
@@ -288,9 +290,15 @@ export function createAutoContinueController({
     };
   };
 
-  const captureBinding = async (taskId: string): Promise<unknown> => {
+  const captureBinding = async (taskId: string, preferredContext?: BrowserContext): Promise<unknown> => {
     try {
-      const target = await resolveTarget();
+      const task = await store.readInternal(taskId);
+      const existing = task.chatBinding;
+      // Checkpoints must not silently transfer a live Chrome task to another
+      // native/account context, or vice versa.
+      if (existing && preferredContext && existing.browserContext !== preferredContext) return store.read(taskId);
+      const target = await resolveTarget(existing?.browserContext || preferredContext);
+      if (existing && (target.browserContext !== existing.browserContext || target.conversationId !== existing.conversationId)) return store.read(taskId);
       return await store.bindChat({ taskId, binding: { browserContext: target.browserContext, browserInstanceId: target.browserInstanceId, tabId: target.tabId, conversationId: target.conversationId, canonicalUrl: target.canonicalUrl } });
     } catch {
       return store.read(taskId);
@@ -340,6 +348,8 @@ export function createAutoContinueController({
 
     let state: InspectedTurn | null;
     try {
+      const context = browserBridge.snapshot()?.contexts?.[target.browserContext];
+      if (target.browserContext === "native" && (context?.extension?.instanceId !== target.browserInstanceId)) throw new Error("Native view identity changed.");
       state = await callContext(target.browserContext, "continuation.inspect", { tabId: target.tabId }) as InspectedTurn;
     } catch {
       await cancelForReason(taskId, continuationId, "browser_target_unavailable");
@@ -393,6 +403,7 @@ export function createAutoContinueController({
       try {
         result = await callContext(target.browserContext, "continuation.deliver", {
           continuationId,
+          ...(target.browserContext === "native" ? {browserInstanceId: target.browserInstanceId} : {}),
           tabId: target.tabId!,
           conversationId: target.conversationId!,
           userEpoch: target.userEpoch!,

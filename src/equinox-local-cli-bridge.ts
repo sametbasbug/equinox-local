@@ -15,6 +15,7 @@ type Dependencies = {
   tasks: {checkpoint: (args: JsonRecord) => Promise<any>;list: (args: JsonRecord) => Promise<unknown>;read: (id: string) => Promise<any>;readInternal: (id: string) => Promise<any>;remove: (id: string) => Promise<any>;bindChat: (args: JsonRecord) => Promise<unknown>};
   chat: {inspectTurnIdentity: (args: JsonRecord) => Promise<any>;startTaskChat: (args: JsonRecord) => Promise<any>;deliverText: (args: JsonRecord) => Promise<any>;readFinal: (args: JsonRecord) => Promise<any>};
   assertMutationAllowed: (operation: string) => void;
+  nativeChatExchange?: (input: unknown) => unknown;
 };
 const MAX_REQUEST_BYTES = 256 * 1024 * 2 + 4096; // double-escaped desktop JSON envelope; decoded body remains 256 KiB
 const MAX_LEGACY_CLI_REQUEST_BYTES = 128 * 1024;
@@ -51,7 +52,7 @@ function unpack(result: any): unknown {
   return result;
 }
 
-export function createEquinoxLocalCliBridge({stateRoot, platform = process.platform, namespace = null, registry, desktop, tasks, chat, control, assertMutationAllowed}: Dependencies) {
+export function createEquinoxLocalCliBridge({stateRoot, platform = process.platform, namespace = null, registry, desktop, tasks, chat, control, assertMutationAllowed, nativeChatExchange}: Dependencies) {
   const discoveryPath = path.join(stateRoot, "cli-ipc.json");
   let server: net.Server | null = null;
   let socketPath: string | null = null;
@@ -74,6 +75,10 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
   async function dispatch(input: JsonRecord): Promise<unknown> {
     const action = requiredString(input.action, "action", 64);
     if (action === "status") return {connected: true, protocol: 1, capabilities: await summary()};
+    if (action === "native-chat.exchange") {
+      if (!nativeChatExchange || Object.keys(input).some(key => !["token", "action", "exchange"].includes(key))) throw new Error("Unsupported native Chat exchange.");
+      return {status: 200, body: {ok: true, ...nativeChatExchange(input.exchange) as object}};
+    }
     if (action === "control.request") {
       // A private CLI socket token is required by the framing server before
       // dispatch. Only the existing bounded Control Center operation set is

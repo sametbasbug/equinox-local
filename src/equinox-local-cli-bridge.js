@@ -53,7 +53,7 @@ function unpack(result) {
     }
     return result;
 }
-export function createEquinoxLocalCliBridge({ stateRoot, platform = process.platform, namespace = null, registry, desktop, tasks, chat, control, assertMutationAllowed }) {
+export function createEquinoxLocalCliBridge({ stateRoot, platform = process.platform, namespace = null, registry, desktop, tasks, chat, control, assertMutationAllowed, nativeChatExchange }) {
     const discoveryPath = path.join(stateRoot, "cli-ipc.json");
     let server = null;
     let socketPath = null;
@@ -76,6 +76,11 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
         const action = requiredString(input.action, "action", 64);
         if (action === "status")
             return { connected: true, protocol: 1, capabilities: await summary() };
+        if (action === "native-chat.exchange") {
+            if (!nativeChatExchange || Object.keys(input).some(key => !["token", "action", "exchange"].includes(key)))
+                throw new Error("Unsupported native Chat exchange.");
+            return { status: 200, body: { ok: true, ...nativeChatExchange(input.exchange) } };
+        }
         if (action === "control.request") {
             // A private CLI socket token is required by the framing server before
             // dispatch. Only the existing bounded Control Center operation set is

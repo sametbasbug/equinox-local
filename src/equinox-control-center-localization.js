@@ -8,6 +8,7 @@ export function localeForLanguage(language) {
 }
 const TR_UI = Object.freeze({
     "Chat": "Sohbet",
+    "Native Chat": "Yerel Sohbet",
     "Local activity": "Yerel etkinlik",
     "All Local connections": "Tüm Local bağlantıları",
     "Safe command details only. Not linked to this conversation.": "Yalnızca güvenli komut ayrıntıları. Bu sohbete bağlı değil.",

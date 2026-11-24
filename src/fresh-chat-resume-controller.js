@@ -48,8 +48,12 @@ export function createFreshChatResumeController({ store, browserBridge, autoCont
         timers.set(resumeId, timer);
     };
     const callContext = async (context, method, args, timeoutMs = 5_000) => (browserBridge.call(method, args, { context, timeoutMs }));
-    const resolveSource = async () => {
-        const target = await autoContinueController.resolveTarget();
+    const resolveSource = async (taskId) => {
+        const task = taskId ? await store.readInternal(taskId) : null;
+        const bound = task?.chatBinding;
+        const target = bound?.browserContext === "native" && taskId ? await autoContinueController.resolveBoundTarget(taskId) : await autoContinueController.resolveTarget(bound?.browserContext === "agent" || bound?.browserContext === "user" ? bound.browserContext : undefined);
+        if (bound && target.conversationId !== bound.conversationId)
+            throw new Error("Fresh Chat Resume source differs from the bound task.");
         const contextState = browserBridge.snapshot()?.contexts?.[target.browserContext];
         const freshChatResumeVersion = extensionFreshResumeVersion(contextState);
         if (freshChatResumeVersion < REQUIRED_FRESH_CHAT_RESUME_VERSION) {
@@ -111,6 +115,8 @@ export function createFreshChatResumeController({ store, browserBridge, autoCont
         const source = freshResume.source;
         let state;
         try {
+            if (source.browserContext === "native" && browserBridge.snapshot()?.contexts?.native?.extension?.instanceId !== source.browserInstanceId)
+                throw new Error("Native view identity changed.");
             state = await callContext(source.browserContext, "continuation.inspect", { tabId: source.tabId });
         }
         catch {
@@ -167,6 +173,7 @@ export function createFreshChatResumeController({ store, browserBridge, autoCont
                     resumeId,
                     sourceTabId: source.tabId,
                     sourceConversationId: source.conversationId,
+                    ...(source.browserContext === "native" ? { browserInstanceId: source.browserInstanceId, userEpoch: source.userEpoch, assistantTurnKey: source.assistantTurnKey } : {}),
                     prompt: freshResumePrompt(taskId, freshResume.checkpointRevision),
                 }, FRESH_RESUME_BROWSER_TIMEOUT_MS);
             }
@@ -210,7 +217,7 @@ export function createFreshChatResumeController({ store, browserBridge, autoCont
         const task = await store.readInternal(taskId);
         if (task.status !== "active")
             throw new Error("Only an active Task Capsule can prepare Fresh Chat Resume.");
-        const source = await resolveSource();
+        const source = await resolveSource(taskId);
         const prepared = await store.prepareFreshResume({ taskId, source });
         schedule(taskId, prepared.freshResume.resumeId);
         return prepared;
