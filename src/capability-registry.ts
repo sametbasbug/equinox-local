@@ -1,4 +1,5 @@
 import * as z from "zod/v4";
+import { INLINE_RUN_URI } from "./equinox-inline-run.js";
 
 type StableDomainName = "files" | "browser" | "release" | "integrations" | "runtime";
 type CapabilityDomainDefinition = {
@@ -626,7 +627,12 @@ export function registerStableCapabilityGateways({
       operation: z.string().min(1).max(160).describe("Çağrılacak dinamik Equinox Local operation adı"),
       arguments: z.record(z.string(), z.unknown()).default({}).describe("Seçilen operation'ın güncel JSON giriş şemasına uyan argümanlar"),
     };
-    const callMeta: Record<string, unknown> = {};
+    const callMeta: Record<string, unknown> = domain === "files" ? {} : {
+      ui: { resourceUri: INLINE_RUN_URI },
+      "openai/outputTemplate": INLINE_RUN_URI,
+      "openai/toolInvocation/invoking": "Equinox Local running",
+      "openai/toolInvocation/invoked": "Equinox Local run finished",
+    };
     if (domain === "files") {
       callInputSchema.file = z.object({
         download_url: z.string().url(),
@@ -654,7 +660,7 @@ export function registerStableCapabilityGateways({
           idempotentHint: false,
           openWorldHint: definition.openWorldHint,
         },
-        ...(domain === "files" ? { _meta: callMeta } : {}),
+        _meta: callMeta,
       },
       async (input) => runBudgeted(definition.callTool, input, async ({ operation, arguments: operationArguments, file }) => {
         const invocationArguments = domain === "files" && file !== undefined

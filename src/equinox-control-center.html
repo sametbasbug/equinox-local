@@ -105,6 +105,22 @@
           </label>
         </div>
         <div class="settings-section">
+          <h3>Chat identity</h3>
+          <div class="chat-identity-settings">
+            <div id="chat-agent-preview" class="chat-agent-preview" role="img" aria-label="Agent avatar">A</div>
+            <div class="chat-identity-fields">
+              <label for="chat-agent-name">Agent name</label>
+              <input id="chat-agent-name" maxlength="48" type="text" autocomplete="off" placeholder="Agent">
+              <div class="chat-identity-actions">
+                <button id="chat-agent-upload" class="button secondary compact" type="button">Choose avatar</button>
+                <button id="chat-agent-remove" class="button secondary compact" type="button">Remove</button>
+              </div>
+            </div>
+          </div>
+          <p class="card-copy">Your profile picture comes from ChatGPT. Choose a local portrait for your agent.</p>
+          <p id="chat-identity-feedback" class="card-copy" role="status"></p>
+        </div>
+        <div class="settings-section">
           <h3>Runtime controls</h3>
           <div class="settings-navigation">
         <button class="nav-item" type="button" data-section="permissions" aria-label="Safety" title="Safety">
@@ -593,30 +609,7 @@
         <div id="chat-provider-host" class="chat-provider-host">
           <p id="chat-provider-status" role="status">Loading ChatGPT…</p>
         </div>
-        <button id="chat-run-status" class="chat-run-status" type="button" aria-expanded="false" aria-controls="chat-local-activity">
-          <span class="chat-run-status-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5m8 0h6"/></svg><span>Run history</span></span>
-          <span class="chat-run-status-scope">All connections</span>
-          <span id="chat-run-status-preview" class="chat-run-status-preview"></span>
-          <span id="chat-run-status-outcome" class="chat-run-status-outcome"></span>
-          <svg class="chat-run-status-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg>
-        </button>
-        <section id="chat-local-activity" class="chat-local-activity" aria-labelledby="chat-activity-heading" hidden>
-          <header class="chat-activity-header">
-            <div class="chat-activity-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/></svg><h2 id="chat-activity-heading">Run history</h2><span id="chat-activity-count" class="chat-activity-count"></span></div>
-            <div class="chat-activity-controls">
-              <div id="chat-activity-filter" class="chat-activity-filter" role="group" aria-label="Filter run history">
-                <button type="button" data-chat-activity-filter="terminal" aria-pressed="true">Terminal</button>
-                <button type="button" data-chat-activity-filter="all" aria-pressed="false">All tools</button>
-              </div>
-              <input id="chat-activity-search" class="chat-activity-search" type="search" placeholder="Find a run" aria-label="Find a run" autocomplete="off" spellcheck="false">
-              <button id="chat-activity-expand" class="chat-follow-button" type="button" aria-pressed="false" title="Expand run history">Expand</button>
-              <button id="chat-activity-follow" class="chat-follow-button" type="button" aria-pressed="true" title="Follow new runs">Follow</button>
-              <button id="chat-activity-close" class="icon-button" type="button" aria-label="Close" title="Close">×</button>
-            </div>
-          </header>
-          <p class="chat-activity-note">All Local connections · Up to 80 runs · Sensitive details hidden</p>
-          <div id="chat-activity-list" class="chat-activity-list" role="region" aria-label="Recorded tool runs" tabindex="0"></div>
-        </section>
+
       </section>
 
       <section id="section-browser" class="page-section" aria-labelledby="section-title" hidden>

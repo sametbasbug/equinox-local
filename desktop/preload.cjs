@@ -11,6 +11,10 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
         },
         pickFolder: () => ipcRenderer.invoke("equinox-shell:pick-folder"),
         copyText: (value) => ipcRenderer.invoke("equinox-shell:copy-text", value),
+        getChatIdentity: () => ipcRenderer.invoke("equinox-shell:chat-identity"),
+        setChatAgentName: (value) => ipcRenderer.invoke("equinox-shell:chat-agent-name", value),
+        chooseChatAvatar: () => ipcRenderer.invoke("equinox-shell:chat-avatar-choose"),
+        removeChatAvatar: () => ipcRenderer.invoke("equinox-shell:chat-avatar-remove"),
         getCompanionId: () => {
             const id = ipcRenderer.sendSync("equinox-shell:companion-snapshot");
             return id === "nyx" || id === "hemera" || id === "asteria" ? id : "nyx";

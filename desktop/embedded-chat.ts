@@ -476,25 +476,79 @@ html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,
   clip-path: inset(50%) !important;
 }
 html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::before {
-  content: "EQUINOX  /  WORKSPACE";
+  content: attr(data-equinox-initial);
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 6px;
+  border-radius: 50%;
   color: var(--eq-accent);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .16em;
-}
-html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::after {
-  content: "What are we working on?";
-  color: var(--eq-text);
-  font-size: clamp(22px, 2.6vw, 29px);
-  line-height: 1.18;
-  letter-spacing: -.04em;
+  background: var(--eq-active) var(--eq-agent-avatar, none) center / cover no-repeat;
+  border: 3px solid var(--eq-canvas);
+  box-shadow: 0 0 0 1px var(--eq-border), 0 8px 24px #33224a12;
+  font-size: 29px;
   font-weight: 650;
 }
-html.chatgpt-theme:lang(tr) [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::before {
-  content: "EQUINOX  /  ÇALIŞMA ALANI";
+html.chatgpt-theme[data-equinox-agent-photo="true"] [class*="Greeting-"]::before { color: transparent; }
+html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::after {
+  content: attr(data-equinox-greeting);
+  color: var(--eq-text);
+  font-size: clamp(23px, 2.6vw, 30px);
+  line-height: 1.2;
+  letter-spacing: -.035em;
+  font-weight: 650;
 }
-html.chatgpt-theme:lang(tr) [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::after {
-  content: "Bugün ne üzerinde çalışıyoruz?";
+html.chatgpt-theme [class*="Greeting-"]:not([data-equinox-greeting]):not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::after { content: "Equinox workspace"; }
+/* Avatar-led conversation: both sides share a consistent reading column.
+   Native message nodes, menus, selections, code and streaming are retained. */
+html.chatgpt-theme main [data-equinox-role] {
+  position: relative;
+  padding-inline-start: 46px !important;
+  padding-block-start: 26px !important;
+  min-width: 0;
+  box-sizing: border-box;
+  margin-block: 10px 6px;
+}
+html.chatgpt-theme main [data-equinox-role]::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--eq-border);
+  border-radius: 50%;
+  background: var(--eq-active) center/cover no-repeat;
+}
+html.chatgpt-theme main [data-equinox-role="user"]::before { background-image: var(--eq-human-avatar, none); }
+html.chatgpt-theme main [data-equinox-role="assistant"]::before { background-image: var(--eq-agent-avatar, none); box-shadow: 0 0 0 2px var(--eq-canvas), 0 0 0 3px var(--eq-border); }
+html.chatgpt-theme main [data-equinox-role]::after {
+  content: attr(data-equinox-author);
+  position: absolute;
+  inset-inline-start: 46px;
+  top: 1px;
+  color: var(--eq-text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 20px;
+  letter-spacing: -.01em;
+}
+html.chatgpt-theme main [data-equinox-role="user"] { align-items: stretch !important; }
+html.chatgpt-theme main [data-equinox-role="user"] [class~="group/user-message"] { align-items: stretch !important; }
+html.chatgpt-theme main [data-equinox-role="user"] [data-user-message-bubble="true"] {
+  max-width: 100% !important;
+  width: fit-content !important;
+  min-width: min(190px,100%);
+  border-inline-start: 1px solid var(--eq-border);
+  border-radius: 4px 12px 12px 12px !important;
+  background: var(--eq-paper) !important;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] { line-height: 1.72; }
+@media(max-width:550px) {
+  html.chatgpt-theme main [data-equinox-role] { padding-inline-start: 37px !important; }
+  html.chatgpt-theme main [data-equinox-role]::before { width: 27px; height: 27px; }
+  html.chatgpt-theme main [data-equinox-role]::after { inset-inline-start: 37px; }
 }
 /* Home suggestions remain real, selectable provider controls. Compact
    only the ordinary small button lists below the composer; never restyle
@@ -544,7 +598,68 @@ html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-homepage
 
 // The provider is a child of the existing trusted Control Center window.
 // Its separate session and webPreferences never receive the Control Center preload.
-export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "tr" = "en") {
+type ChatIdentity = {name:string;avatar:string|null};
+
+function decorateProviderIdentity(identity: ChatIdentity, language: "en" | "tr"): void {
+  const root = document.documentElement;
+  const agent = identity.name.trim() || "Equinox";
+  const human = language === "tr" ? "Sen" : "You";
+  const mark = (element: Element, role: "user" | "assistant", name: string) => {
+    if (element.getAttribute("data-equinox-role") !== role) element.setAttribute("data-equinox-role",role);
+    if (element.getAttribute("data-equinox-author") !== name) element.setAttribute("data-equinox-author",name);
+  };
+  const property = (name: string, value: string) => {
+    if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name,value);
+  };
+  const url = (value: string) => "url(" + JSON.stringify(value) + ")";
+  const agentImage = identity.avatar && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/u.test(identity.avatar) ? url(identity.avatar) : "none";
+  property("--eq-agent-avatar",agentImage);
+  root.setAttribute("data-equinox-agent-photo",agentImage === "none" ? "false" : "true");
+  const sync = () => {
+    // Reuse the real signed-in account picture already visible in the
+    // provider sidebar, including its data URI; no account API or upload.
+    const profile = document.querySelector<HTMLImageElement>('#app-shell-sidebar nav[data-app-navigation-rail] button[aria-haspopup="menu"] img')
+      || document.querySelector<HTMLImageElement>('#app-shell-sidebar button[aria-haspopup="menu"] img[class~="rounded-full"]');
+    const src = profile?.currentSrc || profile?.getAttribute("src") || "";
+    const validImage = /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/u.test(src) || /^https:\/\//u.test(src) || /^blob:https:\/\//u.test(src);
+    property("--eq-human-avatar",validImage ? url(src) : "none");
+    // One actual provider wrapper per visible user or assistant message.
+    // New and virtualized turns are annotated as the provider mounts them.
+    for (const element of document.querySelectorAll('main [data-chatgpt-search-unit-key$=":user"]')) {
+      if (element.querySelector('[data-user-message-bubble="true"]')) mark(element,"user",human);
+    }
+    for (const element of document.querySelectorAll('main [data-response-body]')) {
+      const assistantUnit = element.closest('[data-content-search-unit-key]');
+      if (assistantUnit && !assistantUnit.closest('[data-equinox-role]')) mark(assistantUnit,"assistant",agent);
+    }
+    for (const element of document.querySelectorAll('main [data-talvt-turn-state]')) {
+      if (!element.querySelector('[data-response-body]') && !element.querySelector('[data-user-message-bubble="true"]')) mark(element,"assistant",agent);
+    }
+    for (const element of document.querySelectorAll('main [data-message-author-role="user"]')) {
+      if (!element.closest('[data-equinox-role]')) mark(element,"user",human);
+    }
+    for (const element of document.querySelectorAll('main [data-message-author-role="assistant"]')) {
+      if (!element.closest('[data-equinox-role]')) mark(element,"assistant",agent);
+    }
+    for (const element of document.querySelectorAll('main [class*="Greeting-"]')) {
+      if (element.querySelector('button,a,input,textarea,select,[role="button"],[contenteditable="true"]')) continue;
+      element.setAttribute("data-equinox-initial",agent.slice(0,1).toUpperCase());
+      element.setAttribute("data-equinox-greeting",language === "tr" ? agent + " ile çalışmaya başla" : "Work with " + agent);
+    }
+  };
+  const world = window as Window & {__equinoxIdentityObserver?: MutationObserver; __equinoxIdentityFrame?: number};
+  world.__equinoxIdentityObserver?.disconnect();
+  if (world.__equinoxIdentityFrame !== undefined) cancelAnimationFrame(world.__equinoxIdentityFrame);
+  const observer = new MutationObserver(() => {
+    if (world.__equinoxIdentityFrame !== undefined) return;
+    world.__equinoxIdentityFrame = requestAnimationFrame(() => { delete world.__equinoxIdentityFrame; sync(); });
+  });
+  observer.observe(root,{childList:true,subtree:true,attributes:true,attributeFilter:["src"]});
+  world.__equinoxIdentityObserver = observer;
+  sync();
+}
+
+export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "tr" = "en", initialIdentity: ChatIdentity = {name:"",avatar:null}) {
   let language = initialLanguage;
   const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
   // Electron's default UA adds a non-browser product token to the actual
@@ -712,11 +827,17 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
       if (isEmbeddedGoogleAuth(url)) warnGoogleRestriction(win, language);
     }
   });
+  let identity = initialIdentity;
+  const applyIdentity = () => {
+    if (view.webContents.isDestroyed() || !isChatGPTOrigin(view.webContents.getURL())) return;
+    const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(identity) + "," + JSON.stringify(language) + ")";
+    void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code}]).catch(() => {});
+  };
   view.webContents.on("did-finish-load", () => {
     if (view.webContents.isDestroyed()) return;
     try {
       if (new URL(view.webContents.getURL()).origin === CHATGPT) {
-        void view.webContents.insertCSS(STYLE).catch(() => {});
+        void view.webContents.insertCSS(STYLE).then(applyIdentity).catch(() => {});
       }
     } catch { /* Ignore intermediate navigation state. */ }
   });
@@ -750,7 +871,8 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
       view.setBounds(bounds);
       view.setVisible(true);
     },
-    setLanguage(value: "en" | "tr"): void { language = value; },
+    setLanguage(value: "en" | "tr"): void { language = value; applyIdentity(); },
+    setIdentity(value: ChatIdentity): void { identity = value; applyIdentity(); },
     async requestMicrophone(): Promise<boolean> {
       const granted = await askMicrophonePermission();
       if (granted && !view.webContents.isDestroyed()) view.webContents.reload();

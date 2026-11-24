@@ -13,6 +13,7 @@ import { launchDetachedHelper } from "./equinox-local-detached-helper.js";
 import { projectDarwinDetachedHelperEnvironment } from "./equinox-local-darwin-helper-environment.js";
 import { pruneVerifiedMainLargeStorage, pruneDisenrolledWindowsMainLargeStorage } from "./equinox-local-main-storage-retention.js";
 import { createMcpToolReplayGuard } from "./mcp-tool-replay-guard.js";
+import { registerInlineRunResource } from "./equinox-inline-run.js";
 import { createEquinoxLocalToolRegistrar } from "./equinox-local-tool-registration.js";
 import { createEquinoxLocalWorkspaceRuntime } from "./equinox-local-workspace-runtime.js";
 import { createProtectedAgentPathChecker, isSensitiveAgentName, } from "./equinox-local-agent-path-policy.js";
@@ -2410,7 +2411,6 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         getDoctorRepairs: getControlCenterDoctorRepairs,
         applyDoctorRepair: applyControlCenterDoctorRepair,
         getActivity: getControlCenterActivity,
-        getToolActivity: () => toolRegistrar.getToolActivity(),
         getUpdateStatus: async () => getCombinedUpdateStatus(),
         getOnboardingStatus: getControlCenterOnboardingStatus,
         getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
@@ -2675,6 +2675,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         textResult,
         errorResult,
     });
+    registerInlineRunResource(server);
     registerStableCapabilityGateways({
         registerTextTool,
         registerRawTool,

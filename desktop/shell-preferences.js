@@ -76,9 +76,10 @@ export function openShellPreferences(directory) {
                 if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
                     throw new Error("Invalid shell preferences.");
                 const item = parsed;
-                if (Object.keys(item).some(key => !["language", "companionVisible", "companionBounds", "companionId"].includes(key))
+                if (Object.keys(item).some(key => !["language", "companionVisible", "companionBounds", "companionId", "chatAgentName"].includes(key))
                     || (item.language !== undefined && item.language !== "en" && item.language !== "tr")
                     || (item.companionVisible !== undefined && typeof item.companionVisible !== "boolean")
+                    || (item.chatAgentName !== undefined && (typeof item.chatAgentName !== "string" || item.chatAgentName.length > 48 || /[\u0000-\u001f\u007f]/u.test(item.chatAgentName)))
                     || (item.companionId !== undefined && !COMPANION_IDS.includes(item.companionId))
                     || (item.companionBounds !== undefined && !validCompanionOrigin(item.companionBounds)))
                     throw new Error("Invalid shell preferences.");

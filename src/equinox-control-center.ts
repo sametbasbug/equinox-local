@@ -14,7 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -136,7 +136,6 @@ const state:UiState = {
   doctorRepairBusy: false,
   doctorRepairResult: null,
   activity: [],
-  toolActivity: [],
   tasks: [],
   selectedTaskId: null,
   taskDraft: null,
@@ -196,7 +195,7 @@ function localizeUiText(value: UiRemoteData) {
 
 const DYNAMIC_TEXT_IDS = new Set([
   "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-kicker", "section-title", "last-refreshed",
-  "chat-run-status-preview", "chat-run-status-outcome", "chat-activity-count", "chat-activity-expand", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
+  "chat-identity-feedback", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
   "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
   "runtime-health-badge", "overview-title", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
   "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
@@ -509,7 +508,6 @@ function switchSection(section: UiRemoteData, { remember = false } = {}) {
   setText("section-kicker", kicker);
   setText("section-title", title);
   syncEmbeddedChatLayout();
-  if (section === "chat") renderChatLocalActivity();
   if (changed) {
     $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
     if (state.config) {
@@ -2145,162 +2143,7 @@ function activityTone(event: UiRemoteData) {
   return "neutral";
 }
 
-let chatActivityFilter: "terminal" | "all" = "terminal";
-let chatActivityFollow = true;
-let chatActivityRenderKey = "";
-let chatActivitySearch = "";
-type ChatRun = {id:number;operation:string;command:string|null;commandRedacted?:boolean;startedAt:string;finishedAt:string|null;state:string;exitCode:number|null;resultSummary?:{stdoutLines:number;stderrLines:number;truncated:boolean}|null};
-const chatRunLabels: Record<string, string> = { running: "Running", completed: "Completed", failed: "Failed", background: "Handed to background" };
-function chatRunOutcome(event: ChatRun): string {
-  return Number.isInteger(event.exitCode) ? localizeUiText("Exit code") + " " + event.exitCode : localizeUiText(chatRunLabels[event.state] || "Completed");
-}
-
-function setChatActivityOpen(open: boolean) {
-  $("chat-local-activity").hidden = !open;
-  $("chat-run-status").setAttribute("aria-expanded", String(open));
-  if (open) {
-    chatActivityRenderKey = "";
-    renderChatLocalActivity();
-  }
-  syncEmbeddedChatLayout();
-}
-
-function renderChatLocalActivity() {
-  const all = state.toolActivity as ChatRun[];
-  const running = all.filter(event => event.state === "running").length;
-  const latest = all.find(event => event.state === "running" && event.operation === "terminal_exec")
-    || all.find(event => event.state === "running") || all.find(event => event.operation === "terminal_exec") || all[0];
-  const status = $("chat-run-status");
-  status.classList.toggle("has-running-tools", running > 0);
-  $("chat-run-status-preview").textContent = latest
-    ? latest.operation === "terminal_exec" ? "$ " + (latest.command || localizeUiText("Command details hidden")) : latest.operation.replace(/_/g, " ")
-    : localizeUiText("No Local tool calls yet.");
-  $("chat-run-status-outcome").textContent = running
-    ? String(running) + " " + localizeUiText("Running")
-    : latest ? chatRunOutcome(latest) : "";
-  status.classList.toggle("has-failure", !running && latest?.state === "failed");
-  if ($("chat-local-activity").hidden) return;
-  const term = chatActivitySearch.trim().toLowerCase();
-  const events = all.filter(event => (chatActivityFilter === "all" || event.operation === "terminal_exec")
-    && (!term || [event.command, event.operation, event.state, chatRunOutcome(event)].some(value => String(value || "").toLowerCase().includes(term)))).slice().reverse();
-  const runningVisible = events.filter(event => event.state === "running").length;
-  $("chat-activity-expand").textContent = localizeUiText($("chat-local-activity").classList.contains("is-expanded") ? "Shrink" : "Expand");
-  $("chat-activity-count").textContent = String(events.length) + (runningVisible ? " · " + runningVisible + " " + localizeUiText("Running") : "");
-  // Preserve scroll, open details and keyboard focus during regular polling.
-  const key = JSON.stringify([chatActivityFilter, chatActivitySearch, state.language, events]);
-  if (key === chatActivityRenderKey) return;
-  chatActivityRenderKey = key;
-  const list = $("chat-activity-list");
-  const scroll = list.scrollTop;
-  const expanded = new Set([...list.querySelectorAll<HTMLDetailsElement>("details[open]")].map(item => item.dataset.runId));
-  const active = document.activeElement?.closest<HTMLElement>("[data-run-id]")?.dataset.runId;
-  const activeAction = document.activeElement?.classList.contains("chat-run-copy") ? ".chat-run-copy" : "summary";
-  list.replaceChildren();
-  if (!events.length) {
-    const empty = document.createElement("p");
-    empty.className = "chat-activity-empty";
-    empty.textContent = localizeUiText(term ? "No matching runs." : chatActivityFilter === "terminal" ? "No terminal runs yet. Commands appear here when Local executes them." : "No Local tool calls yet.");
-    list.append(empty);
-    return;
-  }
-  for (const event of events) {
-    const status = ["running", "completed", "failed", "background"].includes(event.state) ? event.state : "completed";
-    const item = document.createElement("details");
-    item.className = "chat-tool-row is-" + status;
-    item.dataset.runId = String(event.id);
-    item.open = expanded.has(item.dataset.runId);
-    const summary = document.createElement("summary");
-    const indicator = document.createElement("span");
-    indicator.className = "chat-tool-indicator";
-    indicator.setAttribute("aria-hidden", "true");
-    indicator.textContent = status === "running" ? "●" : status === "completed" ? "✓" : status === "failed" ? "!" : "↗";
-    const time = document.createElement("time");
-    time.className = "chat-tool-time";
-    time.dateTime = event.startedAt;
-    const started = new Date(event.startedAt);
-    time.textContent = Number.isFinite(started.getTime()) ? started.toLocaleTimeString(localeForLanguage(state.language), {hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "";
-    const command = document.createElement(event.operation === "terminal_exec" ? "code" : "span");
-    command.className = "chat-tool-command";
-    command.textContent = event.operation === "terminal_exec"
-      ? "$ " + (event.command || localizeUiText("Command details hidden"))
-      : String(event.operation || "").replace(/_/g, " ");
-    const outcome = document.createElement("span");
-    outcome.className = "chat-tool-outcome";
-    outcome.textContent = chatRunOutcome(event);
-    const duration = document.createElement("span");
-    duration.className = "chat-tool-duration";
-    const elapsed = event.finishedAt ? new Date(event.finishedAt).getTime() - new Date(event.startedAt).getTime() : null;
-    duration.textContent = elapsed !== null && Number.isFinite(elapsed) ? elapsed < 1000 ? elapsed + " ms" : (elapsed / 1000).toFixed(1) + " s" : "";
-    const chevron = document.createElement("span");
-    chevron.className = "chat-tool-chevron";
-    chevron.setAttribute("aria-hidden", "true");
-    chevron.textContent = "›";
-    summary.append(indicator, time, command, outcome, duration, chevron);
-    item.append(summary);
-    const detail = document.createElement("div");
-    detail.className = "chat-tool-detail";
-    for (const [label, value] of [
-      ["Operation", event.operation],
-      ["Started", formatDate(event.startedAt)],
-      ["Status", localizeUiText(chatRunLabels[status])],
-      ["Finished", event.finishedAt ? formatDate(event.finishedAt) : localizeUiText("Running")],
-    ]) {
-      const field = document.createElement("div");
-      const title = document.createElement("span");
-      title.textContent = localizeUiText(label);
-      const body = document.createElement("strong");
-      body.textContent = String(value || "");
-      field.append(title, body); detail.append(field);
-    }
-    if (event.operation === "terminal_exec") {
-      if (event.resultSummary) {
-        for (const [label, value] of [["Stdout lines", event.resultSummary.stdoutLines], ["Stderr lines", event.resultSummary.stderrLines]]) {
-          const field = document.createElement("div");
-          const title = document.createElement("span");
-          title.textContent = localizeUiText(label);
-          const body = document.createElement("strong");
-          body.textContent = String(value);
-          field.append(title, body); detail.append(field);
-        }
-        if (event.resultSummary.truncated) {
-          const notice = document.createElement("p");
-          notice.className = "chat-run-notice";
-          notice.textContent = localizeUiText("Output was truncated by Local.");
-          detail.append(notice);
-        }
-      }
-      if (event.command && event.commandRedacted === false) {
-        const copy = document.createElement("button");
-        copy.type = "button";
-        copy.className = "chat-run-copy";
-        copy.textContent = localizeUiText("Copy command");
-        copy.addEventListener("click", async () => {
-          try {
-            await copyControlText(event.command!);
-            copy.textContent = localizeUiText("Command copied.");
-          } catch (error) {
-            copy.textContent = localizeUiText("Copy failed");
-            copy.title = localizeUiText("Could not copy to clipboard.");
-          }
-        });
-        detail.append(copy);
-      }
-      if (event.commandRedacted) {
-        const notice = document.createElement("p");
-        notice.className = "chat-run-notice";
-        notice.textContent = localizeUiText("Only the recognized command is shown. Arguments are hidden.");
-        detail.append(notice);
-      }
-    }
-    item.append(detail);
-    list.append(item);
-  }
-  if (active) [...list.querySelectorAll<HTMLDetailsElement>("details")].find(item => item.dataset.runId === active)?.querySelector<HTMLElement>(activeAction)?.focus({preventScroll:true});
-  list.scrollTop = chatActivityFollow ? list.scrollHeight : scroll;
-}
-
 function renderActivity() {
-  renderChatLocalActivity();
   const controlCenter = state.health?.controlCenter || {};
   setText("request-count", String(controlCenter.requestCount ?? 0));
   setText("mutation-count", String(controlCenter.mutationCount ?? 0));
@@ -2872,7 +2715,6 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
     state.config = clone(config.config);
     state.revision = config.revision;
     state.activity = Array.isArray(activity.events) ? activity.events : [];
-    state.toolActivity = Array.isArray(activity.toolActivity) ? activity.toolActivity : [];
     state.tasks = Array.isArray(tasks.tasks) ? tasks.tasks : [];
     if (!state.selectedTaskId || !state.tasks.some((task: UiRemoteData) => task.taskId === state.selectedTaskId)) {
       state.selectedTaskId = state.tasks.find((task: UiRemoteData) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
@@ -2965,14 +2807,12 @@ async function refreshLiveState() {
       };
     }
     if (activity?.events) state.activity = activity.events;
-    if (Array.isArray(activity?.toolActivity)) state.toolActivity = activity.toolActivity;
     if (tasks?.tasks) reconcileLiveTasks(tasks.tasks);
     if (onboarding?.onboarding) state.onboarding = onboarding.onboarding;
     renderDashboard();
     if (state.activeSection === "setup" || state.activeSection === "dashboard") renderOnboarding();
     if (state.activeSection === "tasks") renderTasks();
     if (state.activeSection === "activity") renderActivity();
-    if (state.activeSection === "chat") renderChatLocalActivity();
     if (state.activeSection === "browser") renderBrowserPage();
     renderAgentControl(); // Global emergency stop must never become stale.
     renderRuntimeRestartControl();
@@ -3908,7 +3748,6 @@ async function toggleAgentControl() {
     if (refreshedStatus?.status) state.status = refreshedStatus.status;
     const activity = await requestJson("/api/v1/activity").catch(() => null);
     if (activity?.events) state.activity = activity.events;
-    if (Array.isArray(activity?.toolActivity)) state.toolActivity = activity.toolActivity;
     const tasks = await requestJson("/api/v1/tasks").catch(() => null);
     if (tasks?.tasks) {
       state.tasks = tasks.tasks;
@@ -4065,41 +3904,35 @@ function bindEvents() {
   });
   $("language-select").addEventListener("change", (event) => setLanguage((event.target as UiDomControl).value));
   bindEmbeddedChatLayout();
-  $("chat-run-status").addEventListener("click", () => setChatActivityOpen(Boolean($("chat-local-activity").hidden)));
-  $("chat-activity-close").addEventListener("click", () => setChatActivityOpen(false));
-  for (const button of document.querySelectorAll<HTMLElement>("[data-chat-activity-filter]")) {
-    button.addEventListener("click", () => {
-      chatActivityFilter = button.dataset.chatActivityFilter === "all" ? "all" : "terminal";
-      for (const choice of document.querySelectorAll<HTMLElement>("[data-chat-activity-filter]")) {
-        choice.setAttribute("aria-pressed", String(choice === button));
-      }
-      renderChatLocalActivity();
-    });
-  }
-  $("chat-activity-search").addEventListener("input", () => {
-    chatActivitySearch = $("chat-activity-search").value;
-    renderChatLocalActivity();
-  });
-  $("chat-activity-expand").addEventListener("click", () => {
-    const expanded = $("chat-local-activity").classList.toggle("is-expanded");
-    $("chat-activity-expand").setAttribute("aria-pressed", String(expanded));
-    $("chat-activity-expand").textContent = localizeUiText(expanded ? "Shrink" : "Expand");
-    syncEmbeddedChatLayout();
-  });
-  $("chat-activity-follow").addEventListener("click", () => {
-    chatActivityFollow = !chatActivityFollow;
-    $("chat-activity-follow").setAttribute("aria-pressed", String(chatActivityFollow));
-    if (chatActivityFollow) $("chat-activity-list").scrollTop = $("chat-activity-list").scrollHeight;
-  });
-  $("chat-activity-list").addEventListener("scroll", () => {
-    const list = $("chat-activity-list");
-    if (chatActivityFollow && list.scrollHeight - list.clientHeight - list.scrollTop > 40) {
-      chatActivityFollow = false;
-      $("chat-activity-follow").setAttribute("aria-pressed", "false");
-    }
-  });
   const settingsDialog = $("settings-dialog");
-  $("settings-open-button").addEventListener("click", () => settingsDialog.showModal());
+  function renderChatIdentity(identity: {name:string;avatar:string|null}) {
+    $("chat-agent-name").value = identity.name;
+    const preview = $("chat-agent-preview");
+    preview.textContent = identity.avatar ? "" : (identity.name.trim()[0] || "A").toUpperCase();
+    preview.style.backgroundImage = identity.avatar ? "url(" + JSON.stringify(identity.avatar) + ")" : "";
+    $("chat-agent-remove").disabled = !identity.avatar;
+  }
+  async function changeChatIdentity(action: () => Promise<{name:string;avatar:string|null}>) {
+    try {
+      renderChatIdentity(await action());
+      setText("chat-identity-feedback", "");
+    } catch (error) {
+      setText("chat-identity-feedback", error instanceof Error ? error.message : String(error));
+    }
+  }
+  $("settings-open-button").addEventListener("click", () => {
+    settingsDialog.showModal();
+    if (window.equinoxShell) void changeChatIdentity(() => window.equinoxShell!.getChatIdentity());
+  });
+  $("chat-agent-name").addEventListener("change", () => {
+    if (window.equinoxShell) void changeChatIdentity(() => window.equinoxShell!.setChatAgentName($("chat-agent-name").value));
+  });
+  $("chat-agent-upload").addEventListener("click", () => {
+    if (window.equinoxShell) void changeChatIdentity(() => window.equinoxShell!.chooseChatAvatar());
+  });
+  $("chat-agent-remove").addEventListener("click", () => {
+    if (window.equinoxShell) void changeChatIdentity(() => window.equinoxShell!.removeChatAvatar());
+  });
   $("settings-close-button").addEventListener("click", () => settingsDialog.close());
   settingsDialog.addEventListener("click", event => {
     if (event.target === settingsDialog) settingsDialog.close();

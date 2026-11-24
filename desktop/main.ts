@@ -1,6 +1,7 @@
 import { clipboard, app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification as DesktopNotification, screen, session, shell, Tray } from "electron";
 import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from "electron";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { execFile as execFileCallback } from "node:child_process";
 import path from "node:path";
@@ -136,6 +137,27 @@ if (process.platform === "win32") app.disableHardwareAcceleration();
 
 function text(english: string, turkish: string): string { return language === "tr" ? turkish : english; }
 
+// Presentation preferences are role-local. The image is normalized to a
+// small PNG and stays in the installed desktop's existing private profile.
+function chatAvatarPath(): string { return path.join(app.getPath("userData"), "private-shell", "chat-agent-avatar.png"); }
+let chatAgentAvatar: string | null = null;
+function loadChatAvatar(): void {
+  try {
+    const file = chatAvatarPath();
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size > 512 * 1024) return;
+    const image = nativeImage.createFromBuffer(fs.readFileSync(file));
+    if (!image.isEmpty()) chatAgentAvatar = image.toDataURL();
+  } catch { /* No custom portrait yet. */ }
+}
+function chatIdentity() {
+  return {name: shellPreferences?.read().chatAgentName ?? "Equinox", avatar: chatAgentAvatar};
+}
+function publishChatIdentity() {
+  const identity = chatIdentity();
+  embeddedChat?.setIdentity(identity);
+  return identity;
+}
 function trustedSender(event: IpcMainInvokeEvent): boolean {
   return Boolean(window && !window.isDestroyed()
     && event.sender === window.webContents
@@ -728,7 +750,7 @@ ipcMain.handle("equinox-shell:embedded-chat-layout", (event, value: unknown) => 
   const right = Math.min(width, Math.round((Number(rect.x) + Number(rect.width)) * scale));
   const bottom = Math.min(height, Math.round((Number(rect.y) + Number(rect.height)) * scale));
   if (right <= x || bottom <= y) { embeddedChat?.setBounds(null); return; }
-  embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en");
+  embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en", chatIdentity());
   embeddedChat.setBounds({ x, y, width: right - x, height: bottom - y });
 });
 ipcMain.handle("equinox-shell:embedded-chat-microphone", async (event) => {
@@ -750,6 +772,47 @@ ipcMain.handle("equinox-shell:copy-text", (event, value: unknown) => {
   return true;
 });
 
+ipcMain.handle("equinox-shell:chat-identity", (event) => {
+  if (!trustedSender(event) || quitting) throw new Error("Chat identity is unavailable.");
+  return chatIdentity();
+});
+ipcMain.handle("equinox-shell:chat-agent-name", (event, value: unknown) => {
+  if (!trustedSender(event) || quitting || typeof value !== "string" || value.length > 48 || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error("Invalid agent name.");
+  if (!shellPreferences?.write({chatAgentName: value.trim()})) throw new Error("Could not save the agent name.");
+  return publishChatIdentity();
+});
+ipcMain.handle("equinox-shell:chat-avatar-choose", async (event) => {
+  if (!trustedSender(event) || quitting || !window || !shellPreferences?.available() || pickerPending) throw new Error("Avatar picker is unavailable.");
+  pickerPending = true;
+  try {
+    const picked = await dialog.showOpenDialog(window, {
+      title: text("Choose agent avatar", "Ajan profil fotoğrafını seç"),
+      properties: ["openFile"], filters: [{name: "Images", extensions: ["png", "jpg", "jpeg"]}],
+    });
+    if (!trustedSender(event) || quitting) throw new Error("Avatar picker closed.");
+    if (picked.canceled || picked.filePaths.length !== 1) return chatIdentity();
+    const stat = await fs.promises.stat(picked.filePaths[0]!);
+    if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error(text("Choose an image smaller than 16 MB.", "16 MB'dan küçük bir görsel seçin."));
+    const source = nativeImage.createFromBuffer(await fs.promises.readFile(picked.filePaths[0]!));
+    if (source.isEmpty()) throw new Error(text("This image could not be opened.", "Bu görsel açılamadı."));
+    const {width,height} = source.getSize();
+    const edge = Math.min(width,height);
+    const image = source.crop({x:Math.floor((width-edge)/2), y:Math.floor((height-edge)/2), width:edge,height:edge}).resize({width:256,height:256,quality:"best"});
+    const file = chatAvatarPath(), temporary = file + "." + randomUUID() + ".tmp";
+    try {
+      await fs.promises.writeFile(temporary, image.toPNG(), {mode:0o600, flag:"wx"});
+      await fs.promises.rename(temporary, file);
+    } finally { await fs.promises.rm(temporary, {force:true}); }
+    chatAgentAvatar = image.toDataURL();
+    return publishChatIdentity();
+  } finally { pickerPending = false; }
+});
+ipcMain.handle("equinox-shell:chat-avatar-remove", async (event) => {
+  if (!trustedSender(event) || quitting || !shellPreferences?.available()) throw new Error("Chat identity is unavailable.");
+  await fs.promises.rm(chatAvatarPath(), {force:true});
+  chatAgentAvatar = null;
+  return publishChatIdentity();
+});
 ipcMain.handle("equinox-shell:pick-folder", async (event) => {
   if (!trustedSender(event)) throw new Error("Untrusted folder picker request.");
   if (pickerPending || quitting || !window) throw new Error("Folder picker is unavailable.");
@@ -844,6 +907,7 @@ if (installerProfile) {
     language = app.getLocale().toLowerCase().startsWith("tr") ? "tr" : "en";
     shellPreferences = openShellPreferences(path.join(app.getPath("userData"), "private-shell"));
     language = shellPreferences.read().language ?? language;
+    loadChatAvatar();
     if (process.platform === "win32") app.setAppUserModelId(development ? "dev.equinox.local.development" : "dev.equinox.local");
     if (!development && process.platform === "darwin" && app.getLoginItemSettings().wasOpenedAtLogin) {
       backgroundLaunch = true; revealOnFirstLoad = false;
