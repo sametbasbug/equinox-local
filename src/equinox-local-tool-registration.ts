@@ -67,7 +67,7 @@ type ObserveInvocation = (name: string, input: unknown, invoke: () => unknown | 
 // Record only known public command tokens, never arbitrary arguments, paths,
 // scripts, or result bodies. A complex command should still communicate the
 // actual operation where it can be identified without exposing its input.
-const SAFE_COMMAND = /^(?:pwd|git status(?: --short| --branch| --short --branch| -sb)?|git diff(?: --stat| --check| --cached --stat)?|git log -1 --oneline|git rev-parse HEAD|npm run (?:build|typecheck|check|lint|(?:build|verify):typed-(?:runtime|desktop|browser|tooling)))$/u;
+const SAFE_COMMAND = /^(?:pwd|(?:GIT_OPTIONAL_LOCKS=0 )?git (?:status(?: --short| --branch| --short --branch| -sb)?|diff(?: --stat| --check| --cached --stat)?|log -1 --oneline|rev-parse HEAD)|npm run (?:build|typecheck|check|lint|(?:build|verify):typed-(?:runtime|desktop|browser|tooling)))$/u;
 function safeCommandPreview(name: string, input: unknown): {command: string | null; commandRedacted: boolean} {
   const hidden = {command: null, commandRedacted: name === "terminal_exec"};
   if (name !== "terminal_exec" || !input || typeof input !== "object") return hidden;
@@ -81,15 +81,30 @@ function safeCommandPreview(name: string, input: unknown): {command: string | nu
       return {command: trimmed, commandRedacted: false};
     }
   }
+  // Recognize ordinary directory-qualified read-only commands without storing
+  // any directory argument. These patterns accept only simple literal paths,
+  // not interpolations, substitutions, arbitrary scripts or quoted bodies.
+  // The redacted preview is never offered as a copyable full command.
+  const literalPath = /^(?:'[^'\r\n$;|&<>\x60\\]+'|"[^"\r\n$;|&<>\x60\\]+"|[A-Za-z0-9_.:/\\~-]+)$/u;
+  if (trimmed.length <= 1000) {
+    const cd = /^cd[ \t]+(?:--[ \t]+)?(.+?)[ \t]*(&&|;|\r?\n)[ \t]*(.+)$/u.exec(trimmed);
+    if (cd && literalPath.test(cd[1]!) && SAFE_COMMAND.test(cd[3]!)) {
+      return {command: "cd …" + (cd[2] === "&&" ? " && " : cd[2] === ";" ? "; " : "\n") + cd[3], commandRedacted: true};
+    }
+    const gitAt = /^(GIT_OPTIONAL_LOCKS=0 )?git[ \t]+-C[ \t]+(.+?)[ \t]+(status(?: --short| --branch| --short --branch| -sb)?|diff(?: --stat| --check| --cached --stat)?|log -1 --oneline|rev-parse HEAD)$/u.exec(trimmed);
+    if (gitAt && literalPath.test(gitAt[2]!)) {
+      return {command: (gitAt[1] ? "GIT_OPTIONAL_LOCKS=0 " : "") + "git -C … " + gitAt[3], commandRedacted: true};
+    }
+  }
   // Fixed allowlists include real subcommands where identifiable. Never
   // parse arbitrary shell source or infer commands from quoted/script bodies.
-  const git = /^git[ \t]+(status|diff|log|show|fetch|pull|push|commit|add|restore|switch|branch|merge|rev-parse|worktree|ls-files|tag)(?:[ \t]|$)/u.exec(trimmed)?.[1];
-  if (git) return {command: "git " + git + " …", commandRedacted: true};
+  const git = /^(GIT_OPTIONAL_LOCKS=0 )?git[ \t]+(status|diff|log|show|fetch|pull|push|commit|add|restore|switch|branch|merge|rev-parse|worktree|ls-files|tag)(?:[ \t]|$)/u.exec(trimmed);
+  if (git) return {command: (git[1] ? "GIT_OPTIONAL_LOCKS=0 " : "") + "git " + git[2] + " …", commandRedacted: true};
   const npm = /^npm[ \t]+(install|ci|update|outdated|audit|run|exec|pack|view|publish)(?:[ \t]|$)/u.exec(trimmed)?.[1];
   if (npm) return {command: "npm " + npm + " …", commandRedacted: true};
   const gh = /^gh[ \t]+(run|pr|issue|release|api|workflow)(?:[ \t]|$)/u.exec(trimmed)?.[1];
   if (gh) return {command: "gh " + gh + " …", commandRedacted: true};
-  const family = /^(git|npm|npx|node|python3|python|rg|sed|awk|cat|find|ls|curl|pwsh|powershell|bash|zsh|make|cmake|cargo|go|docker|gh)(?:[ \t]|$)/u.exec(trimmed)?.[1];
+  const family = /^(git|npm|npx|node|python3|python|rg|sed|awk|cat|head|tail|wc|sort|uniq|stat|date|printf|find|ls|curl|pwsh|powershell|bash|zsh|make|cmake|cargo|go|docker|gh)(?:[ \t]|$)/u.exec(trimmed)?.[1];
   return {command: family ? family + " …" : null, commandRedacted: true};
 }
 

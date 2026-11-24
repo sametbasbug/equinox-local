@@ -14,7 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -781,10 +781,16 @@ function renderOnboarding() {
   setBadge("onboarding-badge", almostReady ? "Ready to verify" : "Setup in progress", almostReady ? "good" : "warn");
 }
 
+async function copyControlText(text: string): Promise<void> {
+  if (!window.equinoxShell?.copyText || !await window.equinoxShell.copyText(text)) {
+    throw new Error("Native clipboard is unavailable.");
+  }
+}
+
 async function copySetupText(text: UiRemoteData, successMessage: UiRemoteData) {
   if (!text) return;
   try {
-    await navigator.clipboard.writeText(text);
+    await copyControlText(String(text));
     showToast(successMessage);
   } catch (error) {
     showError(new Error(`Could not copy to clipboard: ${error instanceof Error ? error.message : String(error)}`));
@@ -2270,10 +2276,11 @@ function renderChatLocalActivity() {
         copy.textContent = localizeUiText("Copy command");
         copy.addEventListener("click", async () => {
           try {
-            await navigator.clipboard.writeText(event.command!);
+            await copyControlText(event.command!);
             copy.textContent = localizeUiText("Command copied.");
           } catch (error) {
-            showError(new Error("Could not copy to clipboard: " + (error instanceof Error ? error.message : String(error))));
+            copy.textContent = localizeUiText("Copy failed");
+            copy.title = localizeUiText("Could not copy to clipboard.");
           }
         });
         detail.append(copy);

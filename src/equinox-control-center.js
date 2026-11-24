@@ -788,11 +788,16 @@ function renderOnboarding() {
     const almostReady = onboarding.connectedThroughTunnel && browserReady;
     setBadge("onboarding-badge", almostReady ? "Ready to verify" : "Setup in progress", almostReady ? "good" : "warn");
 }
+async function copyControlText(text) {
+    if (!window.equinoxShell?.copyText || !await window.equinoxShell.copyText(text)) {
+        throw new Error("Native clipboard is unavailable.");
+    }
+}
 async function copySetupText(text, successMessage) {
     if (!text)
         return;
     try {
-        await navigator.clipboard.writeText(text);
+        await copyControlText(String(text));
         showToast(successMessage);
     }
     catch (error) {
@@ -2189,11 +2194,12 @@ function renderChatLocalActivity() {
                 copy.textContent = localizeUiText("Copy command");
                 copy.addEventListener("click", async () => {
                     try {
-                        await navigator.clipboard.writeText(event.command);
+                        await copyControlText(event.command);
                         copy.textContent = localizeUiText("Command copied.");
                     }
                     catch (error) {
-                        showError(new Error("Could not copy to clipboard: " + (error instanceof Error ? error.message : String(error))));
+                        copy.textContent = localizeUiText("Copy failed");
+                        copy.title = localizeUiText("Could not copy to clipboard.");
                     }
                 });
                 detail.append(copy);

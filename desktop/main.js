@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification as DesktopNotification, screen, session, shell, Tray } from "electron";
+import { clipboard, app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification as DesktopNotification, screen, session, shell, Tray } from "electron";
 import fs from "node:fs";
 import os from "node:os";
 import { execFile as execFileCallback } from "node:child_process";
@@ -925,6 +925,16 @@ ipcMain.handle("equinox-shell:control-request", async (event, value) => {
     if (!trustedSender(event) || quitting)
         throw new Error("Untrusted desktop control request.");
     return await requestUiControlJson(value);
+});
+// Only the trusted local main document can copy bounded plain text.
+// Do not grant clipboard read, remote renderer privileges, or web permissions.
+ipcMain.handle("equinox-shell:copy-text", (event, value) => {
+    if (!trustedSender(event) || quitting)
+        throw new Error("Untrusted clipboard request.");
+    if (typeof value !== "string" || !value.length || value.length > 32_768)
+        throw new Error("Invalid clipboard text.");
+    clipboard.writeText(value);
+    return true;
 });
 ipcMain.handle("equinox-shell:pick-folder", async (event) => {
     if (!trustedSender(event))

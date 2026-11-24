@@ -10,6 +10,8 @@ export function localeForLanguage(language:unknown):"tr-TR"|"en-US" {
 }
 
 const TR_UI = Object.freeze({
+  "Could not copy to clipboard.": "Panoya kopyalanamadı.",
+  "Copy failed": "Kopyalanamadı",
   "Copy command": "Komutu kopyala",
   "Command copied.": "Komut kopyalandı.",
   "All connections": "Tüm bağlantılar",
