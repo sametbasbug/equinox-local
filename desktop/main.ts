@@ -18,7 +18,7 @@ import { prepareWindowsUninstallHandoff, UninstallCleanupError } from "./uninsta
 import { createCompanionController } from "./companion.js";
 import type { CompanionController } from "./companion.js";
 import { openShellPreferences } from "./shell-preferences.js";
-import { openEmbeddedChatPilot, closeEmbeddedChatPilot } from "./embedded-chat.js";
+import { createEmbeddedChat } from "./embedded-chat.js";
 import type { ShellPreferences, ShellPreferenceStore } from "./shell-preferences.js";
 
 registerControlScheme();
@@ -37,6 +37,7 @@ const execFile = promisify(execFileCallback);
 let backgroundLaunch = process.argv.includes("--startup");
 let revealOnFirstLoad = !backgroundLaunch;
 let window: BrowserWindow | null = null;
+let embeddedChat: ReturnType<typeof createEmbeddedChat> | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let navigating = false;
@@ -489,7 +490,8 @@ function importLegacyShellPreferences(): void {
 
 function cleanupPresentation(): void {
   try { companion?.dispose(); } catch { /* Optional companion cannot obstruct shutdown. */ }
-  closeEmbeddedChatPilot();
+  embeddedChat?.dispose();
+  embeddedChat = null;
   companion = null;
   restartPending = false;
   if (timer) { clearTimeout(timer); timer = null; }
@@ -540,8 +542,6 @@ function updateMenus(): void {
     { label: `Equinox Local · ${label}`, enabled: false },
     { type: "separator" },
     { label: text("Open Control Center", "Kontrol Merkezi'ni aç"), click: showControlCenter },
-    { label: text("ChatGPT Web preview (experimental)", "ChatGPT Web önizleme (deneysel)"),
-      enabled: !quitting, click: () => openEmbeddedChatPilot(language === "tr" ? "tr" : "en") },
     { label: companion?.isVisible() ? text("Hide Companion", "Companion'ı Gizle") : text("Show Companion", "Companion'ı Göster"),
       enabled: Boolean(companion) && !quitting,
       click: () => { companion?.setVisible(!companion.isVisible()); } },
@@ -675,7 +675,9 @@ function createWindow(): void {
     }
   });
   contents.on("page-title-updated", (event) => { event.preventDefault(); window?.setTitle("Equinox Local"); });
+  contents.on("did-start-loading", () => embeddedChat?.setBounds(null));
   contents.on("render-process-gone", () => {
+    embeddedChat?.setBounds(null);
     rendererFailed = true;
     updateMenus();
     void refresh();
@@ -686,7 +688,7 @@ function createWindow(): void {
     revealOnFirstLoad = false;
     window?.hide();
   });
-  window.on("closed", () => { window = null; });
+  window.on("closed", () => { embeddedChat?.dispose(); embeddedChat = null; window = null; });
   // The original macOS status item was plain "EL" text, not the app logo.
   const trayImage = process.platform === "darwin"
     ? nativeImage.createEmpty()
@@ -710,10 +712,28 @@ ipcMain.handle("equinox-shell:appearance", (event, value: unknown) => {
   return true;
 });
 
-ipcMain.handle("equinox-shell:open-embedded-chat", (event) => {
-  if (!trustedSender(event) || quitting) throw new Error("Untrusted embedded chat request.");
-  openEmbeddedChatPilot(language === "tr" ? "tr" : "en");
-  return { opened: true };
+// Only the trusted local document can position its child provider view.
+// CSS coordinates are clipped to the window's content bounds in native DIP.
+ipcMain.handle("equinox-shell:embedded-chat-layout", (event, value: unknown) => {
+  if (!trustedSender(event) || quitting || !window) throw new Error("Untrusted embedded chat layout.");
+  if (value === null) { embeddedChat?.setBounds(null); return; }
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid embedded chat bounds.");
+  const rect = value as Record<string, unknown>;
+  const keys = ["x", "y", "width", "height"];
+  if (Object.keys(rect).length !== keys.length || !keys.every(key => typeof rect[key] === "number" && Number.isFinite(rect[key]) && Math.abs(rect[key] as number) <= 32768)) throw new Error("Invalid embedded chat bounds.");
+  const scale = window.webContents.getZoomFactor();
+  const [width = 0, height = 0] = window.getContentSize();
+  const x = Math.max(0, Math.round(Number(rect.x) * scale));
+  const y = Math.max(0, Math.round(Number(rect.y) * scale));
+  const right = Math.min(width, Math.round((Number(rect.x) + Number(rect.width)) * scale));
+  const bottom = Math.min(height, Math.round((Number(rect.y) + Number(rect.height)) * scale));
+  if (right <= x || bottom <= y) { embeddedChat?.setBounds(null); return; }
+  embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en");
+  embeddedChat.setBounds({ x, y, width: right - x, height: bottom - y });
+});
+ipcMain.handle("equinox-shell:embedded-chat-microphone", async (event) => {
+  if (!trustedSender(event) || quitting || !embeddedChat) return false;
+  return await embeddedChat.requestMicrophone();
 });
 
 ipcMain.handle("equinox-shell:control-request", async (event, value: unknown) => {
@@ -738,6 +758,7 @@ ipcMain.handle("equinox-shell:pick-folder", async (event) => {
 ipcMain.handle("equinox-shell:language", (event, value: unknown) => {
   if (!trustedSender(event) || (value !== "en" && value !== "tr")) return;
   language = value;
+  embeddedChat?.setLanguage(value);
   shellPreferences?.write({ language: value });
   updateMenus();
 });

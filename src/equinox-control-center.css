@@ -642,3 +642,14 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
 }
+
+/* The native provider child occupies only this local document's Chat host. */
+body.chat-workspace-active { overflow: hidden; }
+.chat-workspace-active .app-shell { height: 100dvh; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.chat-workspace-active .main-panel { max-width: none; min-height: 0; height: 100%; padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+.chat-workspace-active .topbar { min-height: 62px; flex: none; position: static; padding: 10px 18px; margin: 0; border-bottom: 1px solid var(--line); }
+.chat-workspace-active .topbar h2 { font-size: 19px; }
+.chat-workspace-active .topbar .eyebrow { display: none; }
+.chat-workspace-active .main-panel > :is(.pause-banner, .restart-banner, .error-banner) { flex: none; margin: 0; border-radius: 0; }
+.chat-workspace-active #section-chat { min-height: 0; flex: 1; display: flex; animation: none; }
+.chat-provider-host { min-width: 0; min-height: 0; flex: 1; display: grid; place-items: center; background: var(--surface); color: var(--muted); }

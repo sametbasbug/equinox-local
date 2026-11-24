@@ -1,9 +1,8 @@
-import { BaseWindow, WebContentsView, dialog, nativeTheme, session, shell } from "electron";
+import { WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import path from "node:path";
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
 const HOSTS = new Set(["chatgpt.com", "auth.openai.com"]);
-let host = null;
 let googleNoticeOpen = false;
 function isEmbeddedGoogleAuth(value) {
     try {
@@ -74,61 +73,10 @@ const STYLE = [
     ":focus-visible { outline: 2px solid #8e77da !important; outline-offset: 2px !important; }",
     "aside.app-shell-left-panel { border-inline-end: 1px solid rgba(130,112,191,.22) !important; }",
 ].join("\n");
-const TOOLBAR_ACTIONS = new Set(["back", "forward", "reload", "home", "microphone"]);
-const TOOLBAR_ACTION_ORIGIN = "https://preview.equinox.invalid";
-function toolbarMarkup(language) {
-    const labels = language === "tr"
-        ? { back: "Geri", forward: "İleri", reload: "Yenile", home: "Ana sayfa", microphone: "Mikrofon izni", preview: "Deneysel önizleme" }
-        : { back: "Back", forward: "Forward", reload: "Reload", home: "Home", microphone: "Microphone permission", preview: "Experimental preview" };
-    const link = (action, icon, label) => `<a class="action" href="${TOOLBAR_ACTION_ORIGIN}/${action}" target="_blank" rel="noopener" aria-label="${label}" title="${label}">${icon}</a>`;
-    return `<!doctype html><html lang="${language}"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none';">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden}
-:root{color-scheme:light;--eq-surface:#fff;--eq-line:#e5e3e9;--eq-text:#282432;
---eq-muted:#615d6c;--eq-accent:#6954b8;--eq-soft:#f0ecfa}
-@media(prefers-color-scheme:dark){:root{color-scheme:dark;--eq-surface:#242429;--eq-line:#41404a;
---eq-text:#f0edf5;--eq-muted:#c4bdce;--eq-accent:#c3b2fa;--eq-soft:#3b3252}}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--eq-surface);color:var(--eq-text)}
-header{height:52px;display:flex;align-items:center;gap:13px;padding:0 17px;
-  border-bottom:1px solid var(--eq-line);
-  background:linear-gradient(100deg,color-mix(in srgb,var(--eq-accent) 5%,var(--eq-surface)),var(--eq-surface) 46%)}
-.brand{display:flex;gap:9px;align-items:center;min-width:0}
-.mark{width:28px;height:28px;display:grid;place-items:center;border-radius:9px;
-  background:linear-gradient(145deg,#9076d7,#6954b8);color:#fff;font-weight:800;font-size:13px;box-shadow:0 1px 5px #6954b826}
-.name{font-size:12px;font-weight:760;letter-spacing:.105em;color:var(--eq-text)}
-.separator{height:18px;width:1px;background:var(--eq-line);margin-left:2px}
-.product{font-size:12px;font-weight:570;color:var(--eq-muted);white-space:nowrap}
-.preview{font-size:10px;border:1px solid color-mix(in srgb,var(--eq-accent) 25%,var(--eq-line));
-  border-radius:40px;background:var(--eq-soft);color:var(--eq-accent);padding:4px 8px;white-space:nowrap}
-nav{margin-left:auto;display:flex;align-items:center;gap:5px}
-.action{width:31px;height:29px;display:grid;place-items:center;border-radius:8px;text-decoration:none;
-color:var(--eq-muted);font-size:18px;line-height:1;border:1px solid transparent;transition:background .12s,border-color .12s}
-.action:hover{background:var(--eq-soft);border-color:color-mix(in srgb,var(--eq-accent) 22%,var(--eq-line));color:var(--eq-accent)}
-.action:focus-visible{outline:2px solid var(--eq-accent);outline-offset:2px}
-.action:active{background:var(--eq-soft);color:var(--eq-accent)}
-.action svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-nav .action:last-child{margin-left:7px;border-left:1px solid var(--eq-line);border-radius:0 8px 8px 0;padding-left:7px;width:38px}
-@media(max-width:650px){.preview,.separator{display:none}.product{font-size:11px}header{gap:9px;padding:0 10px}}
-@media(prefers-reduced-motion:reduce){.action{transition:none}}
-</style></head><body><header>
-<div class="brand"><span class="mark" aria-hidden="true">E</span><span class="name">EQUINOX</span></div>
-<span class="separator"></span><span class="product">ChatGPT Web</span><span class="preview">${labels.preview}</span>
-<nav aria-label="Navigation">
-${link("back", "&#x2039;", labels.back)}
-${link("forward", "&#x203A;", labels.forward)}
-${link("reload", "&#x21bb;", labels.reload)}
-${link("home", "&#x2302;", labels.home)}
-${link("microphone", '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg>', labels.microphone)}
-</nav></header></body></html>`;
-}
-export function openEmbeddedChatPilot(language = "en") {
-    if (host && !host.isDestroyed()) {
-        host.show();
-        host.focus();
-        return;
-    }
+// The provider is a child of the existing trusted Control Center window.
+// Its separate session and webPreferences never receive the Control Center preload.
+export function createEmbeddedChat(win, initialLanguage = "en") {
+    let language = initialLanguage;
     const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
     // Electron's default UA adds a non-browser product token to the actual
     // Chromium build. Use that Chromium build's normal browser UA for this
@@ -136,19 +84,6 @@ export function openEmbeddedChatPilot(language = "en") {
     // No OS, Chromium version, credentials or request header is invented.
     const providerUserAgent = isolated.getUserAgent().replace(/\sElectron\/[^\s]+(?=\s|$)/, "");
     isolated.setUserAgent(providerUserAgent);
-    const win = new BaseWindow({
-        title: "Equinox · ChatGPT Web (experimental)", width: 1180, height: 790,
-        minWidth: 700, minHeight: 520, show: true, backgroundColor: nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5",
-    });
-    // The provider and toolbar react to theme changes automatically, but a
-    // BaseWindow's backing color is fixed unless we update it explicitly.
-    // Keep the exposed window background aligned during system auto-switches.
-    const syncWindowBackground = () => {
-        if (!win.isDestroyed()) {
-            win.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5");
-        }
-    };
-    nativeTheme.on("updated", syncWindowBackground);
     const view = new WebContentsView({
         webPreferences: {
             session: isolated, sandbox: true, contextIsolation: true,
@@ -273,50 +208,14 @@ export function openEmbeddedChatPilot(language = "en") {
         });
     };
     isolated.on("will-download", onDownload);
-    // Own the chrome, but never mirror or reimplement any of ChatGPT's
-    // account-specific model / effort / project / tool controls.
-    const bar = new WebContentsView({ webPreferences: {
-            sandbox: true, contextIsolation: true, nodeIntegration: false,
-            webviewTag: false, devTools: false,
-        } });
-    bar.webContents.setWindowOpenHandler(({ url }) => {
-        try {
-            const target = new URL(url);
-            if (target.origin === TOOLBAR_ACTION_ORIGIN && TOOLBAR_ACTIONS.has(target.pathname.slice(1))) {
-                const action = target.pathname.slice(1);
-                if (action === "back" && view.webContents.navigationHistory.canGoBack())
-                    view.webContents.navigationHistory.goBack();
-                if (action === "forward" && view.webContents.navigationHistory.canGoForward())
-                    view.webContents.navigationHistory.goForward();
-                if (action === "reload")
-                    view.webContents.reload();
-                if (action === "home")
-                    void view.webContents.loadURL(CHATGPT + "/").catch(() => { });
-                if (action === "microphone") {
-                    void askMicrophonePermission().then(granted => {
-                        if (granted && !view.webContents.isDestroyed())
-                            view.webContents.reload();
-                    });
-                }
-            }
-        }
-        catch { /* Toolbar cannot navigate the provider or execute code. */ }
-        return { action: "deny" };
-    });
-    bar.webContents.on("will-navigate", event => event.preventDefault());
-    host = win;
-    win.contentView.addChildView(bar);
+    view.setVisible(false);
     win.contentView.addChildView(view);
-    const fit = () => {
-        if (win.isDestroyed())
-            return;
-        const [width, height] = win.getContentSize();
-        bar.setBounds({ x: 0, y: 0, width: width ?? 1180, height: 52 });
-        view.setBounds({ x: 0, y: 52, width: width ?? 1180, height: Math.max(0, (height ?? 790) - 52) });
+    const syncViewBackground = () => {
+        if (!view.webContents.isDestroyed())
+            view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#242429" : "#f7f7f5");
     };
-    fit();
-    win.on("resize", fit);
-    void bar.webContents.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(toolbarMarkup(language))).catch(() => { });
+    syncViewBackground();
+    nativeTheme.on("updated", syncViewBackground);
     // A provider link opens inside this webview if it is a supported provider
     // origin; otherwise open the person's normal browser only after an explicit
     // native confirmation. Never grant remote content shell/OS or Equinox IPC.
@@ -380,25 +279,45 @@ export function openEmbeddedChatPilot(language = "en") {
         }
         catch { /* Ignore intermediate navigation state. */ }
     });
-    win.on("closed", () => {
-        nativeTheme.removeListener("updated", syncWindowBackground);
+    let disposed = false;
+    const dispose = () => {
+        if (disposed)
+            return;
+        disposed = true;
+        nativeTheme.removeListener("updated", syncViewBackground);
         microphoneGranted = false;
         microphonePromptOpen = false;
         approvedFileWrites.clear();
         isolated.setPermissionCheckHandler(() => false);
         isolated.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
         isolated.removeListener("will-download", onDownload);
+        if (!win.isDestroyed())
+            win.contentView.removeChildView(view);
         if (!view.webContents.isDestroyed())
             view.webContents.close();
-        if (!bar.webContents.isDestroyed())
-            bar.webContents.close();
-        if (host === win)
-            host = null;
-    });
+    };
+    win.once("closed", dispose);
     void view.webContents.loadURL(CHATGPT + "/").catch(() => { });
-}
-export function closeEmbeddedChatPilot() {
-    if (host && !host.isDestroyed())
-        host.close();
-    host = null;
+    return {
+        setBounds(bounds) {
+            if (disposed || view.webContents.isDestroyed())
+                return;
+            if (!bounds) {
+                view.setVisible(false);
+                if (view.webContents.isFocused() && !win.isDestroyed())
+                    win.webContents.focus();
+                return;
+            }
+            view.setBounds(bounds);
+            view.setVisible(true);
+        },
+        setLanguage(value) { language = value; },
+        async requestMicrophone() {
+            const granted = await askMicrophonePermission();
+            if (granted && !view.webContents.isDestroyed())
+                view.webContents.reload();
+            return granted;
+        },
+        dispose,
+    };
 }

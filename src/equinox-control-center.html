@@ -163,6 +163,7 @@
           <span id="last-refreshed" class="last-refreshed">Not refreshed yet</span>
           <button id="refresh-button" class="button secondary compact" type="button">Refresh</button>
           <button id="restart-runtime-button" class="button secondary compact" type="button" disabled>Restart</button>
+          <button id="chat-microphone-button" class="button secondary compact" type="button" hidden>Microphone access</button>
           <button id="agent-control-button" class="button danger compact" type="button" disabled>Emergency stop</button>
         </div>
       </header>
@@ -578,9 +579,8 @@
       </section>
 
       <section id="section-chat" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro">
-          <div><p>ChatGPT</p></div>
-          <button id="embedded-chat-open" class="button primary" type="button">Open ChatGPT Web</button>
+        <div id="chat-provider-host" class="chat-provider-host">
+          <p id="chat-provider-status" role="status">Loading ChatGPT…</p>
         </div>
       </section>
 

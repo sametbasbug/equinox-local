@@ -11,6 +11,10 @@ export function localeForLanguage(language:unknown):"tr-TR"|"en-US" {
 
 const TR_UI = Object.freeze({
   "Chat": "Sohbet",
+  "Loading ChatGPT…": "ChatGPT yükleniyor…",
+  "ChatGPT could not be opened.": "ChatGPT açılamadı.",
+  "Microphone access": "Mikrofon erişimi",
+  "ChatGPT microphone access is unavailable.": "ChatGPT mikrofon erişimi kullanılamıyor.",
   "Copy": "Kopyala",
   "Code": "Kod",
   "Retry": "Yeniden dene",

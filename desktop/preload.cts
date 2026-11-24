@@ -31,7 +31,8 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
       }
     },
     requestJson: (request: unknown) => ipcRenderer.invoke("equinox-shell:control-request", request),
-    openEmbeddedChat: () => ipcRenderer.invoke("equinox-shell:open-embedded-chat"),
+    setEmbeddedChatBounds: (bounds: unknown) => ipcRenderer.invoke("equinox-shell:embedded-chat-layout", bounds),
+    requestEmbeddedChatMicrophone: () => ipcRenderer.invoke("equinox-shell:embedded-chat-microphone"),
     setLanguage: (language: unknown) => {
       if (language === "en" || language === "tr") {
         void ipcRenderer.invoke("equinox-shell:language", language).catch(() => {});

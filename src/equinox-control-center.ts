@@ -14,7 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;openEmbeddedChat:()=>Promise<{opened:boolean}>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -445,12 +445,47 @@ function setConfigEditingEnabled(enabled: UiRemoteData) {
   if (!enabled && $("save-agent-access-button")) $("save-agent-access-button").disabled = true;
 }
 
+// Keep the native view aligned with this document's actual host rectangle.
+// Local modal dialogs must never be covered by the remote child view.
+let lastEmbeddedLayout = "";
+function syncEmbeddedChatLayout() {
+  const bridge = window.equinoxShell?.setEmbeddedChatBounds;
+  if (!bridge) return;
+  const host = $("chat-provider-host");
+  const visible = state.activeSection === "chat" && !state.setupMode && !document.body.classList.contains("control-loading") && !document.querySelector("dialog[open]");
+  const r = host.getBoundingClientRect();
+  const bounds = visible && r.width > 0 && r.height > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
+  const key = JSON.stringify(bounds);
+  if (key === lastEmbeddedLayout) return;
+  lastEmbeddedLayout = key;
+  void bridge(bounds).catch(() => {
+    if (lastEmbeddedLayout === key) lastEmbeddedLayout = "";
+    setText("chat-provider-status", "ChatGPT could not be opened.");
+  });
+}
+function bindEmbeddedChatLayout() {
+  const observer = new ResizeObserver(syncEmbeddedChatLayout);
+  observer.observe($("chat-provider-host"));
+  observer.observe($("main-content"));
+  const visibility = new MutationObserver(syncEmbeddedChatLayout);
+  visibility.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  for (const dialog of document.querySelectorAll("dialog")) visibility.observe(dialog, { attributes: true, attributeFilter: ["open"] });
+  window.addEventListener("resize", syncEmbeddedChatLayout);
+  window.addEventListener("scroll", syncEmbeddedChatLayout, { passive: true });
+  window.addEventListener("pagehide", () => {
+    observer.disconnect(); visibility.disconnect();
+    void window.equinoxShell?.setEmbeddedChatBounds(null).catch(() => {});
+  }, { once: true });
+}
+
 function switchSection(section: UiRemoteData, { remember = false } = {}) {
   if (!sectionMeta[section]) return;
   if (state.setupMode && section !== "setup") return;
   if (!state.setupMode && section === "setup") return;
   const changed = state.activeSection !== section;
   state.activeSection = section;
+  document.body.classList.toggle("chat-workspace-active", section === "chat");
+  $("chat-microphone-button").hidden = section !== "chat";
   if (remember && section !== "setup") {
     try {
       localStorage.setItem(SECTION_STORAGE_KEY, section);
@@ -472,6 +507,7 @@ function switchSection(section: UiRemoteData, { remember = false } = {}) {
   const [kicker, title] = sectionMeta[section];
   setText("section-kicker", kicker);
   setText("section-title", title);
+  syncEmbeddedChatLayout();
   if (changed) {
     $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
     if (state.config) {
@@ -3849,21 +3885,10 @@ function bindEvents() {
     if (state.theme === "system") applyTheme();
   });
   $("language-select").addEventListener("change", (event) => setLanguage((event.target as UiDomControl).value));
-  $("embedded-chat-open").addEventListener("click", async () => {
-    const button = document.getElementById("embedded-chat-open");
-    if (!(button instanceof HTMLButtonElement)) return;
-    if (!window.equinoxShell?.openEmbeddedChat) {
-      showToast("Embedded ChatGPT preview is unavailable in this installation.");
-      return;
-    }
-    button.disabled = true;
-    try {
-      await window.equinoxShell.openEmbeddedChat();
-    } catch {
-      showToast("Could not open the embedded ChatGPT preview.");
-    } finally {
-      button.disabled = false;
-    }
+  bindEmbeddedChatLayout();
+  $("chat-microphone-button").addEventListener("click", async () => {
+    try { await window.equinoxShell?.requestEmbeddedChatMicrophone(); }
+    catch { showToast("ChatGPT microphone access is unavailable."); }
   });
   const companionPicker = $("companion-select");
   companionPicker.value = window.equinoxShell?.getCompanionId() ?? "nyx";
