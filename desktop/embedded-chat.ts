@@ -234,6 +234,30 @@ html.chatgpt-theme main[data-app-shell-main-surface] {
   --thread-content-expanded-max-width: 55rem !important;
   background: var(--eq-canvas) !important;
 }
+/* Keep the real provider mode and conversation actions, but use a
+   compact toolbar rather than a second prominent application header. */
+html.chatgpt-theme [data-app-shell-frame] {
+  --app-shell-titlebar-height: 44px !important;
+}
+html.chatgpt-theme [class~="@container/home-mode-toggle"] {
+  justify-content: flex-start !important;
+  padding-inline: 20px;
+}
+html.chatgpt-theme [class~="@container/home-mode-toggle"] [role="group"][class~="grid-cols-2"]:has(> button:nth-of-type(2)):not(:has(> button:nth-of-type(3))) {
+  width: 160px !important;
+  height: 30px !important;
+  border-radius: 7px !important;
+}
+html.chatgpt-theme [class~="@container/home-mode-toggle"] [role="group"][class~="grid-cols-2"] > :is(button,span) {
+  border-radius: 6px !important;
+}
+html.chatgpt-theme [class~="@container/home-mode-toggle"] [role="group"][class~="grid-cols-2"] > span:first-child {
+  height: 28px !important;
+}
+html.chatgpt-theme [class~="@container/home-mode-toggle"] [role="group"][class~="grid-cols-2"] > button {
+  padding-inline: 12px !important;
+  font-size: 12px;
+}
 html.chatgpt-theme [data-app-shell-titlebar] {
   border-bottom: 1px solid var(--eq-border);
   background: var(--eq-canvas);
@@ -280,6 +304,31 @@ html.chatgpt-theme #app-shell-sidebar .sidebar-navigation [role="heading"] {
 html.chatgpt-theme :is([data-markdown-text-style="assistant-message"],[data-virtualized-turn-content] .markdown) {
   font-size: 15px;
   line-height: 1.7;
+}
+/* Preserve the provider's genuine per-turn activity disclosure as a
+   compact workspace control. The Local dock is separate, globally scoped
+   runtime evidence; no fabricated activity is inserted into the transcript. */
+html.chatgpt-theme button[data-turn-disclosure-button] {
+  min-height: 28px;
+  padding: 3px 8px !important;
+  border: 1px solid var(--eq-border) !important;
+  border-radius: 6px !important;
+  background: var(--eq-paper) !important;
+  color: var(--eq-secondary) !important;
+  font-size: 12px !important;
+}
+html.chatgpt-theme button[data-turn-disclosure-button]:hover {
+  background: var(--eq-active) !important;
+}
+html.chatgpt-theme [class~="-ms-2"][class~="ps-2"] > [data-spacing="activity"] {
+  border-inline-start: 2px solid var(--eq-border);
+  padding-inline-start: 10px;
+}
+html.chatgpt-theme [data-spacing="activity"] [class~="group/activity-header"] {
+  gap: 6px;
+}
+html.chatgpt-theme [data-spacing="activity"] [class~="group/activity-header"] [class~="text-size-chat"] {
+  font-size: 13px;
 }
 html.chatgpt-theme [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
   background: var(--eq-paper) !important;
@@ -379,6 +428,27 @@ html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="respons
 html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
   min-height: 56px;
 }
+/* A shorter editor in ongoing chats and compact windows leaves room
+   for the transcript and the native run dock. Actual input/attachment
+   content still grows normally; no fixed editor maximum is imposed. */
+html.chatgpt-theme form[data-chatgpt-composer]:not([data-composer-placement="home"]) [data-composer-footer-responsive][data-composer-rows="responsive"] {
+  grid-template-rows: minmax(36px, auto) auto !important;
+  padding-block: 6px !important;
+}
+html.chatgpt-theme form[data-chatgpt-composer]:not([data-composer-placement="home"]) [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
+  min-height: 32px;
+}
+@media (max-height: 520px) {
+  html.chatgpt-theme form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] {
+    grid-template-rows: minmax(36px, auto) auto !important;
+  }
+  html.chatgpt-theme form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
+    min-height: 32px;
+  }
+}
+html.chatgpt-theme .thread-scroll-container {
+  scroll-padding-top: max(12px, var(--app-shell-titlebar-height, 44px));
+}
 html.chatgpt-theme form[data-chatgpt-composer] [data-composer-markdown] p[data-empty-paragraph="true"][data-placeholder]::before {
   content: "Describe a task or ask a question..." !important;
   color: var(--eq-muted) !important;
@@ -425,6 +495,40 @@ html.chatgpt-theme:lang(tr) [class*="Greeting-"]:not(:has(button,a,input,textare
 }
 html.chatgpt-theme:lang(tr) [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::after {
   content: "Bugün ne üzerinde çalışıyoruz?";
+}
+/* Home suggestions remain real, selectable provider controls. Compact
+   only the ordinary small button lists below the composer; never restyle
+   a Work/onboarding takeover, attachment picker or arbitrary content. */
+html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(button,a):nth-child(2)):not(:has(> :not(:is(button,a)))):not(:has(> :nth-child(5))) {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  padding-block: 3px !important;
+}
+html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(div,li):nth-child(2) > :is(button,a)):not(:has(> :not(:is(div,li)))):not(:has(> :nth-child(5))):not(:has(> :is(div,li) > :not(:is(button,a)))) {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  padding-block: 3px !important;
+}
+html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(button,a):has(> svg):not(:has(input,textarea)) {
+  min-height: 30px !important;
+  padding-block: 4px !important;
+  font-size: 12px !important;
+}
+html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(button,a):nth-child(2)):not(:has(> :not(:is(button,a)))):not(:has(> :nth-child(5))) > :is(button,a) {
+  width: auto !important;
+  min-width: 0;
+  min-height: 32px !important;
+  padding: 5px 10px !important;
+  border: 1px solid var(--eq-border) !important;
+  border-radius: 7px !important;
+  font-size: 12px !important;
 }
 @media (min-height: 460px) and (min-width: 640px) {
   html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-composer-expanded])):has(form[data-composer-placement="home"]) [class*="StreamedComposer-"] {

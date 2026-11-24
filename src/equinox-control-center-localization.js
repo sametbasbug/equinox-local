@@ -7,6 +7,8 @@ export function localeForLanguage(language) {
     return normalizeLanguage(language) === "tr" ? "tr-TR" : "en-US";
 }
 const TR_UI = Object.freeze({
+    "Copy command": "Komutu kopyala",
+    "Command copied.": "Komut kopyalandı.",
     "All connections": "Tüm bağlantılar",
     "Operation": "İşlem",
     "Started": "Başlangıç",
@@ -157,7 +159,7 @@ const TR_UI = Object.freeze({
     "Connected capabilities": "Bağlı araçlar",
     "On this computer": "Bu bilgisayarda",
     "ChatGPT to local computer connection": "ChatGPT ile yerel bilgisayar bağlantısı",
-    "ChatGPT on the web": "ChatGPT web",
+    "ChatGPT workspace": "ChatGPT çalışma alanı",
     "Tools on this computer": "Bu bilgisayardaki araçlar",
     "Checking connection": "Bağlantı kontrol ediliyor",
     "ChatGPT connected": "ChatGPT bağlantısı açık",
@@ -204,7 +206,7 @@ const TR_UI = Object.freeze({
     "Your agent is paused": "Ajanınız duraklatıldı",
     "Local stays connected for read-only status. Resume when you are ready; stopped work will not restart on its own.": "Yerel bağlantı, salt okunur durum bilgisi için açık kalır. Hazır olduğunuzda sürdürün; durdurulan işler kendiliğinden yeniden başlamaz.",
     "Your computer is ready": "Bilgisayarınız hazır",
-    "Local tools are ready. Your agent stays in ChatGPT on the web; its connected tools run here on your computer.": "Yerel araçlar hazır. Ajanınız ChatGPT web’de kalır; bağlı araçları burada, bilgisayarınızda çalışır.",
+    "Local tools are ready. Work with your agent in Chat or in your browser; its connected tools run here on your computer.": "Yerel araçlar hazır. Ajanınızla Sohbet’te veya tarayıcınızda çalışın; bağlı araçları bilgisayarınızda çalışır.",
     "Equinox Local Control Center": "Equinox Local Kontrol Merkezi",
     "Primary navigation": "Ana gezinme",
     "Control Center": "Kontrol Merkezi",

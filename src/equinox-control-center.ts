@@ -544,7 +544,7 @@ function renderDashboard() {
   setBadge("runtime-health-badge", runtimeHealth === "UNKNOWN" ? "Health unavailable" : runtimeHealth, runtimeTone);
   if (runtimeHealth === "HEALTHY") {
     setText("overview-title", "Your computer is ready");
-    setText("overview-copy", "Local tools are ready. Your agent stays in ChatGPT on the web; its connected tools run here on your computer.");
+    setText("overview-copy", "Local tools are ready. Work with your agent in Chat or in your browser; its connected tools run here on your computer.");
   } else if (runtimeHealth === "UNKNOWN") {
     setText("overview-title", "Status is still loading");
     setText("overview-copy", "The local API is reachable, but the runtime summary is not complete yet.");
@@ -2188,6 +2188,7 @@ function renderChatLocalActivity() {
   const scroll = list.scrollTop;
   const expanded = new Set([...list.querySelectorAll<HTMLDetailsElement>("details[open]")].map(item => item.dataset.runId));
   const active = document.activeElement?.closest<HTMLElement>("[data-run-id]")?.dataset.runId;
+  const activeAction = document.activeElement?.classList.contains("chat-run-copy") ? ".chat-run-copy" : "summary";
   list.replaceChildren();
   if (!events.length) {
     const empty = document.createElement("p");
@@ -2262,6 +2263,21 @@ function renderChatLocalActivity() {
           detail.append(notice);
         }
       }
+      if (event.command && event.commandRedacted === false) {
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "chat-run-copy";
+        copy.textContent = localizeUiText("Copy command");
+        copy.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(event.command!);
+            copy.textContent = localizeUiText("Command copied.");
+          } catch (error) {
+            showError(new Error("Could not copy to clipboard: " + (error instanceof Error ? error.message : String(error))));
+          }
+        });
+        detail.append(copy);
+      }
       if (event.commandRedacted) {
         const notice = document.createElement("p");
         notice.className = "chat-run-notice";
@@ -2272,7 +2288,7 @@ function renderChatLocalActivity() {
     item.append(detail);
     list.append(item);
   }
-  if (active) [...list.querySelectorAll<HTMLDetailsElement>("details")].find(item => item.dataset.runId === active)?.querySelector("summary")?.focus({preventScroll:true});
+  if (active) [...list.querySelectorAll<HTMLDetailsElement>("details")].find(item => item.dataset.runId === active)?.querySelector<HTMLElement>(activeAction)?.focus({preventScroll:true});
   list.scrollTop = chatActivityFollow ? list.scrollHeight : scroll;
 }
 
