@@ -57,16 +57,19 @@
 
       <nav id="setup-nav" class="nav-list setup-nav" aria-label="First-time setup" hidden>
         <p class="nav-group-label">Getting started</p>
-        <button class="nav-item is-active" type="button" data-section="setup" aria-current="page">
+        <button class="nav-item is-active" type="button" data-section="setup" aria-current="page" aria-label="Setup" title="Setup">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg>
           <span>Setup</span>
         </button>
-        <button id="setup-uninstall-nav" class="nav-item" type="button">
+        <button id="setup-uninstall-nav" class="nav-item" type="button" aria-label="Uninstall" title="Uninstall">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13"/></svg>
           <span>Uninstall</span>
         </button>
       </nav>
 
+      <button id="chat-activity-toggle" type="button" class="rail-button" aria-label="Local activity" title="Local activity" aria-expanded="false" aria-controls="chat-local-activity" hidden>
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/></svg>
+      </button>
       <div class="rail-bottom">
         <button id="agent-control-button" class="button danger compact" type="button" disabled>Emergency stop</button>
         <button id="settings-open-button" type="button" class="rail-button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">
@@ -593,6 +596,14 @@
         <div id="chat-provider-host" class="chat-provider-host">
           <p id="chat-provider-status" role="status">Loading ChatGPT…</p>
         </div>
+        <aside id="chat-local-activity" class="chat-local-activity" aria-labelledby="chat-activity-heading" hidden>
+          <header class="chat-activity-header">
+            <div><h2 id="chat-activity-heading">Local activity</h2><p>All Local connections</p></div>
+            <button id="chat-activity-close" class="icon-button" type="button" aria-label="Close" title="Close">×</button>
+          </header>
+          <p class="chat-activity-note">Safe command details only. Not linked to this conversation.</p>
+          <div id="chat-activity-list" class="chat-activity-list"></div>
+        </aside>
       </section>
 
       <section id="section-browser" class="page-section" aria-labelledby="section-title" hidden>

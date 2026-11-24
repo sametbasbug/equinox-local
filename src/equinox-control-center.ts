@@ -136,6 +136,7 @@ const state:UiState = {
   doctorRepairBusy: false,
   doctorRepairResult: null,
   activity: [],
+  toolActivity: [],
   tasks: [],
   selectedTaskId: null,
   taskDraft: null,
@@ -486,6 +487,7 @@ function switchSection(section: UiRemoteData, { remember = false } = {}) {
   state.activeSection = section;
   document.body.classList.toggle("chat-workspace-active", section === "chat");
   $("chat-microphone-button").hidden = section !== "chat";
+  $("chat-activity-toggle").hidden = section !== "chat";
   if (remember && section !== "setup") {
     try {
       localStorage.setItem(SECTION_STORAGE_KEY, section);
@@ -508,6 +510,7 @@ function switchSection(section: UiRemoteData, { remember = false } = {}) {
   setText("section-kicker", kicker);
   setText("section-title", title);
   syncEmbeddedChatLayout();
+  if (section === "chat") renderChatLocalActivity();
   if (changed) {
     $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
     if (state.config) {
@@ -2137,7 +2140,63 @@ function activityTone(event: UiRemoteData) {
   return "neutral";
 }
 
+function setChatActivityOpen(open: boolean) {
+  $("chat-local-activity").hidden = !open;
+  $("chat-activity-toggle").setAttribute("aria-expanded", String(open));
+  $("chat-activity-toggle").classList.toggle("is-active", open);
+  if (open) renderChatLocalActivity();
+  syncEmbeddedChatLayout();
+}
+
+function renderChatLocalActivity() {
+  if ($("chat-local-activity").hidden) return;
+  const list = $("chat-activity-list");
+  const scroll = list.scrollTop;
+  list.replaceChildren();
+  if (!state.toolActivity.length) {
+    const empty = document.createElement("p");
+    empty.className = "chat-activity-empty";
+    empty.textContent = localizeUiText("No Local tool calls yet.");
+    list.append(empty);
+    return;
+  }
+  for (const event of state.toolActivity) {
+    const item = document.createElement("article");
+    item.className = "chat-tool-row";
+    const heading = document.createElement("div");
+    heading.className = "chat-tool-heading";
+    const dot = document.createElement("span");
+    const status = ["running", "completed", "failed", "background"].includes(event.state) ? event.state : "completed";
+    dot.className = "chat-tool-dot is-" + status;
+    dot.setAttribute("aria-hidden", "true");
+    const name = document.createElement("strong");
+    name.textContent = event.operation || "";
+    heading.append(dot, name);
+    item.append(heading);
+    if (event.operation === "terminal_exec") {
+      const command = document.createElement("code");
+      command.className = "chat-tool-command";
+      command.textContent = event.command || localizeUiText("Command details hidden");
+      item.append(command);
+    }
+    const meta = document.createElement("div");
+    meta.className = "chat-tool-meta";
+    const labels: Record<string, string> = { running: "Running", completed: "Completed", failed: "Failed", background: "Handed to background" };
+    const parts = [localizeUiText(labels[status]), formatDate(event.startedAt)];
+    if (event.finishedAt) {
+      const duration = new Date(event.finishedAt).getTime() - new Date(event.startedAt).getTime();
+      if (Number.isFinite(duration)) parts.push(duration < 1000 ? duration + " ms" : (duration / 1000).toFixed(1) + " s");
+    }
+    if (Number.isInteger(event.exitCode)) parts.push(localizeUiText("Exit code") + " " + event.exitCode);
+    meta.textContent = parts.join(" · ");
+    item.append(meta);
+    list.append(item);
+  }
+  list.scrollTop = scroll;
+}
+
 function renderActivity() {
+  renderChatLocalActivity();
   const controlCenter = state.health?.controlCenter || {};
   setText("request-count", String(controlCenter.requestCount ?? 0));
   setText("mutation-count", String(controlCenter.mutationCount ?? 0));
@@ -2704,6 +2763,7 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
     state.config = clone(config.config);
     state.revision = config.revision;
     state.activity = Array.isArray(activity.events) ? activity.events : [];
+    state.toolActivity = Array.isArray(activity.toolActivity) ? activity.toolActivity : [];
     state.tasks = Array.isArray(tasks.tasks) ? tasks.tasks : [];
     if (!state.selectedTaskId || !state.tasks.some((task: UiRemoteData) => task.taskId === state.selectedTaskId)) {
       state.selectedTaskId = state.tasks.find((task: UiRemoteData) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
@@ -2796,12 +2856,14 @@ async function refreshLiveState() {
       };
     }
     if (activity?.events) state.activity = activity.events;
+    if (Array.isArray(activity?.toolActivity)) state.toolActivity = activity.toolActivity;
     if (tasks?.tasks) reconcileLiveTasks(tasks.tasks);
     if (onboarding?.onboarding) state.onboarding = onboarding.onboarding;
     renderDashboard();
     if (state.activeSection === "setup" || state.activeSection === "dashboard") renderOnboarding();
     if (state.activeSection === "tasks") renderTasks();
     if (state.activeSection === "activity") renderActivity();
+    if (state.activeSection === "chat") renderChatLocalActivity();
     if (state.activeSection === "browser") renderBrowserPage();
     renderAgentControl(); // Global emergency stop must never become stale.
     renderRuntimeRestartControl();
@@ -3737,6 +3799,7 @@ async function toggleAgentControl() {
     if (refreshedStatus?.status) state.status = refreshedStatus.status;
     const activity = await requestJson("/api/v1/activity").catch(() => null);
     if (activity?.events) state.activity = activity.events;
+    if (Array.isArray(activity?.toolActivity)) state.toolActivity = activity.toolActivity;
     const tasks = await requestJson("/api/v1/tasks").catch(() => null);
     if (tasks?.tasks) {
       state.tasks = tasks.tasks;
@@ -3893,6 +3956,8 @@ function bindEvents() {
   });
   $("language-select").addEventListener("change", (event) => setLanguage((event.target as UiDomControl).value));
   bindEmbeddedChatLayout();
+  $("chat-activity-toggle").addEventListener("click", () => setChatActivityOpen(Boolean($("chat-local-activity").hidden)));
+  $("chat-activity-close").addEventListener("click", () => setChatActivityOpen(false));
   const settingsDialog = $("settings-dialog");
   $("settings-open-button").addEventListener("click", () => settingsDialog.showModal());
   $("settings-close-button").addEventListener("click", () => settingsDialog.close());

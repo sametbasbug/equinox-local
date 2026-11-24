@@ -1,4 +1,16 @@
-function createGuardedInvocation({ name, config, handler, options, exposeToMcp, beforeHandler, errorResult, runtimeRestartGuardError, agentControl, noteManagedAgentCommand, }) {
+// Never retain arbitrary arguments, shell scripts, paths, or result bodies.
+// Only exact, known-safe command forms may appear in this local-only view.
+function safeCommandPreview(name, input) {
+    if (name !== "terminal_exec" || !input || typeof input !== "object")
+        return null;
+    const command = input.command;
+    if (typeof command !== "string")
+        return null;
+    const trimmed = command.trim();
+    return /^(?:pwd|git status(?: --short| --branch| --short --branch| -sb)?|git diff(?: --stat| --check| --cached --stat)?|git log -1 --oneline|git rev-parse HEAD|npm run (?:build|typecheck|check|lint|(?:build|verify):typed-(?:runtime|desktop|browser|tooling)))$/u.test(trimmed)
+        ? trimmed : null;
+}
+function createGuardedInvocation({ name, config, handler, options, exposeToMcp, beforeHandler, errorResult, runtimeRestartGuardError, agentControl, noteManagedAgentCommand, observeInvocation, }) {
     return async (...args) => {
         const restartGuardError = runtimeRestartGuardError(name);
         if (restartGuardError) {
@@ -16,7 +28,7 @@ function createGuardedInvocation({ name, config, handler, options, exposeToMcp, 
         if (exposeToMcp) {
             await noteManagedAgentCommand();
         }
-        return beforeHandler(args, handler);
+        return observeInvocation(name, args[0], () => beforeHandler(args, handler));
     };
 }
 function wrapAtMcpBoundary({ name, exposeToMcp, handler, mcpToolReplayGuard, }) {
@@ -31,6 +43,48 @@ function wrapAtMcpBoundary({ name, exposeToMcp, handler, mcpToolReplayGuard, }) 
 }
 export function createEquinoxLocalToolRegistrar({ server, capabilityRegistry, runtimeRestartGuardError, errorResult, agentControl, noteManagedAgentCommand, mcpToolReplayGuard, getToolMutationScopes, getMutationLockPlan, withMutationLockPlan, projectContextStorage, defaultProject, projectIdSchema, resolveProjectContext, z, extractTextContent, } = {}) {
     let registeredToolCount = 0;
+    let activitySequence = 0;
+    const recentActivity = [];
+    const observeInvocation = async (name, input, invoke) => {
+        // Domain dispatchers and introspection are not separate work items.
+        if (!/^[a-z][a-z0-9_]{0,79}$/u.test(name)
+            || /^(?:capabilities|(?:runtime|browser|desktop|files|release|integrations)_call)$/u.test(name)) {
+            return invoke();
+        }
+        const row = {
+            id: ++activitySequence, operation: name,
+            command: safeCommandPreview(name, input), startedAt: new Date().toISOString(),
+            finishedAt: null, state: "running", exitCode: null,
+        };
+        recentActivity.unshift(row);
+        if (recentActivity.length > 40)
+            recentActivity.length = 40;
+        try {
+            const result = await invoke();
+            row.state = result && result.isError ? "failed" : "completed";
+            if (name === "terminal_exec" && row.state !== "failed") {
+                // Read only the outcome fields; discard the entire result immediately.
+                try {
+                    const payload = JSON.parse(extractTextContent(result));
+                    if (Number.isInteger(payload?.exitCode))
+                        row.exitCode = payload.exitCode;
+                    if (payload?.ok === false)
+                        row.state = "failed";
+                    else if (payload?.promoted === true && payload?.completed === false)
+                        row.state = "background";
+                }
+                catch { /* Non-JSON tool responses retain their MCP outcome. */ }
+            }
+            return result;
+        }
+        catch (error) {
+            row.state = "failed";
+            throw error;
+        }
+        finally {
+            row.finishedAt = new Date().toISOString();
+        }
+    };
     const registerBoundary = ({ name, config, inputSchema, registeredConfig, options, wrappedHandler, }) => {
         const exposeToMcp = options.mcpExposed ?? false;
         const registerCapability = options.capability ?? true;
@@ -78,6 +132,7 @@ export function createEquinoxLocalToolRegistrar({ server, capabilityRegistry, ru
             runtimeRestartGuardError,
             agentControl,
             noteManagedAgentCommand,
+            observeInvocation,
             beforeHandler: async (args, targetHandler) => {
                 const executeHandler = async (forwardedArgs) => {
                     const result = await targetHandler(...forwardedArgs);
@@ -143,6 +198,7 @@ export function createEquinoxLocalToolRegistrar({ server, capabilityRegistry, ru
             runtimeRestartGuardError,
             agentControl,
             noteManagedAgentCommand,
+            observeInvocation,
             beforeHandler: async (args, targetHandler) => {
                 try {
                     return await targetHandler(...args);
@@ -170,6 +226,7 @@ export function createEquinoxLocalToolRegistrar({ server, capabilityRegistry, ru
     return Object.freeze({
         registerTextTool,
         registerRawTool,
+        getToolActivity: () => recentActivity.map(row => ({ ...row })),
         get registeredToolCount() {
             return registeredToolCount;
         },

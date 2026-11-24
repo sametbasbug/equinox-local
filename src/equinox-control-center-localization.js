@@ -8,6 +8,13 @@ export function localeForLanguage(language) {
 }
 const TR_UI = Object.freeze({
     "Chat": "Sohbet",
+    "Local activity": "Yerel etkinlik",
+    "All Local connections": "Tüm Local bağlantıları",
+    "Safe command details only. Not linked to this conversation.": "Yalnızca güvenli komut ayrıntıları. Bu sohbete bağlı değil.",
+    "No Local tool calls yet.": "Henüz Local araç çağrısı yok.",
+    "Command details hidden": "Komut ayrıntıları gizli",
+    "Handed to background": "Arka plana devredildi",
+    "Exit code": "Çıkış kodu",
     "Settings": "Ayarlar",
     "Close settings": "Ayarları kapat",
     "Runtime controls": "Çalışma zamanı kontrolleri",

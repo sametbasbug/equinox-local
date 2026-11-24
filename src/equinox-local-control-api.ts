@@ -20,7 +20,7 @@ type ControlApiOptions={
   configManager:ConfigManagerBoundary;
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
-  getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
+  getActivity?:Callback;getToolActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -304,6 +304,7 @@ export function createEquinoxLocalControlApi({
   getDoctorRepairs = null,
   applyDoctorRepair = null,
   getActivity = async () => [],
+  getToolActivity = () => [],
   getUpdateStatus = async () => ({}),
   getOnboardingStatus = async () => ({ available: false }),
   getTasks = null,
@@ -453,7 +454,7 @@ export function createEquinoxLocalControlApi({
       }
 
       if (method === "GET" && pathname === "/api/v1/activity") {
-        send(200, { ok: true, events: await getActivity() });
+        send(200, { ok: true, events: await getActivity(), toolActivity: await getToolActivity() });
         return;
       }
 

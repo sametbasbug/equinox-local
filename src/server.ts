@@ -3279,6 +3279,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   getDoctorRepairs: getControlCenterDoctorRepairs,
   applyDoctorRepair: applyControlCenterDoctorRepair,
   getActivity: getControlCenterActivity,
+  getToolActivity: () => toolRegistrar.getToolActivity(),
   getUpdateStatus: async () => getCombinedUpdateStatus(),
   getOnboardingStatus: getControlCenterOnboardingStatus,
   getTasks: async () => taskCapsuleStore.list({ limit: 50 }),
