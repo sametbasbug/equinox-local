@@ -24,8 +24,8 @@ function warnGoogleRestriction(win: BrowserWindow, language: "en" | "tr"): void 
       ? "Google hesabıyla giriş bu gömülü pencerede desteklenmiyor."
       : "Google sign-in is not supported inside this embedded window.",
     detail: language === "tr"
-      ? "Google, uygulama içindeki gömülü tarayıcılarda OAuth girişine izin vermiyor. Bu önizleme Chrome'dan ayrı bir oturum kullanır. ChatGPT hesabın doğrudan e-posta girişini destekliyorsa o yöntemi deneyebilirsin."
-      : "Google disallows OAuth authorization in embedded browsers. This preview uses an isolated session, so signing in through Chrome will not sign in here automatically. If your ChatGPT account supports direct email sign-in, use that method instead.",
+      ? "Google, uygulama içindeki gömülü tarayıcılarda OAuth girişine izin vermiyor. Chat görünümü Chrome'dan ayrı bir oturum kullanır. ChatGPT hesabın doğrudan e-posta girişini destekliyorsa o yöntemi deneyebilirsin."
+      : "Google disallows OAuth authorization in embedded browsers. This Chat view uses an isolated session, so signing in through Chrome will not sign in here automatically. If your ChatGPT account supports direct email sign-in, use that method instead.",
     buttons: ["OK"],
     defaultId: 0,
     noLink: true,
@@ -62,13 +62,152 @@ function permittedExternalLink(value: string): string | null {
   }
 }
 
-// Keep ChatGPT's own theme, model controls and DOM logic intact. Only add
-// low-impact Equinox visual affordances that survive Free and paid accounts.
-const STYLE = [
-  "::selection { background: rgba(105,84,184,.24) !important; }",
-  ":focus-visible { outline: 2px solid #8e77da !important; outline-offset: 2px !important; }",
-  "aside.app-shell-left-panel { border-inline-end: 1px solid rgba(130,112,191,.22) !important; }",
-].join("\n");
+// Appearance only. These selectors use observed provider layout attributes and
+// semantic class names; no provider action is replaced or programmatically invoked.
+const STYLE = String.raw`
+html.chatgpt-theme {
+  --eq-canvas: #fafafb;
+  --eq-sidebar: #f5f5f7;
+  --eq-paper: #ffffff;
+  --eq-border: #e1e0e5;
+  --eq-text: #242329;
+  --eq-secondary: #66646d;
+  --eq-muted: #82808a;
+  --eq-accent: #6954b8;
+  --eq-active: #eae6f3;
+  --eq-bubble: #eeebf5;
+  --eq-bubble-text: #30283e;
+  --eq-composer-shadow: 0 2px 5px #19151d08, 0 7px 28px #19151d06;
+  --color-surface: var(--eq-canvas) !important;
+  --color-surface-secondary: var(--eq-canvas) !important;
+  --color-surface-tertiary: var(--eq-sidebar) !important;
+  --color-surface-canvas: var(--eq-sidebar) !important;
+  --color-surface-elevated: var(--eq-paper) !important;
+  --color-surface-elevated-secondary: var(--eq-paper) !important;
+  --color-surface-card: var(--eq-paper) !important;
+  --color-border: var(--eq-border) !important;
+  --color-border-subtle: color-mix(in srgb, var(--eq-border) 65%, transparent) !important;
+  --color-text: var(--eq-text) !important;
+  --color-text-emphasis: var(--eq-text) !important;
+  --color-text-secondary: var(--eq-secondary) !important;
+  --color-text-tertiary: var(--eq-muted) !important;
+  --color-background-user-message: var(--eq-bubble) !important;
+  --color-text-user-message: var(--eq-bubble-text) !important;
+  --color-background-composer-surface: var(--eq-paper) !important;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  html.chatgpt-theme {
+    --eq-canvas: #1c1c20;
+    --eq-sidebar: #202025;
+    --eq-paper: #27272d;
+    --eq-border: #38363f;
+    --eq-text: #eeedf2;
+    --eq-secondary: #b6b3bf;
+    --eq-muted: #96939f;
+    --eq-accent: #b9a7f3;
+    --eq-active: #383143;
+    --eq-bubble: #363040;
+    --eq-bubble-text: #f0eaf9;
+    --eq-composer-shadow: 0 2px 5px #0003, 0 7px 28px #0002;
+    color-scheme: dark;
+  }
+}
+html.chatgpt-theme body { background: var(--eq-canvas) !important; color: var(--eq-text); }
+html.chatgpt-theme ::selection { background: color-mix(in srgb, var(--eq-accent) 25%, transparent); }
+html.chatgpt-theme :focus-visible { outline-color: var(--eq-accent); }
+/* Keep the real search, account, projects, history, and feature actions.
+   The provider's own collapse and mobile layout still decide visibility. */
+html.chatgpt-theme aside[data-app-shell-left-panel-appearance] {
+  background: var(--eq-sidebar) !important;
+  border-inline-end: 1px solid var(--eq-border) !important;
+}
+html.chatgpt-theme #app-shell-sidebar,
+html.chatgpt-theme #app-shell-sidebar > .bg-surface { background: var(--eq-sidebar) !important; }
+@media (min-width: 769px) {
+  html.chatgpt-theme [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] {
+    --app-shell-left-panel-width: 244px !important;
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] aside[data-app-shell-left-panel-appearance] > div:first-child {
+    width: 244px !important;
+    min-width: 244px !important;
+    max-width: 100% !important;
+  }
+}
+html.chatgpt-theme #app-shell-sidebar :is(button,a)[aria-current="page"],
+html.chatgpt-theme #app-shell-sidebar :is(button,a)[data-selected] {
+  background-color: var(--eq-active) !important;
+}
+html.chatgpt-theme #app-shell-sidebar :is(button,a) { border-radius: 7px; }
+/* Real conversation content, not a projected second message tree. */
+html.chatgpt-theme .bg-user-message.text-user-message {
+  background: var(--eq-bubble) !important;
+  color: var(--eq-bubble-text) !important;
+  border-radius: 14px !important;
+}
+html.chatgpt-theme [data-virtualized-turn-content] .markdown :is(pre,table) {
+  border-radius: 9px;
+}
+html.chatgpt-theme [data-app-shell-titlebar] { border-bottom: 1px solid var(--color-border-subtle); }
+/* The same native input, attachment and action controls stay mounted. A
+   two-row editor matches the Codex reference in both new and ongoing chats. */
+html.chatgpt-theme form[data-chatgpt-composer] [class*="ComposerSurface-"] {
+  background: var(--eq-paper) !important;
+  border: 1px solid var(--eq-border) !important;
+  border-radius: 19px !important;
+  box-shadow: var(--eq-composer-shadow) !important;
+  --composer-layout-surface-background: var(--eq-paper);
+}
+html.chatgpt-theme form[data-chatgpt-composer] [data-composer-body]:has([data-composer-footer-responsive][data-composer-rows="responsive"]) {
+  height: auto !important;
+}
+html.chatgpt-theme form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  grid-template-rows: minmax(48px, auto) auto !important;
+  align-items: center;
+  gap: 2px 8px !important;
+  padding: 8px 9px !important;
+  height: auto !important;
+}
+html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="responsive"] > [class*="FooterInput-"] {
+  grid-column: 1 / -1 !important;
+  grid-row: 1 !important;
+  align-self: stretch;
+  min-width: 0;
+  padding: 5px 8px;
+}
+html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-leading-controls] {
+  grid-column: 1 !important;
+  grid-row: 2 !important;
+  justify-self: start;
+}
+html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-trailing-controls] {
+  grid-column: 2 !important;
+  grid-row: 2 !important;
+  justify-self: end;
+  background: transparent !important;
+}
+html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-expansion-control] {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  align-self: start;
+  justify-self: end;
+}
+html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
+  min-height: 40px;
+}
+/* Position the new-chat composer toward the bottom, while retaining real
+   greeting/suggestion regions and their scroll/expanded-state behavior. */
+@media (min-height: 460px) and (min-width: 640px) {
+  html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-composer-expanded])):has(form[data-composer-placement="home"]) [class*="StreamedComposer-"] {
+    grid-template-rows: minmax(0,1fr) auto auto !important;
+    padding-bottom: 16px;
+  }
+  html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-composer-expanded])) [class*="GreetingRegion-"] { justify-content: center !important; }
+  html.chatgpt-theme [class~="group/home-composer-layout"] [class*="Greeting-"] { align-items: center; }
+}
+`;
 
 // The provider is a child of the existing trusted Control Center window.
 // Its separate session and webPreferences never receive the Control Center preload.

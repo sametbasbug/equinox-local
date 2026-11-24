@@ -8,6 +8,10 @@ export function localeForLanguage(language) {
 }
 const TR_UI = Object.freeze({
     "Chat": "Sohbet",
+    "Settings": "Ayarlar",
+    "Close settings": "Ayarları kapat",
+    "Runtime controls": "Çalışma zamanı kontrolleri",
+    "Agent mutations are active. Emergency Stop is available from the navigation rail at any time.": "Ajan işlemleri etkin. Acil durdurmaya her zaman gezinme çubuğundan ulaşılabilir.",
     "Loading ChatGPT…": "ChatGPT yükleniyor…",
     "ChatGPT could not be opened.": "ChatGPT açılamadı.",
     "Microphone access": "Mikrofon erişimi",

@@ -14,7 +14,7 @@
   <a class="skip-link" href="#main-content">Skip to content</a>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Primary navigation">
-      <div class="brand-block">
+      <div class="brand-block" title="Equinox Local">
         <img class="brand-logo" src="/assets/equinox-local.png" alt="" aria-hidden="true">
         <div>
           <h1>Equinox Local</h1>
@@ -23,7 +23,10 @@
       </div>
 
       <nav id="control-center-nav" class="nav-list" aria-label="Control Center sections">
-        <p class="nav-group-label">Workspace</p>
+        <button class="nav-item" type="button" data-section="chat" aria-label="Chat" title="Chat">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 2v-9a9 9 0 0 1 9-9 9 9 0 0 1 9 8Z"/><path d="M8 10h8M8 14h5"/></svg>
+          <span>Chat</span><kbd class="nav-hotkey" aria-hidden="true">5</kbd>
+        </button>
         <button class="nav-item is-active" type="button" data-section="dashboard" aria-current="page" aria-label="Overview" title="Overview">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
           <span>Overview</span>
@@ -43,21 +46,6 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18Z"/></svg>
           <span>Browser</span>
           <kbd class="nav-hotkey" aria-hidden="true">4</kbd>
-        </button>
-        <button class="nav-item" type="button" data-section="chat" aria-label="Chat" title="Chat">
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 2v-9a9 9 0 0 1 9-9 9 9 0 0 1 9 8Z"/><path d="M8 10h8M8 14h5"/></svg>
-          <span>Chat</span><kbd class="nav-hotkey" aria-hidden="true">5</kbd>
-        </button>
-        <p class="nav-group-label">System</p>
-        <button class="nav-item" type="button" data-section="permissions" aria-label="Safety" title="Safety">
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg>
-          <span>Safety</span>
-          <kbd class="nav-hotkey" aria-hidden="true">6</kbd>
-        </button>
-        <button class="nav-item" type="button" data-section="integrations" aria-label="Services" title="Services">
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v4m8-4v4M6 7h12v4a6 6 0 0 1-6 6v4m-6-10a6 6 0 0 0 6 6"/></svg>
-          <span>Services</span>
-          <kbd class="nav-hotkey" aria-hidden="true">7</kbd>
         </button>
         <button class="nav-item" type="button" data-section="activity" aria-label="Activity" title="Activity">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
@@ -79,7 +67,18 @@
         </button>
       </nav>
 
-      <div class="sidebar-footer">
+      <div class="rail-bottom">
+        <button id="agent-control-button" class="button danger compact" type="button" disabled>Emergency stop</button>
+        <button id="settings-open-button" type="button" class="rail-button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3h4l.6 2.7 2 .9 2.4-1.5 2 3.4-1.9 2v2.2l1.9 2-2 3.4-2.4-1.5-2 .9L14 21h-4l-.6-2.7-2-.9L5 18.9l-2-3.4 1.9-2v-2.2L3 9.3l2-3.4 2.4 1.5 2-.9L10 3Z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span id="settings-update-dot" class="settings-update-dot" hidden aria-hidden="true"></span>
+        </button>
+      </div>
+    </aside>
+
+    <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-heading">
+      <header class="settings-heading"><h2 id="settings-heading">Settings</h2><button id="settings-close-button" class="icon-button" type="button" aria-label="Close settings" title="Close settings">×</button></header>
+      <div class="settings-body">
         <div class="sidebar-preferences">
           <div class="preference-row">
             <span>Appearance</span>
@@ -105,6 +104,22 @@
             </select>
           </label>
         </div>
+        <div class="settings-section">
+          <h3>Runtime controls</h3>
+          <div class="settings-navigation">
+        <button class="nav-item" type="button" data-section="permissions" aria-label="Safety" title="Safety">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg>
+          <span>Safety</span>
+          <kbd class="nav-hotkey" aria-hidden="true">6</kbd>
+        </button>
+        <button class="nav-item" type="button" data-section="integrations" aria-label="Services" title="Services">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v4m8-4v4M6 7h12v4a6 6 0 0 1-6 6v4m-6-10a6 6 0 0 0 6 6"/></svg>
+          <span>Services</span>
+          <kbd class="nav-hotkey" aria-hidden="true">7</kbd>
+        </button>
+          </div>
+          <div class="settings-actions"><button id="refresh-button" class="button secondary compact" type="button">Refresh</button><button id="restart-runtime-button" class="button secondary compact" type="button" disabled>Restart</button><button id="chat-microphone-button" class="button secondary compact" type="button" hidden>Microphone access</button></div>
+        </div>
         <div class="sidebar-health">
           <span id="sidebar-health-dot" class="status-dot is-neutral" aria-hidden="true"></span>
           <div>
@@ -121,7 +136,7 @@
           <span id="sidebar-update-indicator" class="sidebar-update-indicator" role="status" hidden>Update available</span>
         </div>
       </div>
-    </aside>
+    </dialog>
 
     <dialog id="update-dialog" class="update-dialog" aria-labelledby="update-dialog-heading">
       <div class="update-dialog-heading">
@@ -161,10 +176,6 @@
         </div>
         <div class="topbar-actions">
           <span id="last-refreshed" class="last-refreshed">Not refreshed yet</span>
-          <button id="refresh-button" class="button secondary compact" type="button">Refresh</button>
-          <button id="restart-runtime-button" class="button secondary compact" type="button" disabled>Restart</button>
-          <button id="chat-microphone-button" class="button secondary compact" type="button" hidden>Microphone access</button>
-          <button id="agent-control-button" class="button danger compact" type="button" disabled>Emergency stop</button>
         </div>
       </header>
 

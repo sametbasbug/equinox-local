@@ -957,6 +957,7 @@ function shortUpdateSha(value: UiRemoteData) {
 function renderSidebarUpdateNotice(update: UiRemoteData, main: UiRemoteData, mainChannel: UiRemoteData) {
   const badge = $("sidebar-update-indicator");
   badge.hidden = true;
+  $("settings-update-dot").hidden = true;
   badge.classList.remove("is-main", "is-warning");
   let label = null;
   if (update.factory?.mode === "factory-source" && update.factory.state === "behind") label = "Factory update available";
@@ -967,6 +968,7 @@ function renderSidebarUpdateNotice(update: UiRemoteData, main: UiRemoteData, mai
   } else if (!mainChannel && update.updateAvailable === true) label = "Update available";
   if (label) {
     badge.hidden = false;
+    $("settings-update-dot").hidden = false;
     setText("sidebar-update-indicator", label);
   }
 }
@@ -2273,7 +2275,7 @@ function renderAgentControl() {
     "agent-control-copy",
     paused
       ? "Agent mutations are paused. Read-only status remains available until you resume."
-      : "Agent mutations are active. Emergency Stop is available from the top bar at any time.",
+      : "Agent mutations are active. Emergency Stop is available from the navigation rail at any time.",
   );
   setText("active-terminal-count", String(activeWork.terminals ?? 0));
   setText("active-process-count", String(activeWork.processes ?? 0));
@@ -2289,6 +2291,8 @@ function renderAgentControl() {
       ? (paused ? "Resuming agent…" : "Stopping agent…")
       : (paused ? "Resume agent" : "Emergency stop"),
   );
+  button.title = button.textContent || "";
+  button.setAttribute("aria-label", button.title);
 }
 
 function renderRuntimeRestartControl() {
@@ -3872,7 +3876,10 @@ function onNavigationShortcut(event: UiRemoteData) {
 function bindEvents() {
   document.addEventListener("keydown", onNavigationShortcut);
   for (const button of document.querySelectorAll<HTMLElement>(".nav-item")) {
-    button.addEventListener("click", () => switchSection(button.dataset.section, { remember: true }));
+    button.addEventListener("click", () => {
+      if (button.closest("#settings-dialog")) $("settings-dialog").close();
+      switchSection(button.dataset.section, { remember: true });
+    });
   }
   for (const button of document.querySelectorAll<HTMLElement>("[data-jump-section]")) {
     button.addEventListener("click", () => switchSection(button.dataset.jumpSection, { remember: true }));
@@ -3886,6 +3893,12 @@ function bindEvents() {
   });
   $("language-select").addEventListener("change", (event) => setLanguage((event.target as UiDomControl).value));
   bindEmbeddedChatLayout();
+  const settingsDialog = $("settings-dialog");
+  $("settings-open-button").addEventListener("click", () => settingsDialog.showModal());
+  $("settings-close-button").addEventListener("click", () => settingsDialog.close());
+  settingsDialog.addEventListener("click", event => {
+    if (event.target === settingsDialog) settingsDialog.close();
+  });
   $("chat-microphone-button").addEventListener("click", async () => {
     try { await window.equinoxShell?.requestEmbeddedChatMicrophone(); }
     catch { showToast("ChatGPT microphone access is unavailable."); }
@@ -3952,6 +3965,7 @@ function bindEvents() {
   $("uninstall-confirmation").addEventListener("input", renderUninstall);
   $("uninstall-remove-data").addEventListener("change", renderUninstall);
   $("sidebar-update-button").addEventListener("click", () => {
+    $("settings-dialog").close();
     $("update-dialog").showModal();
     void checkForUpdates();
   });
