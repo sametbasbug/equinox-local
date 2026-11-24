@@ -39,7 +39,11 @@ export function createNativeChatChannel({ assertMutationAllowed = () => { } } = 
     let closed = false;
     let observed = null;
     let pending = null;
-    const current = () => observed && Date.now() - observed.at <= MAX_AGE && observed.state ? { instanceId: observed.instanceId, state: observed.state } : null;
+    const currentView = () => observed && Date.now() - observed.at <= MAX_AGE ? observed : null;
+    const current = () => {
+        const view = currentView();
+        return view?.state ? { instanceId: view.instanceId, state: view.state, viewVisible: view.viewVisible } : null;
+    };
     function finish(error, result) {
         if (!pending)
             return;
@@ -54,13 +58,13 @@ export function createNativeChatChannel({ assertMutationAllowed = () => { } } = 
     function exchange(input) {
         if (closed)
             throw new Error("Native Chat channel is closed.");
-        if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(key => !["instanceId", "state", "reply"].includes(key))
-            || typeof input.instanceId !== "string" || !ID.test(input.instanceId))
+        if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).some(key => !["instanceId", "viewVisible", "state", "reply"].includes(key))
+            || typeof input.instanceId !== "string" || !ID.test(input.instanceId) || typeof input.viewVisible !== "boolean")
             throw new Error("Invalid native exchange envelope.");
         const state = normalizeState(input.state);
         if (observed && observed.instanceId !== input.instanceId && pending)
             finish(new Error("Native view instance changed."));
-        observed = { instanceId: input.instanceId, state, at: Date.now() };
+        observed = { instanceId: input.instanceId, viewVisible: input.viewVisible, state, at: Date.now() };
         if (input.reply !== undefined && input.reply !== null) {
             const reply = input.reply;
             if (!reply || typeof reply !== "object" || typeof reply.id !== "string" || typeof reply.confirmed !== "boolean")
@@ -85,7 +89,7 @@ export function createNativeChatChannel({ assertMutationAllowed = () => { } } = 
         }
         if (!pending || pending.claimed || pending.request.instanceId !== input.instanceId)
             return { request: null };
-        if (!state || Date.now() >= pending.request.expiresAt) {
+        if (!state || !input.viewVisible || Date.now() >= pending.request.expiresAt) {
             finish(new Error("Native view is unavailable before delivery."));
             return { request: null };
         }
@@ -119,6 +123,8 @@ export function createNativeChatChannel({ assertMutationAllowed = () => { } } = 
         if (method !== "continuation.deliver" && method !== "resume.create")
             throw new Error("Unsupported native Chat operation.");
         assertMutationAllowed();
+        if (!target.viewVisible)
+            throw new Error("Native Chat delivery requires the active Chat view.");
         if (pending)
             throw new Error("Native Chat already has a delivery in progress.");
         const fresh = method === "resume.create";
@@ -146,19 +152,20 @@ export function createNativeChatChannel({ assertMutationAllowed = () => { } } = 
         return {
             snapshot: () => {
                 const snapshot = browser.snapshot();
-                const native = current();
+                const native = currentView();
                 return { ...snapshot, contexts: { ...snapshot?.contexts, ...(native ? { native: {
-                                ready: true, extension: { instanceId: native.instanceId, capabilityVersions: { autoContinue: 1, freshChatResume: 1 } },
+                                ready: Boolean(native.state), nativeViewVisible: native.viewVisible,
+                                extension: { instanceId: native.instanceId, capabilityVersions: { autoContinue: 1, freshChatResume: 1 } },
                             } } : {}) } };
             },
             call: (method, args, options) => options.context === "native" ? call(method, args, options.timeoutMs) : browser.call(method, args, options),
         };
     }
-    const hasFreshObservation = () => Boolean(observed && Date.now() - observed.at <= MAX_AGE);
+    const hasFreshObservation = () => Boolean(currentView());
     const status = () => {
         const state = current()?.state;
         // Diagnostics do not expose conversation identifiers, titles, prompts or drafts.
-        return { connected: hasFreshObservation(), conversationReady: Boolean(state),
+        return { connected: hasFreshObservation(), viewVisible: currentView()?.viewVisible ?? false, conversationReady: Boolean(state),
             turnIdentityReady: Boolean(state?.userEpoch && state.assistantTurnKey),
             generationActive: state?.generationActive === true, composerReady: state?.composerReady === true,
             composerEmpty: state?.composerEmpty === true, deliveryPending: Boolean(pending) };

@@ -2213,7 +2213,7 @@ async function resolveTurnBudgetIdentity() {
   }
   const native = nativeChatChannel.current()?.state;
   if (native?.generationActive && (native.userEpoch || native.assistantTurnKey)) candidates.push({browserContext: "native", target: native});
-  else if (nativeChatChannel.hasFreshObservation()) idleContexts.push("native");
+  else if (native || nativeChatChannel.status().viewVisible) idleContexts.push("native");
   const selected = candidates.length === 1 ? candidates[0] : null;
   if (!selected) {
     return idleContexts.length > 0

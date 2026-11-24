@@ -246,8 +246,17 @@ export function createAutoContinueController({ store, browserBridge, agentContro
         let state;
         try {
             const context = browserBridge.snapshot()?.contexts?.[target.browserContext];
-            if (target.browserContext === "native" && (context?.extension?.instanceId !== target.browserInstanceId))
-                throw new Error("Native view identity changed.");
+            if (target.browserContext === "native") {
+                if (context?.extension?.instanceId !== target.browserInstanceId)
+                    throw new Error("Native view identity changed.");
+                // A local navigation, dialog or minimize does not change the bound
+                // conversation. Wait on this exact live view, never a stale fallback.
+                if (context.nativeViewVisible === false) {
+                    quietSince.delete(continuationId);
+                    schedule(taskId, continuationId);
+                    return;
+                }
+            }
             state = await callContext(target.browserContext, "continuation.inspect", { tabId: target.tabId });
         }
         catch {

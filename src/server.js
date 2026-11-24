@@ -1444,7 +1444,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         const native = nativeChatChannel.current()?.state;
         if (native?.generationActive && (native.userEpoch || native.assistantTurnKey))
             candidates.push({ browserContext: "native", target: native });
-        else if (nativeChatChannel.hasFreshObservation())
+        else if (native || nativeChatChannel.status().viewVisible)
             idleContexts.push("native");
         const selected = candidates.length === 1 ? candidates[0] : null;
         if (!selected) {

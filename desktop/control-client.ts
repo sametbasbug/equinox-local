@@ -176,7 +176,7 @@ async function readPrivateControlDescriptor(): Promise<{endpoint: string; token:
 // Reuse the already-running, private current-user CLI bridge. Main alone reads
 // its credential-bearing descriptor. No token, endpoint, arbitrary path or
 // generic socket API is exposed to the sandboxed renderer.
-export async function exchangeNativeChat(exchange: {instanceId: string; state: unknown; reply?: unknown}): Promise<Record<string, any>> {
+export async function exchangeNativeChat(exchange: {instanceId: string; viewVisible: boolean; state: unknown; reply?: unknown}): Promise<Record<string, any>> {
   const result = await callAuthenticatedControlSocket({nativeExchange: exchange});
   if (result.status !== 200 || result.body.ok !== true) throw new Error("Native Chat exchange unavailable.");
   return result.body;

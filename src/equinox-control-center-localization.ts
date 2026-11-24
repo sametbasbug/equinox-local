@@ -12,6 +12,8 @@ export function localeForLanguage(language:unknown):"tr-TR"|"en-US" {
 const TR_UI = Object.freeze({
   "Chat": "Sohbet",
   "Native Chat": "Yerel Sohbet",
+  "Native Chat · Waiting for Chat view": "Yerel Sohbet · Sohbet görünümü bekleniyor",
+  "Return to Chat to complete the pending handoff. The saved checkpoint is safe.": "Bekleyen geçişi tamamlamak için Sohbet’e dönün. Kaydedilen checkpoint güvende.",
   "Local activity": "Yerel etkinlik",
   "All Local connections": "Tüm Local bağlantıları",
   "Safe command details only. Not linked to this conversation.": "Yalnızca güvenli komut ayrıntıları. Bu sohbete bağlı değil.",

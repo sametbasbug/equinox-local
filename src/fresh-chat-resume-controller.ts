@@ -24,6 +24,7 @@ type TaskRecord = {
   chatBinding?: {browserContext: string; conversationId: string} | null;
 };
 type BrowserState = {
+  nativeViewVisible?: boolean;
   extension?: {instanceId?: string; capabilityVersions?: {freshChatResume?: number}};
   host?: {instanceId?: string};
 };
@@ -214,7 +215,15 @@ export function createFreshChatResumeController({
     const source = freshResume.source;
     let state;
     try {
-      if (source.browserContext === "native" && browserBridge.snapshot()?.contexts?.native?.extension?.instanceId !== source.browserInstanceId) throw new Error("Native view identity changed.");
+      if (source.browserContext === "native") {
+        const native = browserBridge.snapshot()?.contexts?.native;
+        if (native?.extension?.instanceId !== source.browserInstanceId) throw new Error("Native view identity changed.");
+        if (native.nativeViewVisible === false) {
+          quietSince.delete(resumeId);
+          schedule(taskId, resumeId);
+          return;
+        }
+      }
       state = await callContext(source.browserContext, "continuation.inspect", { tabId: source.tabId });
     } catch {
       await cancelForReason(taskId, resumeId, "browser_source_unavailable");

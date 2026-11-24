@@ -2382,6 +2382,9 @@ function taskTargetLabel(continuation: UiRemoteData) {
   const target = continuation?.target;
   if (!target) return localizeUiText("No browser target");
   const context = target.browserContext === "native" ? "Native Chat" : target.browserContext === "agent" ? "Agent Browser" : "Your Browser";
+  if (target.browserContext === "native" && continuation.status === "armed" && state.status?.nativeChat?.connected && state.status.nativeChat.viewVisible === false) {
+    return localizeUiText("Native Chat · Waiting for Chat view");
+  }
   return `${localizeUiText(context)} · ${String(target.title || "ChatGPT").slice(0, 72)}`;
 }
 
@@ -2406,7 +2409,9 @@ function freshResumeRecoveryPresentation(freshResume: UiRemoteData) {
   if (!freshResume || freshResume.status === "confirmed") return null;
   if (freshResume.status === "prepared") return {
     label: "Waiting", tone: "warn", title: "Fresh-chat handoff is waiting",
-    message: "Equinox will move this task after the current assistant turn finishes. You can cancel the handoff before browser mutation starts.",
+    message: freshResume.source?.browserContext === "native" && state.status?.nativeChat?.connected && state.status.nativeChat.viewVisible === false
+      ? "Return to Chat to complete the pending handoff. The saved checkpoint is safe."
+      : "Equinox will move this task after the current assistant turn finishes. You can cancel the handoff before browser mutation starts.",
     blocking: false, cancel: true, abandon: false,
   };
   if (freshResume.status === "creating") return {

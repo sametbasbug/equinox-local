@@ -108,20 +108,23 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
   let timer: ReturnType<typeof setTimeout> | null = null;
   let generation: {key: string; at: number} | null = null;
   let reply: Receipt | undefined;
-  const aliveVisible = () => !stopped && !win.isDestroyed() && !contents.isDestroyed() && isVisible() && win.isVisible() && !win.isMinimized();
-  const usable = () => aliveVisible() && !contents.isLoadingMainFrame()
+  const alive = () => !stopped && !win.isDestroyed() && !contents.isDestroyed();
+  const aliveVisible = () => alive() && isVisible() && win.isVisible() && !win.isMinimized();
+  const inspectable = () => alive() && !contents.isLoadingMainFrame()
     && (() => { try {return new URL(contents.getURL()).origin === ORIGIN;} catch {return false;} })();
+  const usable = () => aliveVisible() && inspectable();
   async function probe(action: "inspect" | "focus" | "submit" | "fresh" = "inspect", expected?: Expected): Promise<Probe | null> {
-    if (!usable()) return null;
+    const available = action === "inspect" ? inspectable : usable;
+    if (!available()) return null;
     const before = contents.getURL();
     try {
       const result = await contents.executeJavaScriptInIsolatedWorld(1001, [{code: "(" + providerProbe.toString() + ")(" + JSON.stringify(action) + "," + JSON.stringify(expected ?? null) + ")"}]) as Probe;
-      if (!usable() || contents.getURL() !== before) return (action === "submit" || action === "fresh") && result?.performed ? result : null;
+      if (!available() || contents.getURL() !== before) return (action === "submit" || action === "fresh") && result?.performed ? result : null;
       return result;
     } catch { return null; }
   }
   async function observe() {
-    const route = usable() ? routeIdentity(contents.getURL()) : null;
+    const route = inspectable() ? routeIdentity(contents.getURL()) : null;
     const state = route ? await probe() : null;
     if (!route || !state || state.conversationId !== route.conversationId || state.canonicalUrl !== route.canonicalUrl) {generation = null; return null;}
     const key = state.userEpoch || state.assistantTurnKey;
@@ -171,7 +174,9 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
     const submitted = await probe("submit", expected);
     if (!submitted?.performed) return fail;
     const deadline = Math.min(request.expiresAt - 200, Date.now() + (fresh ? 15_000 : 5_000));
-    while (Date.now() < deadline && aliveVisible()) {
+    // After submission, confirm the receipt even if the local view is hidden.
+    // This is read-only; never repeat an ambiguous mutation.
+    while (Date.now() < deadline && alive()) {
       if (contents.isLoadingMainFrame()) { await delay(150); continue; }
       const state = await probe("inspect", expected);
       const route = routeIdentity(contents.getURL());
@@ -190,14 +195,14 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
     try {
       const state = await observe();
       if (stopped) return;
-      const result = await exchangeNativeChat({instanceId, state, ...(reply ? {reply} : {})});
+      const result = await exchangeNativeChat({instanceId, viewVisible: aliveVisible(), state, ...(reply ? {reply} : {})});
       reply = undefined;
       if (!stopped && result.request) {
         const request = result.request as Request;
         try {reply = await deliver(request);} catch {reply = {id: request.id, confirmed: false};}
       }
     } catch { /* Runtime unavailable or exchange lost; never repeat a claimed operation. */ }
-    finally { if (!stopped) timer = setTimeout(() => { void tick(); }, reply ? 0 : isVisible() ? 650 : 2_000); }
+    finally { if (!stopped) timer = setTimeout(() => { void tick(); }, reply ? 0 : aliveVisible() ? 650 : 1_000); }
   }
   void tick();
   return {dispose() {stopped = true; if (timer) clearTimeout(timer);}};
