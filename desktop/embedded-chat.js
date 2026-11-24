@@ -871,6 +871,12 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
         const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(identity) + "," + JSON.stringify(language) + ")";
         void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{ code }]).catch(() => { });
     };
+    // Provider SPA navigation does not fire did-finish-load. Reattach the
+    // identity observer after each in-page transition so brand greeting and
+    // message authors survive new-chat, history selection and deletion.
+    view.webContents.on("did-navigate-in-page", () => {
+        applyIdentity();
+    });
     view.webContents.on("did-finish-load", () => {
         if (view.webContents.isDestroyed())
             return;
