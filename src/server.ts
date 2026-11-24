@@ -144,7 +144,6 @@ import {
 } from "./telegram-integration.js";
 import { createTelegramTaskInboxController } from "./telegram-task-inbox-controller.js";
 import { createTelegramChatBridgeController } from "./telegram-chat-bridge-controller.js";
-import { createNativeChatController } from "./equinox-local-native-chat.js";
 import { createEquinoxLocalCliBridge } from "./equinox-local-cli-bridge.js";
 import { installEquinoxLocalCli, installEquinoxLocalSourceCli } from "./equinox-local-cli-installation.js";
 import {
@@ -2460,11 +2459,6 @@ const telegramChatBridgeController:RuntimeBoundary = createTelegramChatBridgeCon
   browserBridge: equinoxBrowserBridge,
   agentControl,
 });
-const nativeChatController = createNativeChatController({
-  browserBridge: equinoxBrowserBridge,
-  chatBridge: telegramChatBridgeController,
-  taskStore: taskCapsuleStore,
-});
 const telegramTaskInboxController:RuntimeBoundary = createTelegramTaskInboxController({
   store: taskCapsuleStore,
   autoContinueController,
@@ -3148,28 +3142,6 @@ const applyUpdateForControlCenter = async () => withMutationLocks(["local-update
 
 equinoxLocalControlApi = createEquinoxLocalControlApi({
   configManager: equinoxLocalConfigManager,
-  getChatThreads: () => nativeChatController.list(),
-  searchChatThreads: (value) => nativeChatController.search(value),
-  browseChatProject: (value) => nativeChatController.project(value),
-  createChatProject: (value) => nativeChatController.createProject(value),
-  editChatProjectInstructions: (value) => nativeChatController.editProjectInstructions(value),
-  addChatProjectTextSource: (value) => nativeChatController.addProjectTextSource(value),
-  controlChatConversation: (value) => nativeChatController.conversationAction(value),
-  editChatMessage: (value) => nativeChatController.editMessage(value),
-  retryChatAssistant: (value) => nativeChatController.retryAssistant(value),
-  stopChatGeneration: (value) => nativeChatController.stopGeneration(value),
-  branchChatAssistant: (value) => nativeChatController.branchNewChat(value),
-  branchWorkAssistant: (value) => nativeChatController.branchWorkChat(value),
-  branchVersionAssistant: (value) => nativeChatController.branchVersionChat(value),
-  inspectChatResponseVersions: (value) => nativeChatController.responseVersions(value),
-  getChatTools: () => nativeChatController.tools(),
-  selectChatThread: (value) => nativeChatController.select(value),
-  getChatState: () => nativeChatController.read(),
-  refreshChatHistory: () => nativeChatController.refreshHistory(),
-  sendChatText: (value) => nativeChatController.send(value),
-  startNewChat: (value) => nativeChatController.startNew(value),
-  getChatModel: () => nativeChatController.model({action:"read"}),
-  changeChatModel: (value) => nativeChatController.model(value),
   getStatus: async () => {
     const browser = equinoxBrowserBridge.snapshot();
     const browserSettingsByContext:Record<"agent"|"user",RuntimeBoundary> = { agent: null, user: null };

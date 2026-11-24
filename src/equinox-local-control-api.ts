@@ -21,7 +21,6 @@ type ControlApiOptions={
   getStatus?:Callback;getTurnBudget?:Callback|null;updateTurnBudget?:Callback|null;
   getDoctorStatus?:Callback;getDoctorRepairs?:Callback|null;applyDoctorRepair?:Callback|null;
   getActivity?:Callback;getUpdateStatus?:Callback;getOnboardingStatus?:Callback;
-  getChatThreads?:Callback|null;searchChatThreads?:Callback|null;browseChatProject?:Callback|null;createChatProject?:Callback|null;editChatProjectInstructions?:Callback|null;addChatProjectTextSource?:Callback|null;controlChatConversation?:Callback|null;editChatMessage?:Callback|null;retryChatAssistant?:Callback|null;stopChatGeneration?:Callback|null;branchChatAssistant?:Callback|null;branchWorkAssistant?:Callback|null;branchVersionAssistant?:Callback|null;inspectChatResponseVersions?:Callback|null;getChatTools?:Callback|null;selectChatThread?:Callback|null;getChatState?:Callback|null;refreshChatHistory?:Callback|null;sendChatText?:Callback|null;startNewChat?:Callback|null;getChatModel?:Callback|null;changeChatModel?:Callback|null;
   getTasks?:Callback|null;getTask?:Callback|null;updateTask?:Callback|null;
   completeTask?:Callback|null;cancelTask?:Callback|null;deleteTask?:Callback|null;
   cancelTaskContinuation?:Callback|null;cancelTaskFreshResume?:Callback|null;abandonTaskFreshResume?:Callback|null;
@@ -46,7 +45,7 @@ const REPAIR_RECIPE_ID_SET:ReadonlySet<string> = new Set(REPAIR_RECIPE_IDS);
 // IPC auto-refresh is read-only. It must not increment interactive request
 // counters, but it does not grant a broader action to the renderer.
 const CONTROL_CENTER_BACKGROUND_REFRESH_PATHS = new Set([
-  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/model",
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
   "/api/v1/files/import-settings", "/api/v1/integrations/telegram/pair",
@@ -307,28 +306,6 @@ export function createEquinoxLocalControlApi({
   getActivity = async () => [],
   getUpdateStatus = async () => ({}),
   getOnboardingStatus = async () => ({ available: false }),
-  getChatThreads = null,
-  searchChatThreads = null,
-  browseChatProject = null,
-  createChatProject = null,
-  editChatProjectInstructions = null,
-  addChatProjectTextSource = null,
-  controlChatConversation = null,
-  editChatMessage = null,
-  retryChatAssistant = null,
-  stopChatGeneration = null,
-  branchChatAssistant = null,
-  branchWorkAssistant = null,
-  branchVersionAssistant = null,
-  inspectChatResponseVersions = null,
-  getChatTools = null,
-  selectChatThread = null,
-  getChatState = null,
-  refreshChatHistory = null,
-  sendChatText = null,
-  startNewChat = null,
-  getChatModel = null,
-  changeChatModel = null,
   getTasks = null,
   getTask = null,
   updateTask = null,
@@ -490,300 +467,6 @@ export function createEquinoxLocalControlApi({
         return;
       }
 
-      if (method === "GET" && pathname === "/api/v1/chat/threads") {
-        if (typeof getChatThreads !== "function") throw badRequest("Native chat is unavailable.");
-        send(200, {ok:true,chat:await getChatThreads()});return;
-      }
-      if (method === "POST" && pathname === "/api/v1/chat/search") {
-        authorizeMutation();
-        if (typeof searchChatThreads !== "function") throw badRequest("ChatGPT conversation search is unavailable.");
-        const body=validateExactObject(await readBody(),["query"],"ChatGPT search");
-        if(typeof body.query!=="string"||body.query.trim().length<2
-          ||[...body.query].length>120||/[\x00-\x1f\x7f]/u.test(body.query))
-          throw badRequest("Search requires 2–120 printable characters.");
-        send(200,{ok:true,search:await searchChatThreads(body)});return;
-      }
-      if (method === "POST" && pathname === "/api/v1/chat/project") {
-        authorizeMutation();
-        if (typeof browseChatProject !== "function") throw badRequest("ChatGPT project browsing is unavailable.");
-        const body=validateExactObject(await readBody(),["projectId"],"ChatGPT project");
-        if(typeof body.projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId))
-          throw badRequest("Invalid ChatGPT project identity.");
-        send(200,{ok:true,project:await browseChatProject(body)});return;
-      }
-      if (method === "POST" && pathname === "/api/v1/chat/project_create") {
-        authorizeMutation();
-        if(typeof createChatProject!=="function")
-          throw badRequest("ChatGPT project creation is unavailable.");
-        const body=validateExactObject(await readBody(),["name","memoryMode","mutationId"],
-          "ChatGPT project creation");
-        if(typeof body.name!=="string"||body.name.trim()!==body.name
-          ||!body.name||body.name.length>80||/[\x00-\x1f\x7f]/u.test(body.name)
-          ||!["default","project"].includes(String(body.memoryMode))
-          ||typeof body.mutationId!=="string"||!/^npc-[a-f0-9-]{36}$/u.test(body.mutationId))
-          throw badRequest("Project creation needs an exact name, memory mode and receipt.");
-        const project=await createChatProject(body);
-        state.mutationCount+=1;send(200,{ok:true,project});return;
-      }
-      if(method==="POST"&&pathname==="/api/v1/chat/project_instructions"){
-        authorizeMutation();
-        if(typeof editChatProjectInstructions!=="function")
-          throw badRequest("ChatGPT project instructions editing is unavailable.");
-        const body=validateExactObject(await readBody(),
-          ["projectId","name","expectedInstructions","instructions","mutationId"],
-          "ChatGPT project instructions");
-        if(typeof body.projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId)
-          ||typeof body.name!=="string"||!body.name.trim()||body.name.length>120
-          ||typeof body.expectedInstructions!=="string"||body.expectedInstructions.length>4000
-          ||typeof body.instructions!=="string"||body.instructions.length>4000
-          ||body.instructions===body.expectedInstructions
-          ||typeof body.mutationId!=="string"||!/^npi-[a-f0-9-]{36}$/u.test(body.mutationId))
-          throw badRequest("The project instructions request must include exact old/new values and a receipt.");
-        send(200,{ok:true,project:await editChatProjectInstructions(body)});return;
-      }
-      if(method==="POST"&&pathname==="/api/v1/chat/project_text_source"){
-        authorizeMutation();
-        if(typeof addChatProjectTextSource!=="function")
-          throw badRequest("ChatGPT project text source creation is unavailable.");
-        const body=validateExactObject(await readBody(),
-          ["projectId","name","title","text","mutationId"],"ChatGPT project text source");
-        if(typeof body.projectId!=="string"||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.projectId)
-          ||typeof body.name!=="string"||!body.name.trim()||body.name.length>120
-          ||typeof body.title!=="string"||body.title!==body.title.trim()||!body.title
-          ||body.title.length>80||/[\r\n\x00-\x1f\x7f]/u.test(body.title)
-          ||typeof body.text!=="string"||!body.text.trim()||body.text.length>12000
-          ||/\x00/u.test(body.text)||typeof body.mutationId!=="string"
-          ||!/^nps-[a-f0-9-]{36}$/u.test(body.mutationId))
-          throw badRequest("Project text sources require exact project, title, text and one-use identity.");
-        send(200,{ok:true,project:await addChatProjectTextSource(body)});return;
-      }
-      if (method === "POST" && pathname === "/api/v1/chat/conversation_action") {
-        authorizeMutation();
-        if (typeof controlChatConversation !== "function")
-          throw badRequest("ChatGPT conversation actions are unavailable.");
-        const body=validateExactObject(await readBody(),
-          ["tabId","conversationId","action","expectedTitle","title","mutationId","targetProjectId","sharedUrl"],
-          "ChatGPT conversation action");
-        if(!Number.isSafeInteger(body.tabId)||body.tabId<1
-          ||typeof body.conversationId!=="string"
-          ||!/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
-          ||!["inspect","pin","rename","move","archive","delete","share","unshare"].includes(String(body.action))
-          ||(body.action==="move"&&(typeof body.targetProjectId!=="string"
-            ||!/^g-p-[a-zA-Z0-9-]{8,100}$/u.test(body.targetProjectId)))
-          ||(body.action!=="move"&&body.targetProjectId!==undefined)
-          ||(body.action==="unshare"&&(typeof body.sharedUrl!=="string"
-            ||!/^https:\/\/chatgpt\.com\/share\/[a-zA-Z0-9-]{10,120}$/u.test(body.sharedUrl)))
-          ||(body.action!=="unshare"&&body.sharedUrl!==undefined)
-          ||(body.action!=="inspect"&&(typeof body.expectedTitle!=="string"
-            ||!body.expectedTitle.trim()||body.expectedTitle.length>120))
-          ||(body.action==="rename"&&(typeof body.title!=="string"
-            ||!body.title.trim()||body.title.length>120||/[\x00-\x1f\x7f]/u.test(body.title)))
-          ||(body.action!=="rename"&&body.title!==undefined)
-          ||(body.action==="inspect"&&(body.expectedTitle!==undefined||body.mutationId!==undefined))
-          ||(body.action!=="inspect"&&(typeof body.mutationId!=="string"
-            ||!/^cma-[a-f0-9-]{36}$/u.test(body.mutationId))))
-          throw badRequest("Invalid ChatGPT conversation operation or identity.");
-        const result=await controlChatConversation(body);
-        if(body.action!=="inspect")state.mutationCount+=1;
-        send(200,{ok:true,conversationAction:result});return;
-      }
-      if(method==="POST"&&pathname==="/api/v1/chat/message_edit"){
-        authorizeMutation();
-        if(typeof editChatMessage!=="function")
-          throw badRequest("Native Chat message editing is unavailable.");
-        const body=validateExactObject(await readBody(),
-          ["messageId","oldText","newText","mutationId"],"Native Chat message edit");
-        if(typeof body.messageId!=="string"
-          ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:user$/iu.test(body.messageId)
-          ||typeof body.oldText!=="string"||!body.oldText.trim()
-          ||body.oldText!==body.oldText.trim()||body.oldText.length>3500
-          ||typeof body.newText!=="string"||!body.newText.trim()
-          ||body.newText!==body.newText.trim()||body.newText.length>3500
-          ||body.newText===body.oldText||/[\x00]/u.test(body.newText)
-          ||typeof body.mutationId!=="string"||!/^mde-[a-f0-9-]{36}$/u.test(body.mutationId))
-          throw badRequest("An exact original user message and a changed edit are required.");
-        const edit=await editChatMessage(body);
-        state.mutationCount+=1;send(200,{ok:true,edit});return;
-      }
-      if(method==="POST"&&pathname==="/api/v1/chat/retry_assistant"){
-        authorizeMutation();
-        if(typeof retryChatAssistant!=="function")
-          throw badRequest("Native Chat assistant Retry is unavailable.");
-        const body=validateExactObject(await readBody(),
-          ["messageId","expectedText","mutationId"],"Native Chat assistant Retry");
-        if(typeof body.messageId!=="string"
-          ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
-          ||typeof body.expectedText!=="string"||!body.expectedText.trim()
-          ||body.expectedText!==body.expectedText.trim()||body.expectedText.length>3500
-          ||typeof body.mutationId!=="string"||!/^mrt-[a-f0-9-]{36}$/u.test(body.mutationId))
-          throw badRequest("Retry requires an exact response and a one-use mutation identifier.");
-        const retry=await retryChatAssistant(body);
-        state.mutationCount+=1;send(200,{ok:true,retry});return;
-      }
-      if(method==="POST"&&pathname==="/api/v1/chat/stop_generation"){
-        authorizeMutation();
-        if(typeof stopChatGeneration!=="function")
-          throw badRequest("Native Chat Stop response is unavailable.");
-        const body=validateExactObject(await readBody(),
-          ["tabId","conversationId","mutationId"],"Native Chat Stop response");
-        if(!Number.isSafeInteger(body.tabId)||body.tabId<1
-          ||typeof body.conversationId!=="string"
-          ||!/^[a-zA-Z0-9-]{8,160}$/u.test(body.conversationId)
-          ||typeof body.mutationId!=="string"
-          ||!/^msp-[a-f0-9-]{36}$/u.test(body.mutationId))
-          throw badRequest("Stop requires one exact selected Chrome conversation and one-use identity.");
-        const stopped=await stopChatGeneration(body);
-        state.mutationCount+=1;send(200,{ok:true,stopped});return;
-      }
-      if(method==="POST"&&pathname==="/api/v1/chat/response_versions"){
-        authorizeMutation(); // Private user's Chrome UI modal is opened and closed for this read.
-        if(typeof inspectChatResponseVersions!=="function")
-          throw badRequest("Native Chat response versions are unavailable.");
-        const body=validateExactObject(await readBody(),
-          ["messageId","expectedText"],"Native Chat response versions");
-        if(typeof body.messageId!=="string"
-          ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
-          ||typeof body.expectedText!=="string"||!body.expectedText.trim()
-          ||body.expectedText!==body.expectedText.trim()||body.expectedText.length>3500)
-          throw badRequest("One exact assistant response is required for version history.");
-        const versions=await inspectChatResponseVersions(body);
-        send(200,{ok:true,versions});return;
-      }
-      if(method==="POST"&&(pathname==="/api/v1/chat/branch_new"
-        ||pathname==="/api/v1/chat/branch_work"||pathname==="/api/v1/chat/branch_version")){
-        authorizeMutation();
-        const workMode=pathname==="/api/v1/chat/branch_work";
-        const versionMode=pathname==="/api/v1/chat/branch_version";
-        const branchAction=versionMode?branchVersionAssistant:
-          workMode?branchWorkAssistant:branchChatAssistant;
-        if(typeof branchAction!=="function")
-          throw badRequest("Native Chat branching is unavailable.");
-        const body=validateExactObject(await readBody(),
-          ["messageId","expectedText","firstMessage","mutationId",
-            ...(versionMode?["versionMessageId","versionText"]:[])],"Native Chat branch");
-        if(typeof body.messageId!=="string"
-          ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}:assistant$/iu.test(body.messageId)
-          ||typeof body.expectedText!=="string"||!body.expectedText.trim()
-          ||body.expectedText!==body.expectedText.trim()||body.expectedText.length>3500
-          ||typeof body.firstMessage!=="string"||!body.firstMessage.trim()
-          ||body.firstMessage!==body.firstMessage.trim()||body.firstMessage.length>1500
-          ||/[\r\n\x00]/u.test(body.firstMessage)
-          ||(versionMode&&(
-            typeof body.versionMessageId!=="string"
-            ||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(body.versionMessageId)
-            ||body.versionMessageId===String(body.messageId).slice(0,-10)
-            ||typeof body.versionText!=="string"||!body.versionText.trim()
-            ||body.versionText!==body.versionText.trim()||body.versionText.length>3500))
-          ||typeof body.mutationId!=="string"
-          ||!(versionMode?/^mbv-[a-f0-9-]{36}$/u:
-            workMode?/^mwr-[a-f0-9-]{36}$/u:/^mbr-[a-f0-9-]{36}$/u).test(body.mutationId))
-          throw badRequest("A verified assistant reply and one-use Branch id are required.");
-        const branch=await branchAction(body);
-        state.mutationCount+=1;send(200,{ok:true,branch});return;
-      }
-      if (method === "GET" && pathname === "/api/v1/chat/state") {
-        if (typeof getChatState !== "function") throw badRequest("Native chat is unavailable.");
-        send(200, {ok:true,chat:await getChatState()});return;
-      }
-      if (method === "GET" && pathname === "/api/v1/chat/history") {
-        if (typeof refreshChatHistory !== "function") throw badRequest("Native Chat history reload is unavailable.");
-        send(200, {ok:true,chat:await refreshChatHistory()});return;
-      }
-      if (method === "GET" && pathname === "/api/v1/chat/tools") {
-        if(typeof getChatTools!=="function")throw badRequest("Native Chat tool discovery is unavailable.");
-        send(200,{ok:true,tools:await getChatTools()});return;
-      }
-      if (method === "GET" && pathname === "/api/v1/chat/model") {
-        if (typeof getChatModel !== "function") throw badRequest("Native Chat model selection is unavailable.");
-        send(200, {ok:true,model:await getChatModel()});return;
-      }
-      if (method === "POST" && pathname === "/api/v1/chat/model") {
-        authorizeMutation();
-        if (typeof changeChatModel !== "function") throw badRequest("Native Chat model selection is unavailable.");
-        const body=validateExactObject(await readBody(),["action","choice","direction"],"Chat model selection");
-        if (!["discover","choose","power","catalog"].includes(String(body.action))
-          ||(body.action==="choose"&&(typeof body.choice!=="string"||!body.choice.trim()||body.choice.length>80))
-          ||(body.action==="power"&&!["left","right"].includes(String(body.direction)))
-          ||(body.action!=="choose"&&body.choice!==undefined)
-          ||(body.action!=="power"&&body.direction!==undefined))
-          throw badRequest("Chat model selection requires an offered choice or an effort direction.");
-        const model=await changeChatModel(body);
-        state.mutationCount+=1;send(200,{ok:true,model});return;
-      }
-      if (method === "POST" && pathname === "/api/v1/chat/select") {
-        authorizeMutation();
-        if (typeof selectChatThread !== "function") throw badRequest("Native chat is unavailable.");
-        const body=validateExactObject(await readBody(),["tabId","conversationId"],"Native chat selection");
-        if (!Number.isSafeInteger(body.tabId)||body.tabId<1||typeof body.conversationId!=="string"||!/^[A-Za-z0-9-]{8,160}$/u.test(body.conversationId)) throw badRequest("Invalid conversation identity.");
-        const selected=await selectChatThread(body);
-        state.mutationCount+=1;send(200,{ok:true,chat:selected});return;
-      }
-      if (method === "POST" && pathname === "/api/v1/chat/new") {
-        authorizeMutation();
-        if (typeof startNewChat !== "function") throw badRequest("New Chat is unavailable.");
-        const body=validateExactObject(await readBody(),["creationId","text","model","effort","tool","file","files"],"Native New Chat");
-        if (typeof body.creationId!=="string"||!/^nch-[a-f0-9-]{36}$/u.test(body.creationId)||
-            typeof body.text!=="string"||(!body.text.trim()&&!body.file&&!body.files)||body.text.length>1500||/[\r\n\0]/u.test(body.text)
-            ||(body.model!==undefined&&(typeof body.model!=="string"||!body.model.trim()||body.model.length>80))
-            ||(body.effort!==undefined&&(!Number.isInteger(body.effort)||Number(body.effort)<0||Number(body.effort)>12))
-            ||(body.tool!==undefined&&(!body.tool||typeof body.tool!=="object"||Array.isArray(body.tool)
-              ||Object.keys(body.tool).some(k=>!["name","kind"].includes(k))
-              ||typeof body.tool.name!=="string"||body.tool.name.length>90
-              ||(body.tool.kind==="tool"
-                ?!/^(Web search|Web araması|Create image|Görsel oluştur|Deep research|Derin araştırma)$/iu.test(body.tool.name)
-                :body.tool.kind!=="app"||!/^(Gmail|Equinox Local)$/u.test(body.tool.name))))
-            ||(body.file!==undefined&&(!body.file||typeof body.file!=="object"||Array.isArray(body.file)
-              ||Object.keys(body.file).some(k=>!["path","name","size"].includes(k))
-              ||typeof body.file.path!=="string"||body.file.path.length>4096
-              ||typeof body.file.name!=="string"||!body.file.name.trim()||body.file.name.length>255
-              ||!Number.isSafeInteger(body.file.size)||body.file.size<1
-              ||body.file.size>100*1024*1024))
-            ||(body.files!==undefined&&(!Array.isArray(body.files)||body.files.length<2||body.files.length>4
-              ||body.files.some((file:any)=>!file||typeof file!=="object"||Array.isArray(file)
-                ||Object.keys(file).some(k=>!["path","name","size"].includes(k))
-                ||typeof file.path!=="string"||file.path.length>4096||!path.isAbsolute(file.path)
-                ||typeof file.name!=="string"||!file.name.trim()||file.name.length>255
-                ||path.basename(file.path)!==file.name
-                ||!Number.isSafeInteger(file.size)||file.size<1||file.size>100*1024*1024)
-              ||new Set(body.files.map((file:any)=>file.name)).size!==body.files.length
-              ||body.files.reduce((total:number,file:any)=>total+file.size,0)>100*1024*1024))
-            ||(body.file!==undefined&&body.files!==undefined)
-            ||(body.tool!==undefined&&(body.file!==undefined||body.files!==undefined)))
-          throw badRequest("New Chat requires a prompt or up to four explicitly selected files without text.");
-        const creation=await startNewChat(body);
-        state.mutationCount+=1;send(200,{ok:true,creation});return;
-      }
-      if (method === "POST" && pathname === "/api/v1/chat/send") {
-        authorizeMutation();
-        if (typeof sendChatText !== "function") throw badRequest("Native chat is unavailable.");
-        const body=validateExactObject(await readBody(),["deliveryId","text","tool","file","files"],"Native chat delivery");
-        if (typeof body.deliveryId!=="string"||!/^tgb-[a-f0-9-]{36}$/u.test(body.deliveryId)||typeof body.text!=="string"||(!body.text.trim()&&!body.file&&!body.files)||body.text.length>4000
-          ||(body.tool!==undefined&&(!body.tool||typeof body.tool!=="object"||Array.isArray(body.tool)
-            ||Object.keys(body.tool).some(k=>!["name","kind"].includes(k))
-            ||typeof body.tool.name!=="string"||!body.tool.name.trim()||body.tool.name.length>90
-            ||(body.tool.kind==="tool"
-              ?!/^(Web search|Web araması|Create image|Görsel oluştur|Deep research|Derin araştırma)$/iu.test(body.tool.name)
-              :body.tool.kind!=="app"||!/^(Gmail|Equinox Local)$/u.test(body.tool.name))))
-          ||(body.file!==undefined&&(!body.file||typeof body.file!=="object"||Array.isArray(body.file)
-            ||Object.keys(body.file).some(k=>!["path","name","size"].includes(k))
-            ||typeof body.file.path!=="string"||body.file.path.length>4096
-            ||typeof body.file.name!=="string"||!body.file.name.trim()||body.file.name.length>255
-            ||!Number.isSafeInteger(body.file.size)||body.file.size<1
-            ||body.file.size>100*1024*1024))
-          ||(body.files!==undefined&&(!Array.isArray(body.files)||body.files.length<2||body.files.length>4
-            ||body.files.some((file:any)=>!file||typeof file!=="object"||Array.isArray(file)
-              ||Object.keys(file).some(k=>!["path","name","size"].includes(k))
-              ||typeof file.path!=="string"||file.path.length>4096
-              ||typeof file.name!=="string"||!file.name.trim()||file.name.length>255
-              ||!Number.isSafeInteger(file.size)||file.size<1||file.size>100*1024*1024)
-            ||new Set(body.files.map((file:any)=>file.name)).size!==body.files.length
-            ||body.files.reduce((sum:number,file:any)=>sum+file.size,0)>100*1024*1024))
-          ||(body.file!==undefined&&body.files!==undefined)
-          ||(body.tool!==undefined&&(body.file!==undefined||body.files!==undefined)))
-          throw badRequest("Invalid Chat message, account tool or delivery id.");
-        const delivery=await sendChatText(body);
-        state.mutationCount+=1;send(200,{ok:true,delivery});return;
-      }
       if (method === "GET" && pathname === "/api/v1/tasks") {
         if (typeof getTasks !== "function") { const error:ControlError = new Error("Task controls are unavailable on this installation."); error.statusCode = 503; throw error; }
         send(200, { ok: true, tasks: await getTasks() });
@@ -1280,7 +963,7 @@ export function createEquinoxLocalControlApi({
   // A second permission boundary inside the private IPC server, independent
   // of the renderer and Electron main allowlist. Keep lists synchronized.
 const UI_READ_PATHS = new Set([
-  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks", "/api/v1/chat/threads", "/api/v1/chat/state", "/api/v1/chat/history", "/api/v1/chat/model", "/api/v1/chat/tools",
+  "/api/v1/health", "/api/v1/status", "/api/v1/activity", "/api/v1/tasks",
   "/api/v1/onboarding", "/api/v1/doctor", "/api/v1/doctor/repairs",
   "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
@@ -1289,7 +972,6 @@ const UI_READ_PATHS = new Set([
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
-    "/api/v1/chat/select", "/api/v1/chat/send", "/api/v1/chat/new", "/api/v1/chat/model", "/api/v1/chat/search", "/api/v1/chat/project", "/api/v1/chat/project_create", "/api/v1/chat/project_instructions", "/api/v1/chat/project_text_source", "/api/v1/chat/conversation_action", "/api/v1/chat/message_edit", "/api/v1/chat/retry_assistant", "/api/v1/chat/stop_generation", "/api/v1/chat/response_versions", "/api/v1/chat/branch_new", "/api/v1/chat/branch_work", "/api/v1/chat/branch_version",
     "/api/v1/agent/pause", "/api/v1/agent/resume", "/api/v1/runtime/restart",
     "/api/v1/browser/agent/open", "/api/v1/doctor/repair", "/api/v1/update/check",
     "/api/v1/update/apply", "/api/v1/uninstall", "/api/v1/folder-picker",
