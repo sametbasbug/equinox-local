@@ -1,5 +1,8 @@
 # Native Chat workspace
 
+> **Historical plan and evidence.** Superseded by the [approved Native Chat replacement](native-chat-codex-replacement.md). Do not follow the obsolete implementation or acceptance sequence below.
+
+
 **Status (2026-11-22):** First-party Native Chat is in Main source under the protected native-chat-qa-gate; the signed public `main-snapshot` remains `0fc8bf8`. Installed Mac Source Factory was verified strictly signed and HEALTHY at `6df9e8b` before the current virtual-history source update. Personal Chrome advertises Browser 1.2.8 but only **Chat Bridge 12**. Browser 13 source-only conversation history, model/tool controls and Stop response have not passed installed provider QA; the CWS owner-review ZIP remains in Downloads for maintainer-managed deferred publishing.
 
 **Replacement parity work (2026-11-22):** The maintainer rejected single-tab history and simplified controls as incomplete despite technical Mac acceptance. Unreleased Browser 1.2.8 / Chat Bridge v13 begins a first-party conversation sidebar and account-verified model/effort controls, with no claim of complete UX approval. See [Native Chat parity](native-chat-web-parity.md) for the feature inventory and release gates.

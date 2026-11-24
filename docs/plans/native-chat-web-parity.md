@@ -1,5 +1,8 @@
 # Native Chat feature parity with ChatGPT Web
 
+> **Historical plan and evidence.** Superseded by the [approved Native Chat replacement](native-chat-codex-replacement.md). Do not follow the obsolete implementation or acceptance sequence below.
+
+
 **Status:** active development, NOT published or accepted. This inventory prevents confusing code compilation with finished product acceptance.
 
 **Current UX direction:** One compact composer hosts the existing model/effort, tool, attachment and send controls without duplicating form panels. Only the textarea and explicit Send belong to the submit form, so Enter while choosing options cannot send a draft. Never display unverified feature availability as a promise of parity: Browser 13 installation and physical QA remain separate gates. Conversation search supports `Cmd/Ctrl+K` and Escape. Rich interactive ChatGPT components and the full account history are still outside verified Native Chat parity.
