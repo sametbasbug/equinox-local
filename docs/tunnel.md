@@ -58,13 +58,13 @@ On a genuinely fresh managed install, this is only the tunnel step of the dedica
 
 Open **[ChatGPT → Plugins](https://chatgpt.com/plugins)** and choose **Add custom MCP server** (**Özel MCP sunucusu ekle**). No developer mode or account setting needs to be enabled first.
 
-1. Select **Tunnel** (**Tünel**). The Tunnel ID is populated automatically in this flow; **do not paste it a second time**.
+1. Select **Tunnel** (**Tünel**), then select the matching tunnel offered by ChatGPT if the field is not already populated. Verify that its ID matches the active Equinox Local transport before saving.
 2. Choose **Authentication → No authentication** (**Kimlik doğrulama → Kimlik doğrulama yok**) and save your custom plugin.
 3. Scan or refresh its MCP tools once Equinox Local has connected.
 
 The restricted Runtime API key stays **only in Equinox Local Setup**, not in the ChatGPT plugin form.
 
-The Local runtime and the ChatGPT app must point to the same tunnel.
+The Local runtime and the ChatGPT app must point to the same tunnel. The account signed into the native Chat view can be different from the account in Chrome; an existing plugin name or a healthy local runtime does not establish that this account has access to the same tunnel.
 
 ChatGPT provides custom MCP plugin creation to both Free and paid users. Plugin publishing and individual tool permissions are separate from the local tunnel credentials and may change with the ChatGPT product; adding a private plugin requires no paid upgrade or developer-mode toggle.
 
@@ -97,6 +97,10 @@ Re-enter the Runtime API key in **Connect to ChatGPT**. A malformed or unreadabl
 ### Local saved the tunnel but ChatGPT still cannot scan tools
 
 Confirm that Equinox Local has restarted into tunnel mode, then refresh the ChatGPT app/connector tool scan. If the app was created before the tunnel was ready, refresh the app rather than changing Local's filesystem configuration manually.
+
+### Native Chat reports an MCP connection error while Chrome works
+
+Compare the active Local tunnel with the tunnel offered in the native Chat account under **Plugins → Add custom MCP server → Tunnel**. Do not create a second Local runtime or switch the working transport simply to match an unrelated account. If the native account cannot select the active tunnel, sign into an already authorized account in native Chat, or have the tunnel owner grant the intended account/workspace access and connect the correct plugin through the normal provider flow. An HTTP 429/SSE probe error alone does not identify the cause; a healthy Local runtime and working Chrome connection do not prove that a separate account can reach it.
 
 ## Upstream references
 
