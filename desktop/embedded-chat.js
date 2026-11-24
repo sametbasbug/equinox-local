@@ -79,6 +79,7 @@ html.chatgpt-theme {
   --eq-secondary: #66646d;
   --eq-muted: #82808a;
   --eq-accent: #6954b8;
+  --eq-composer-ink: #ffffff;
   --eq-active: #eae6f3;
   --eq-bubble: #eeebf5;
   --eq-bubble-text: #30283e;
@@ -99,6 +100,8 @@ html.chatgpt-theme {
   --color-background-user-message: var(--eq-bubble) !important;
   --color-text-user-message: var(--eq-bubble-text) !important;
   --color-background-composer-surface: var(--eq-paper) !important;
+  --color-background-composer-primary: var(--eq-accent) !important;
+  --color-text-composer-primary: var(--eq-composer-ink) !important;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -111,6 +114,7 @@ html.chatgpt-theme {
     --eq-secondary: #b6b3bf;
     --eq-muted: #96939f;
     --eq-accent: #b9a7f3;
+    --eq-composer-ink: #24202d;
     --eq-active: #383143;
     --eq-bubble: #363040;
     --eq-bubble-text: #f0eaf9;
@@ -144,6 +148,85 @@ html.chatgpt-theme #app-shell-sidebar :is(button,a)[data-selected] {
   background-color: var(--eq-active) !important;
 }
 html.chatgpt-theme #app-shell-sidebar :is(button,a) { border-radius: 7px; }
+/* Accounts with the provider's feature rail get the same single Equinox rail
+   beside a conversation sidebar. Reflow the genuine feature buttons and the
+   account controls inside the expanded sidebar. Collapsed/mobile layouts and
+   any unrecognized provider structure keep the original provider layout. */
+@media (min-width: 769px) {
+  html.chatgpt-theme [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) {
+    --app-shell-left-panel-width: 274px !important;
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar > div:has(> nav[data-app-navigation-rail]):has(> .sidebar-navigation) {
+    position: relative;
+    flex-direction: column !important;
+    padding-bottom: 46px;
+    min-height: 0;
+    background: var(--eq-sidebar);
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar > div > nav[data-app-navigation-rail] {
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    min-width: 0;
+    position: static !important;
+    padding: 7px 9px !important;
+    border-bottom: 1px solid var(--eq-border);
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] {
+    flex: 0 0 auto !important;
+    flex-direction: row !important;
+    flex-wrap: wrap;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 3px !important;
+    margin: 0 !important;
+    width: 100%;
+    overflow: visible !important;
+    mask-image: none !important;
+    padding: 0 !important;
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div:not([data-appearance]) { width: auto !important; }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > [data-appearance="plain"] {
+    flex-direction: row !important;
+    flex-wrap: wrap;
+    gap: 3px !important;
+    width: auto !important;
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] button {
+    width: 32px !important;
+    height: 32px !important;
+    flex: 0 0 32px !important;
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div.border-t {
+    width: 1px !important;
+    height: 18px;
+    margin: 0 1px !important;
+    border-top: 0;
+    border-inline-start: 1px solid var(--eq-border);
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child {
+    position: absolute !important;
+    inset-inline: 0;
+    bottom: 0;
+    width: auto !important;
+    padding: 6px 10px;
+    height: 46px;
+    border-top: 1px solid var(--eq-border);
+    background: var(--eq-sidebar);
+    z-index: 2;
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div {
+    flex-direction: row !important;
+    justify-content: space-between;
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div > div { width: auto !important; }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar > div > .sidebar-navigation {
+    border-radius: 0 !important;
+    background: var(--eq-sidebar) !important;
+  }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) aside[data-app-shell-left-panel-appearance] > div:first-child { width: 274px !important; min-width: 274px !important; max-width: 100% !important; }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) #app-shell-sidebar { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  html.chatgpt-theme [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) aside[data-app-shell-left-panel-appearance] > div:first-child > div:has(> #app-shell-sidebar) { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+}
 /* Real conversation content, not a projected second message tree. */
 html.chatgpt-theme .bg-user-message.text-user-message {
   background: var(--eq-bubble) !important;

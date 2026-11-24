@@ -702,22 +702,22 @@ body.chat-workspace-active { overflow: hidden; }
 
 /* Native, local-only activity alongside the real provider view. */
 #chat-activity-toggle.is-active { background: var(--rail-hover); color: var(--text); }
-.chat-local-activity { flex: 0 0 min(290px, 32%); min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line); }
+.chat-local-activity { flex: 0 0 min(306px, 32%); min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--line); }
 .chat-activity-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 15px 14px 10px; border-bottom: 1px solid var(--line); }
-.chat-activity-header h2 { font-size: 13px; line-height: 1.3; margin: 0 0 4px; font-weight: 650; }
-.chat-activity-header p, .chat-activity-note, .chat-activity-empty { color: var(--muted); font-size: 11px; line-height: 1.5; margin: 0; }
+.chat-activity-header h2 { font-size: 14px; line-height: 1.3; margin: 0 0 4px; font-weight: 650; }
+.chat-activity-header p, .chat-activity-note, .chat-activity-empty { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 0; }
 .chat-activity-note { padding: 10px 14px; }
 .chat-activity-list { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 12px; }
 .chat-activity-empty { padding: 12px 4px; }
 .chat-tool-row { padding: 11px 4px; border-top: 1px solid var(--line); }
-.chat-tool-heading { display: flex; align-items: center; gap: 7px; font-size: 12px; overflow-wrap: anywhere; }
+.chat-tool-heading { display: flex; align-items: center; gap: 7px; font-size: 13px; overflow-wrap: anywhere; }
 .chat-tool-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--muted); }
 .chat-tool-dot.is-running { background: #b88a38; }
 .chat-tool-dot.is-completed { background: #428b68; }
 .chat-tool-dot.is-failed { background: #c65c5c; }
 .chat-tool-dot.is-background { background: #7c6ca9; }
-.chat-tool-command { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; background: var(--rail-hover); border-radius: 6px; padding: 7px 8px; margin-top: 7px; }
-.chat-tool-meta { color: var(--muted); font-size: 10px; line-height: 1.5; margin-top: 6px; }
+.chat-tool-command { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; background: var(--rail-hover); border-radius: 6px; padding: 7px 8px; margin-top: 7px; }
+.chat-tool-meta { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 6px; }
 @media (max-width: 900px) {
   .chat-workspace-active #section-chat { flex-direction: column; }
   .chat-local-activity { flex-basis: min(230px, 37%); border-left: 0; border-top: 1px solid var(--line); }

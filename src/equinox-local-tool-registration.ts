@@ -69,8 +69,16 @@ function safeCommandPreview(name: string, input: unknown): string | null {
   const command = (input as {command?: unknown}).command;
   if (typeof command !== "string") return null;
   const trimmed = command.trim();
-  return /^(?:pwd|git status(?: --short| --branch| --short --branch| -sb)?|git diff(?: --stat| --check| --cached --stat)?|git log -1 --oneline|git rev-parse HEAD|npm run (?:build|typecheck|check|lint|(?:build|verify):typed-(?:runtime|desktop|browser|tooling)))$/u.test(trimmed)
-    ? trimmed : null;
+  const safe = /^(?:pwd|git status(?: --short| --branch| --short --branch| -sb)?|git diff(?: --stat| --check| --cached --stat)?|git log -1 --oneline|git rev-parse HEAD|npm run (?:build|typecheck|check|lint|(?:build|verify):typed-(?:runtime|desktop|browser|tooling)))$/u;
+  if (trimmed.length <= 500) {
+    if (safe.test(trimmed)) return trimmed;
+    const segments = trimmed.split(/\s*(?:&&|\|\||;|\r?\n)\s*/u);
+    if (segments.length > 1 && segments.length <= 12 && segments.every(segment => safe.test(segment))) return trimmed;
+  }
+  // These are fixed public executable names, not caller-controlled arguments.
+  // Do not expose paths, scripts, variable values, command substitutions or output.
+  const family = /^(git|npm|npx|node|python3|python|rg|sed|awk|cat|find|ls|curl|pwsh|powershell|bash|zsh|make|cmake|cargo|go|docker|gh)(?:[ \t]|$)/u.exec(trimmed)?.[1];
+  return family ? family + " …" : null;
 }
 
 type GuardedOptions = {
