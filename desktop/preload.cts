@@ -1,5 +1,8 @@
 import electron = require("electron");
 const { contextBridge, ipcRenderer } = electron;
+const COMPANION_IDS = ["nyx", "hemera", "asteria", "selene"] as const;
+const isCompanionId = (value: unknown): value is typeof COMPANION_IDS[number] =>
+  COMPANION_IDS.some(id => id === value);
 
 // No Electron objects, event handles, generic IPC or arbitrary paths cross this boundary.
 if (process.isMainFrame && location.protocol === "equinox:" && location.hostname === "control" && location.pathname === "/") {
@@ -16,17 +19,17 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
     removeChatAvatar: () => ipcRenderer.invoke("equinox-shell:chat-avatar-remove"),
     getCompanionId: () => {
       const id: unknown = ipcRenderer.sendSync("equinox-shell:companion-snapshot");
-      return id === "nyx" || id === "hemera" || id === "asteria" ? id : "nyx";
+      return isCompanionId(id) ? id : "nyx";
     },
     setChatAccent: (value: unknown) => ipcRenderer.invoke("equinox-shell:chat-accent", value),
     setCompanionId: (id: unknown) => {
-      if (id !== "nyx" && id !== "hemera" && id !== "asteria") return Promise.resolve(false);
+      if (!isCompanionId(id)) return Promise.resolve(false);
       return ipcRenderer.invoke("equinox-shell:companion-select", id);
     },
     onCompanionChanged: (callback: unknown) => {
       if (typeof callback !== "function") return () => {};
       const listener = (_event: unknown, id: unknown) => {
-        if (id === "nyx" || id === "hemera" || id === "asteria") callback(id);
+        if (isCompanionId(id)) callback(id);
       };
       ipcRenderer.on("equinox-shell:companion-changed", listener);
       return () => ipcRenderer.removeListener("equinox-shell:companion-changed", listener);
