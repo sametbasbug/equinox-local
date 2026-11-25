@@ -72,13 +72,7 @@ function permittedExternalLink(value) {
 const STYLE = String.raw `
 html.chatgpt-theme {
   --eq-canvas: #f7f8fa;
-  --eq-sidebar: #171b24;
-  --eq-subtle: #eff1f5;
-  --eq-rail-text: #e9ebf3;
-  --eq-rail-muted: #a2acbf;
-  --eq-rail-border: #303746;
-  --eq-rail-hover: #252b37;
-  --eq-rail-selected: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 18%, #232631);
+  --eq-sidebar: #eff1f5;
   --eq-paper: #ffffff;
   --eq-editor: #ffffff;
   --eq-border: #dfe3ea;
@@ -94,8 +88,8 @@ html.chatgpt-theme {
   --eq-composer-shadow: 0 1px 3px #18213b06, 0 10px 26px #18213b0a;
   --color-surface: var(--eq-canvas) !important;
   --color-surface-secondary: var(--eq-canvas) !important;
-  --color-surface-tertiary: var(--eq-subtle) !important;
-  --color-surface-canvas: var(--eq-subtle) !important;
+  --color-surface-tertiary: var(--eq-sidebar) !important;
+  --color-surface-canvas: var(--eq-sidebar) !important;
   --color-surface-elevated: var(--eq-paper) !important;
   --color-surface-elevated-secondary: var(--eq-paper) !important;
   --color-surface-card: var(--eq-paper) !important;
@@ -116,7 +110,6 @@ html.chatgpt-theme {
   html.chatgpt-theme {
     --eq-canvas: #11141b;
     --eq-sidebar: #171b24;
-    --eq-subtle: #262b37;
     --eq-paper: #1b202a;
     --eq-editor: #1c212c;
     --eq-border: #343a49;
@@ -139,44 +132,10 @@ html.chatgpt-theme :focus-visible { outline-color: var(--eq-accent); }
    The provider's own collapse and mobile layout still decide visibility. */
 html.chatgpt-theme aside[data-app-shell-left-panel-appearance] {
   background: var(--eq-sidebar) !important;
-  border-inline-end: 1px solid var(--eq-rail-border) !important;
+  border-inline-end: 1px solid var(--eq-border) !important;
 }
 html.chatgpt-theme #app-shell-sidebar,
-html.chatgpt-theme #app-shell-sidebar > .bg-surface {
-  background: var(--eq-sidebar) !important;
-  color-scheme: dark;
-  color: var(--eq-rail-text);
-  --color-surface: var(--eq-sidebar);
-  --color-surface-secondary: var(--eq-sidebar);
-  --color-surface-tertiary: var(--eq-sidebar);
-  --color-surface-canvas: var(--eq-sidebar);
-  --color-surface-elevated: var(--eq-rail-hover);
-  --color-surface-elevated-secondary: var(--eq-rail-hover);
-  --color-text: var(--eq-rail-text);
-  --color-text-emphasis: var(--eq-rail-text);
-  --color-text-secondary: var(--eq-rail-muted);
-  --color-text-tertiary: var(--eq-rail-muted);
-  --color-border: var(--eq-rail-border);
-}
-html.chatgpt-theme #app-shell-sidebar :is(a,button) {
-  color: var(--eq-rail-text) !important;
-  transition: background-color 125ms ease;
-}
-html.chatgpt-theme #app-shell-sidebar :is(a,button):hover {
-  color: #ffffff !important;
-  background: var(--eq-rail-hover) !important;
-}
-html.chatgpt-theme #app-shell-sidebar [role="heading"] {
-  color: var(--eq-rail-muted) !important;
-}
-html.chatgpt-theme #app-shell-sidebar :is(a,button)[aria-current="page"] {
-  color: #ffffff !important;
-  background: var(--eq-rail-selected) !important;
-}
-html.chatgpt-theme #app-shell-sidebar :is(button,a):focus-visible {
-  outline: 2px solid var(--eq-user-accent, #8B6CF0);
-  outline-offset: -2px;
-}
+html.chatgpt-theme #app-shell-sidebar > .bg-surface { background: var(--eq-sidebar) !important; }
 @media (min-width: 769px) {
   html.chatgpt-theme [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] {
     --app-shell-left-panel-width: 284px !important;
@@ -189,8 +148,7 @@ html.chatgpt-theme #app-shell-sidebar :is(button,a):focus-visible {
 }
 html.chatgpt-theme #app-shell-sidebar :is(button,a)[aria-current="page"],
 html.chatgpt-theme #app-shell-sidebar :is(button,a)[data-selected] {
-  background-color: var(--eq-rail-selected) !important;
-  color: #ffffff !important;
+  background-color: var(--eq-active) !important;
 }
 html.chatgpt-theme #app-shell-sidebar :is(button,a) { border-radius: 7px; }
 /* Accounts with the provider's feature rail get the same single Equinox rail
@@ -276,9 +234,9 @@ html.chatgpt-theme #app-shell-sidebar :is(button,a) { border-radius: 7px; }
    The actual conversation tree, menus, streaming and message actions stay intact.
    The native application header above this view owns the Equinox branding. */
 html.chatgpt-theme main[data-app-shell-main-surface] {
-  --thread-content-max-width: 74rem !important;
-  --thread-content-compact-max-width: 66rem !important;
-  --thread-content-expanded-max-width: 74rem !important;
+  --thread-content-max-width: 62rem !important;
+  --thread-content-compact-max-width: 54rem !important;
+  --thread-content-expanded-max-width: 62rem !important;
   background: var(--eq-canvas) !important;
 }
 /* Keep the real provider mode and conversation actions, but use a
@@ -316,11 +274,8 @@ html.chatgpt-theme #app-shell-sidebar .sidebar-navigation nav {
   padding-inline: 7px;
 }
 html.chatgpt-theme #app-shell-sidebar .sidebar-navigation {
-  --height-token-row: 34px;
-  --height-token-nav-row: 34px;
-  --color-text: var(--eq-rail-text);
-  --color-text-secondary: var(--eq-rail-muted);
-  --color-text-tertiary: var(--eq-rail-muted);
+  --height-token-row: 32px;
+  --height-token-nav-row: 32px;
 }
 html.chatgpt-theme #app-shell-sidebar .sidebar-navigation a[href="/"] > span {
   position: relative;
@@ -347,11 +302,9 @@ html.chatgpt-theme #app-shell-sidebar .sidebar-navigation a[href*="/c/"] {
   line-height: 1.4;
 }
 html.chatgpt-theme #app-shell-sidebar .sidebar-navigation [role="heading"] {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  font-weight: 680;
-  color: var(--eq-rail-muted);
+  font-size: 11px;
+  letter-spacing: .015em;
+  font-weight: 600;
 }
 html.chatgpt-theme :is([data-markdown-text-style="assistant-message"],[data-virtualized-turn-content] .markdown) {
   font-size: 15px;
@@ -512,15 +465,12 @@ html.chatgpt-theme:lang(tr) form[data-chatgpt-composer] [data-composer-markdown]
    non-interactive generic greeting is replaced visually. */
 html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"])) {
   position: relative;
-  flex-direction: row !important;
+  flex-direction: column !important;
   align-items: center !important;
-  justify-content: flex-start !important;
-  gap: 18px;
-  width: min(100%, 74rem);
-  min-width: 0;
-  margin-inline: auto;
-  padding: 24px 8px !important;
-  text-align: start;
+  justify-content: center !important;
+  gap: 10px;
+  padding: 24px 16px !important;
+  text-align: center;
 }
 html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"])) > div {
   position: absolute !important;
@@ -533,10 +483,9 @@ html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,
   content: attr(data-equinox-initial);
   display: grid;
   place-items: center;
-  flex: 0 0 60px;
-  width: 60px;
-  height: 60px;
-  margin-bottom: 0;
+  width: 62px;
+  height: 62px;
+  margin-bottom: 7px;
   border-radius: 50%;
   color: var(--eq-accent);
   background: var(--eq-active) var(--eq-agent-avatar, none) center / cover no-repeat;
@@ -555,17 +504,6 @@ html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,
   font-weight: 625;
 }
 html.chatgpt-theme [class*="Greeting-"]:not([data-equinox-greeting]):not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"]))::after { content: "Equinox workspace"; }
-@media (max-width: 700px) {
-  html.chatgpt-theme [class*="Greeting-"]:not(:has(button,a,input,textarea,select,[role="button"],[contenteditable="true"])) {
-    gap: 12px;
-    padding-inline: 12px !important;
-  }
-  html.chatgpt-theme [class*="Greeting-"]::before {
-    flex-basis: 44px;
-    width: 44px;
-    height: 44px;
-  }
-}
 /* Equinox Chat V2: two distinct people, not two copies of a Web message.
    Provider-owned message nodes, streaming, menus and conversation controls
    remain untouched. Only the existing annotated message wrapper is styled. */
@@ -712,11 +650,11 @@ html.chatgpt-theme #app-shell-sidebar .sidebar-navigation {
   letter-spacing: -.007em;
 }
 html.chatgpt-theme #app-shell-sidebar :is(a,button):hover {
-  background-color: var(--eq-rail-hover) !important;
+  background-color: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 6%, var(--eq-sidebar));
 }
 html.chatgpt-theme #app-shell-sidebar :is(a,button)[aria-current="page"] {
-  box-shadow: inset 2px 0 0 var(--eq-user-accent, #8B6CF0);
-  background: var(--eq-rail-selected) !important;
+  box-shadow: inset 2px 0 0 var(--eq-accent);
+  background: var(--eq-active) !important;
 }
 html.chatgpt-theme #app-shell-sidebar .sidebar-navigation [role="heading"] {
   margin-block: 17px 5px;
