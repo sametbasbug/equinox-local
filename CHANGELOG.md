@@ -4,6 +4,7 @@
 
 - Update Electron from 46.0.0-alpha.10 to 46.0.0-alpha.13 and Peekaboo from 4.9.9 to 4.9.10 with the official universal archive digest.
 - Allow semver-compatible updates in direct npm manifest ranges while retaining lockfile integrity; Node 26.13.1, Dugite 2.56.1, Tunnel Client 0.0.21, WinApp CLI 0.8.0 and node-pty 1.2.0-beta.18 already match current upstream releases.
+- Remove the obsolete ASAR glob/minimatch overrides after upgrading to their latest supported releases (14.0.6/11.0.9); approve node-pty install scripts by package name rather than one beta version.
 - Bind the actual resolved Electron version into packaged shell metadata rather than restricting the application to one hardcoded alpha. Read selected and persisted chat avatars through a single validated file descriptor to remove CodeQL-reported file-system race windows.
 - Source-only candidate; installed-platform and public-release acceptance remain separate.
 
