@@ -742,12 +742,12 @@ body:not(.chat-workspace-active) .main-panel { grid-column: 1; }
 
 /* Equinox V2 chrome: quiet premium frame, real navigation and no fake statuses. */
 :root {
-  --workspace-chrome: #f8f9fc;
-  --workspace-hover: #eef0f6;
+  --workspace-chrome: #f7f8fa;
+  --workspace-hover: #eceef3;
 }
 :root[data-theme="dark"] {
-  --workspace-chrome: #151923;
-  --workspace-hover: #252a36;
+  --workspace-chrome: #171b24;
+  --workspace-hover: #252b37;
 }
 .workspace-navigation {
   height: 56px; min-height: 56px; gap: 18px;
@@ -756,8 +756,8 @@ body:not(.chat-workspace-active) .main-panel { grid-column: 1; }
 }
 .chat-workspace-active .app-shell { grid-template-rows: 56px minmax(0,1fr); }
 .workspace-navigation .brand-logo { width: 30px; height: 30px; flex-basis: 30px; border-radius: 10px; }
-.workspace-navigation .brand-block h1 { font-size: 13px; letter-spacing: -.024em; font-weight: 750; }
-.workspace-navigation .brand-caption { font-size: 10px; letter-spacing: .045em; }
+.workspace-navigation .brand-block h1 { font-size: 11px; letter-spacing: .095em; font-weight: 750; text-transform: uppercase; }
+.workspace-navigation .brand-caption { font-size: 10px; letter-spacing: .02em; }
 .workspace-navigation .nav-list { gap: 4px; }
 .workspace-navigation .nav-item {
   height: 35px; min-height: 35px;
@@ -766,7 +766,7 @@ body:not(.chat-workspace-active) .main-panel { grid-column: 1; }
 }
 .workspace-navigation .nav-item.is-active {
   color: var(--text);
-  background: color-mix(in srgb, var(--equinox-user-accent, #8B6CF0) 12%, var(--workspace-chrome));
+  background: color-mix(in srgb, var(--equinox-user-accent, #8B6CF0) 10%, var(--workspace-chrome));
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 .workspace-navigation .nav-item:focus-visible, .rail-button:focus-visible {
