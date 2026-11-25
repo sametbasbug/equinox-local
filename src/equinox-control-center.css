@@ -685,13 +685,11 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .settings-body .language-control select { max-width: 160px; border: 1px solid var(--line); padding-inline: 10px; }
 .settings-section { display: grid; gap: 10px; padding-top: 18px; border-top: 1px solid var(--line); }
 .settings-section h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
-.settings-navigation { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.settings-navigation .nav-item { min-height: 38px; padding: 7px 9px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .settings-body .sidebar-health { margin: 0; padding-top: 16px; }
 .settings-body .sidebar-updates { margin: 0; }
 
-@media (max-width: 860px) {
+@media (max-width: 1080px) {
   .workspace-navigation { gap: 8px; padding-inline: 10px; }
   .workspace-navigation .nav-item { padding-inline: 8px; }
   .workspace-navigation .nav-item > span { display: none; }
@@ -730,6 +728,10 @@ body:not(.chat-workspace-active) .main-panel { grid-column: 1; }
 .accent-preference { align-items: flex-start; }
 .accent-picker { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
 .accent-swatch { width: 23px; height: 23px; flex: 0 0 23px; border: 2px solid var(--surface); border-radius: 50%; background: var(--swatch); box-shadow: 0 0 0 1px var(--line-strong); cursor: pointer; transition: transform 150ms ease, box-shadow 150ms ease; }
+.accent-swatch[data-chat-accent="#8B6CF0"] { --swatch: #8B6CF0; }
+.accent-swatch[data-chat-accent="#D956B5"] { --swatch: #D956B5; }
+.accent-swatch[data-chat-accent="#4B8FD1"] { --swatch: #4B8FD1; }
+.accent-swatch[data-chat-accent="#309C91"] { --swatch: #309C91; }
 .accent-swatch:hover { transform: scale(1.12); }
 .accent-swatch.is-active { box-shadow: 0 0 0 2px var(--text); }
 .accent-custom { display: flex; align-items: center; gap: 5px; color: var(--text-2); font-size: 12px; cursor: pointer; }
