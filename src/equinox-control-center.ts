@@ -222,7 +222,7 @@ function localizeUiText(value: UiRemoteData) {
 }
 
 const DYNAMIC_TEXT_IDS = new Set([
-  "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "last-refreshed",
+  "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "section-summary", "last-refreshed",
   "chat-identity-feedback", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
   "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
   "runtime-health-badge", "overview-title", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
@@ -232,15 +232,15 @@ const DYNAMIC_TEXT_IDS = new Set([
   "doctor-checked-at", "doctor-fix-title", "doctor-fix-summary", "doctor-fix-copy", "doctor-repair-list", "doctor-repair-result", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
   "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries",
   "check-update-button", "install-update-button", "root-count-label", "dirty-state", "project-list",
-  "default-project-select", "workspace-project-select", "downloads-root-select", "control-center-address",
-  "save-config-button", "agent-browser-page-status", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
-  "agent-browser-control-state", "open-agent-browser-button", "agent-browser-note", "browser-page-status", "browser-page-badge", "browser-page-version", "browser-connected-at",
+  "default-project-select", "workspace-project-select", "downloads-root-select",
+  "save-config-button", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
+  "agent-browser-control-state", "open-agent-browser-button", "agent-browser-note", "browser-page-badge", "browser-page-version", "browser-connected-at",
   "browser-control-state", "apply-browser-settings", "browser-settings-note", "permissions-list", "agent-access-badge",
   "agent-control-badge", "agent-control-copy", "active-terminal-count", "active-process-count", "active-work-count",
   "turn-budget-badge", "turn-budget-copy", "turn-budget-elapsed", "turn-budget-remaining", "turn-budget-stage", "turn-budget-fallback-reset", "auto-continue-max-hops", "save-turn-budget-button",
   "local-execution-badge", "save-agent-access-button", "uninstall-badge",
   "uninstall-confirmation-help", "uninstall-button", "integration-list", "request-count", "mutation-count",
-  "activity-event-count", "activity-timeline", "dialog-kicker", "dialog-title", "dialog-error", "choose-folder-button",
+  "activity-event-count", "activity-timeline", "dialog-title", "dialog-error", "choose-folder-button",
   "error-message", "toast",
 ]);
 
@@ -310,27 +310,46 @@ function setLanguage(nextLanguage: UiRemoteData, { persist = true } = {}) {
   }
   applyStaticLanguage();
   if (state.config) renderAll();
+  const draftStatus = state.dirty ? "Unsaved changes" : state.restartRequired ? "Saved · restart required" : "No unsaved changes";
+  setBadge("dirty-state", draftStatus, state.dirty || state.restartRequired ? "warn" : "neutral");
   setText("save-config-button", "Save configuration");
   switchSection(state.activeSection);
   renderLastRefreshed();
   if (state.dialogMode) {
     const isProject = state.dialogKind === "project";
     const isEdit = state.dialogMode === "edit";
-    setText("dialog-kicker", isProject ? "Project" : "Read-only folder");
     setText("dialog-title", `${isEdit ? "Edit" : "Add"} ${isProject ? "project" : "read-only folder"}`);
   }
 }
 
-const sectionTitles: Record<string, string> = {
-  setup: "Setup Equinox Local",
-  dashboard: "Overview",
-  projects: "Projects & folders",
-  tasks: "Tasks",
-  browser: "Browser",
-  chat: "Chat",
-  permissions: "Safety & access",
-  integrations: "Services",
-  activity: "Activity",
+const sections: Record<string, { title: string; summary?: string }> = {
+  setup: { title: "Setup Equinox Local" },
+  dashboard: { title: "Overview" },
+  projects: {
+    title: "Projects & folders",
+    summary: "Manage named projects and read-only folders for structured tools.",
+  },
+  tasks: {
+    title: "Tasks",
+    summary: "Review saved checkpoints and manage how tasks continue.",
+  },
+  browser: {
+    title: "Browser",
+    summary: "Manage the agent’s isolated browser and your personal Chrome separately.",
+  },
+  chat: { title: "Chat" },
+  permissions: {
+    title: "Safety & access",
+    summary: "Review active work and decide what the agent can access.",
+  },
+  integrations: {
+    title: "Services",
+    summary: "Check local capabilities and manage their connections.",
+  },
+  activity: {
+    title: "Activity",
+    summary: "Review recent runtime events and configuration changes.",
+  },
 };
 
 function clone(value: UiRemoteData) {
@@ -509,7 +528,8 @@ function bindEmbeddedChatLayout() {
 let lastLocalSection = "dashboard";
 
 function switchSection(section: UiRemoteData, { remember = false } = {}) {
-  if (!sectionTitles[section]) return;
+  const page = sections[section];
+  if (!page) return;
   if (state.setupMode && section !== "setup") return;
   if (!state.setupMode && section === "setup") return;
   const changed = state.activeSection !== section;
@@ -538,7 +558,11 @@ function switchSection(section: UiRemoteData, { remember = false } = {}) {
     element.hidden = !active;
     element.classList.toggle("is-active", active);
   }
-  setText("section-title", sectionTitles[section]);
+  setText("section-title", page.title);
+  const summary = $("section-summary");
+  summary.hidden = !page.summary;
+  setText(summary.id, page.summary ?? "");
+  $("last-refreshed").hidden = section !== "dashboard" && section !== "activity";
   syncEmbeddedChatLayout();
   if (changed) {
     $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
@@ -1282,15 +1306,14 @@ function createRootRow(kind: UiRemoteData, id: UiRemoteData, definition: UiRemot
   const badges = document.createElement("div");
   badges.className = "project-badges";
   if (kind === "project") {
-    badges.append(makeMiniBadge("Project"));
     badges.append(makeMiniBadge(definition.worktrees === false ? "Managed worktrees off" : "Managed worktrees on"));
     if (state.config.defaultProject === id) badges.append(makeMiniBadge("Default"));
     if (state.config.runtime?.workspaceProject === id) badges.append(makeMiniBadge("Workspace"));
   } else {
-    badges.append(makeMiniBadge("Read-only folder"));
     if (state.config.runtime?.downloadsRoot === id) badges.append(makeMiniBadge("Downloads root"));
   }
-  main.append(titleLine, root, badges);
+  main.append(titleLine, root);
+  if (badges.childElementCount) main.append(badges);
 
   const actions = document.createElement("div");
   actions.className = "project-actions";
@@ -1335,15 +1358,32 @@ function renderProjects() {
   const fileRoots = Object.entries((state.config.fileRoots || {}) as Record<string,UiRemoteData>);
   const list = $("project-list");
   list.replaceChildren();
-  for (const [id, definition] of projects) list.append(createRootRow("project", id, definition));
-  for (const [id, definition] of fileRoots) list.append(createRootRow("fileRoot", id, definition));
+  for (const [kind, label, roots] of [
+    ["project", "Projects", projects],
+    ["fileRoot", "Read-only folders", fileRoots],
+  ] as const) {
+    if (!roots.length) continue;
+    const group = document.createElement("section");
+    group.className = "directory-group";
+    const heading = document.createElement("h4");
+    heading.className = "directory-group-title";
+    heading.textContent = localizeUiText(label);
+    group.append(heading);
+    for (const [id, definition] of roots) group.append(createRootRow(kind, id, definition));
+    list.append(group);
+  }
+  if (!list.childElementCount) {
+    const empty = document.createElement("p");
+    empty.className = "directory-empty";
+    empty.textContent = localizeUiText("No folders configured");
+    list.append(empty);
+  }
 
   const folderLabel = fileRoots.length === 1 ? "read-only folder" : "read-only folders";
   setText("root-count-label", `${projects.length} projects · ${fileRoots.length} ${folderLabel}`);
   populateSelect($("default-project-select"), projects, state.config.defaultProject);
   populateSelect($("workspace-project-select"), projects, state.config.runtime?.workspaceProject);
   populateSelect($("downloads-root-select"), fileRoots, state.config.runtime?.downloadsRoot);
-  setText("control-center-address", "Private desktop IPC");
   setConfigEditingEnabled(!state.restartRequired);
 }
 
@@ -1424,6 +1464,7 @@ function renderUninstall() {
   const managed = state.doctor?.managed === true ||
     ["managed-source", "managed"].includes(state.status?.installation?.kind);
   card.hidden = !managed;
+  $("permissions-uninstall-slot").hidden = !managed;
   if (!managed) return;
 
   const removeData = $("uninstall-remove-data");
@@ -1850,7 +1891,7 @@ function createAuthenticatedHttpProfilesCard() {
     managementEnabled ? "good" : "neutral",
     [{ label: "Add profile", onClick: () => setHttpProfileDraft(null), primary: profiles.length === 0, disabled: state.httpProfileBusy }],
   );
-  card.classList.add("http-profile-card", "integration-card-wide");
+  card.classList.add("http-profile-card");
 
   const toggle = document.createElement("label");
   toggle.className = "toggle-field http-profile-management";
@@ -1964,8 +2005,8 @@ function createWebFileTransferCard() {
 }
 
 function renderIntegrations() {
-  const list = $("integration-list");
-  list.replaceChildren();
+  const serviceList = $("local-service-list");
+  const connectionList = $("integration-list");
   const browser = state.status?.browser || {};
   const peekaboo = state.status?.peekaboo || {};
   const agentBrowser = browser.contexts?.agent || {};
@@ -1992,7 +2033,7 @@ function renderIntegrations() {
         : "Not checked";
   const peekabooTone = peekaboo.needsAttention ? "warn" : peekabooReady ? "good" : "neutral";
 
-  list.append(
+  serviceList.replaceChildren(
     createIntegrationCard(
       "Equinox Browser",
       `Agent Browser ${agentBrowser.ready ? "ready" : browser.agentBrowser?.setupComplete ? "closed" : "not ready"} · Your Browser ${userBrowser.ready ? "connected" : "closed or not connected"}. Personal Chrome need not stay open for Agent Browser.`,
@@ -2013,8 +2054,10 @@ function renderIntegrations() {
       peekabooStatus,
       peekabooTone,
     ),
-    createWebFileTransferCard(),
+  );
+  connectionList.replaceChildren(
     createTelegramIntegrationCard(),
+    createWebFileTransferCard(),
     createAuthenticatedHttpProfilesCard(),
   );
 }
@@ -2055,18 +2098,11 @@ function browserSettingsFromStatus(target = state.browserSettingsTarget) {
 function browserContextLabel(browser: UiRemoteData, { unavailableLabel = "Extension not connected" } = {}) {
   const consentRequired = browser.ready && browser.consentAccepted === false;
   const controlOff = browser.ready && !consentRequired && browser.controlEnabled === false;
-  const label = consentRequired
-    ? "Connected · consent required"
-    : controlOff
-      ? "Connected · automation off"
-      : browser.ready
-        ? "Ready"
-        : unavailableLabel;
   const badge = browser.ready
     ? (consentRequired ? "Consent required" : controlOff ? "Automation off" : "Ready")
     : unavailableLabel;
   const tone = browser.ready ? (consentRequired || controlOff ? "warn" : "good") : "neutral";
-  return { consentRequired, controlOff, label, badge, tone };
+  return { consentRequired, badge, tone };
 }
 
 function renderBrowserPage() {
@@ -2081,7 +2117,6 @@ function renderBrowserPage() {
     unavailableLabel: "Chrome closed or not connected",
   });
 
-  setText("agent-browser-page-status", agentView.label);
   setBadge("agent-browser-page-badge", agentView.badge, agentView.tone);
   setText("agent-browser-page-version", agent.extensionVersion || "—");
   setText("agent-browser-connected-at", formatDate(agent.connectedAt));
@@ -2113,7 +2148,6 @@ function renderBrowserPage() {
               : "On first use, Agent Browser opens Chrome Web Store inside the isolated profile so Equinox Browser can be installed there.",
   );
 
-  setText("browser-page-status", userView.label);
   setBadge("browser-page-badge", userView.badge, userView.tone);
   setText("browser-page-version", user.extensionVersion || "—");
   setText("browser-connected-at", formatDate(user.connectedAt));
@@ -2248,7 +2282,7 @@ function renderTurnBudgetLive() {
   }
   const active = budget.active;
   if (!active) {
-    setBadge("turn-budget-badge", `${budget.cutoffMinutes} min`, "good");
+    setBadge("turn-budget-badge", `${budget.cutoffMinutes} ${state.language === "tr" ? "dk" : "min"}`, "good");
     setText("turn-budget-elapsed", "—");
     setText("turn-budget-remaining", "—");
     setText("turn-budget-stage", "Idle");
@@ -2442,14 +2476,15 @@ function replaceTaskInState(task: UiRemoteData) {
 function renderTasks() {
   const list = $("task-list");
   if (!list) return;
+  const focused = document.activeElement;
+  const focusedTaskId = focused instanceof HTMLButtonElement && list.contains(focused) ? focused.dataset.taskId : undefined;
+  const scrollTop = list.scrollTop;
+  const hasTasks = state.tasks.length > 0;
   list.replaceChildren();
+  $("tasks-workspace").classList.toggle("is-empty", !hasTasks);
   setText("task-count-label", `${state.tasks.length} tasks`);
 
-  if (!state.tasks.length) {
-    const empty = document.createElement("p");
-    empty.className = "task-list-empty";
-    empty.textContent = localizeUiText("No Task Capsules yet. Tasks appear here after an agent saves a checkpoint.");
-    list.append(empty);
+  if (!hasTasks) {
     state.selectedTaskId = null;
     state.taskDraft = null;
     state.taskDraftDirty = false;
@@ -2464,7 +2499,7 @@ function renderTasks() {
     button.type = "button";
     button.className = `task-list-item${task.taskId === state.selectedTaskId ? " is-selected" : ""}`;
     button.dataset.taskId = task.taskId;
-    button.disabled = state.taskBusy;
+    button.setAttribute("aria-disabled", String(state.taskBusy));
     button.setAttribute("aria-pressed", task.taskId === state.selectedTaskId ? "true" : "false");
 
     const title = document.createElement("span");
@@ -2507,7 +2542,9 @@ function renderTasks() {
       button.append(recoveryLine);
     }
     list.append(button);
+    if (task.taskId === focusedTaskId) button.focus({ preventScroll: true });
   }
+  list.scrollTop = scrollTop;
 
   const task = state.taskDraft?.taskId === state.selectedTaskId ? state.taskDraft : null;
   $("task-detail-empty").hidden = Boolean(task);
@@ -2949,7 +2986,6 @@ function openRootDialog({ mode, kind, id = null }:UiRemoteData) {
   $("worktrees-field").hidden = !isProject;
   $("readonly-note").hidden = isProject;
   $("dialog-error").hidden = true;
-  setText("dialog-kicker", isProject ? "Project" : "Read-only folder");
   setText("dialog-title", `${isEdit ? "Edit" : "Add"} ${isProject ? "project" : "read-only folder"}`);
   $("root-dialog").showModal();
   setTimeout(() => (isEdit ? $("root-name") : $("root-id")).focus(), 0);
@@ -4124,12 +4160,12 @@ function applyInitialNavigationIntent() {
   const section = params.get("section");
   const taskId = params.get("task");
   // Explicit links always take priority over the last section opened by hand.
-  if (section && sectionTitles[section]) state.activeSection = section;
+  if (section && sections[section]) state.activeSection = section;
   else if (taskId && /^task-[a-z0-9-]{6,80}$/u.test(taskId)) state.activeSection = "tasks";
   else {
     try {
       const remembered = localStorage.getItem(SECTION_STORAGE_KEY);
-      if (remembered && remembered !== "setup" && sectionTitles[remembered]) state.activeSection = remembered;
+      if (remembered && remembered !== "setup" && sections[remembered]) state.activeSection = remembered;
     } catch {
       // Read-only/blocked storage should fall back to Overview.
     }

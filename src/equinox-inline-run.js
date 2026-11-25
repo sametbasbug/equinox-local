@@ -7,20 +7,21 @@ export const INLINE_RUN_URI = "ui://equinox-local/run/v1.html";
 const HTML = String.raw `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Equinox Local run</title>
 <style>
-:root{color-scheme:light dark;--fg:#222735;--muted:#788092;--line:#dee3ec;--surface:#f8f9fc;--code:#f0f2f7;--accent:#747b8a;--ok:#168052;--bad:#b74444;--pending:#9a7020;font:13px/1.5 system-ui,sans-serif}
-:root[data-theme="dark"]{--fg:#ebeef5;--muted:#a5adbf;--line:#383d4c;--surface:#1d222d;--code:#151922;--accent:#bbc2d0;--ok:#71cba2;--bad:#ff9696;--pending:#e1b45b}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--fg:#e6e7eb;--muted:#a4a7b0;--line:#41434b;--surface:#24262d;--code:#1e2025;--accent:#bbc2d0;--ok:#71cba2;--bad:#ff9696;--pending:#e1b45b}}
+:root{color-scheme:light;--fg:#181a29;--muted:#61677b;--line:#e1e6f0;--surface:#fff;--code:#eff2f8;--focus:#6546a9;--ok:#237253;--bad:#b53e4b;--pending:#916218;font:13px/1.5 system-ui,sans-serif}
+:root[data-theme="dark"]{color-scheme:dark}
+@media(prefers-color-scheme:dark){:root:not([data-theme]){color-scheme:dark}}
+:root{--fg:light-dark(#181a29,#eeeff8);--muted:light-dark(#61677b,#a1a9c1);--line:light-dark(#e1e6f0,#303548);--surface:light-dark(#fff,#1e2130);--code:light-dark(#eff2f8,#161822);--focus:light-dark(#6546a9,#b5a4ff);--ok:light-dark(#237253,#84d3ad);--bad:light-dark(#b53e4b,#f09eaa);--pending:light-dark(#916218,#e7c27c)}
 *{box-sizing:border-box}body{margin:0;padding:2px 0;color:var(--fg);background:transparent}
-details{border:1px solid var(--line);border-radius:9px;background:var(--surface);overflow:hidden}
-summary{display:grid;grid-template-columns:22px minmax(0,1fr) auto 14px;align-items:start;gap:9px;padding:11px 12px;list-style:none;cursor:pointer}
+details{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
+summary{display:grid;grid-template-columns:22px minmax(0,1fr) auto 14px;align-items:start;gap:9px;padding:10px 12px;list-style:none;cursor:pointer}
 summary::-webkit-details-marker{display:none}summary:hover{background:var(--code)}
-summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}details[open]{border-color:var(--accent)}
-.icon{display:grid;place-items:center;width:22px;height:22px;color:var(--accent);border-radius:5px;background:var(--code);font:600 13px ui-monospace,monospace}
+summary:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.icon{display:grid;place-items:center;width:22px;height:22px;color:var(--fg);border-radius:6px;background:var(--code);font:600 13px ui-monospace,monospace}
 .title{min-width:0}.eyebrow{font-size:10px;color:var(--muted);margin-bottom:3px;font-weight:670;letter-spacing:.075em}.command{font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .status{white-space:nowrap;font-size:11px;color:var(--pending);padding-top:3px}.status[data-kind=ok]{color:var(--ok)}.status[data-kind=bad]{color:var(--bad)}.status[data-kind=neutral]{color:var(--muted)}
 .arrow{color:var(--muted);font-size:16px;line-height:22px;text-align:center}details[open] .arrow{transform:rotate(90deg)}
 .body{border-top:1px solid var(--line);padding:10px 12px;display:grid;gap:9px}.field{display:grid;gap:4px}.field-label{font-size:11px;color:var(--muted);font-weight:600}
-pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line);border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--fg)}
+pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--fg)}
 .facts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--muted)}.facts strong{color:var(--fg);font-weight:600}.empty{color:var(--muted);font-size:12px;padding:5px 0}
 @media(max-width:360px){summary{grid-template-columns:20px minmax(0,1fr) 13px;gap:6px}.status{grid-column:2;grid-row:2;padding:0}.arrow{grid-column:3;grid-row:1}}
 </style></head><body>

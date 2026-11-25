@@ -91,7 +91,8 @@
     <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-heading">
       <header class="settings-heading"><h2 id="settings-heading">Settings</h2><button id="settings-close-button" class="icon-button" type="button" aria-label="Close settings" title="Close settings">×</button></header>
       <div class="settings-body">
-        <div class="sidebar-preferences">
+        <section class="sidebar-preferences settings-preferences" aria-labelledby="settings-preferences-heading">
+          <h3 id="settings-preferences-heading">Preferences</h3>
           <div class="preference-row">
             <span>Appearance</span>
             <div class="theme-switch" role="group" aria-label="Appearance">
@@ -128,9 +129,9 @@
               <option value="tr">Türkçe</option>
             </select>
           </label>
-        </div>
-        <div class="settings-section">
-          <h3>Chat identity</h3>
+        </section>
+        <section class="settings-section settings-profile" aria-labelledby="settings-profile-heading">
+          <h3 id="settings-profile-heading">Chat identity</h3>
           <div class="chat-identity-settings">
             <div id="chat-agent-preview" class="chat-agent-preview" role="img" aria-label="Agent avatar">A</div>
             <div class="chat-identity-fields">
@@ -144,26 +145,28 @@
           </div>
           <p class="card-copy">Your profile picture comes from ChatGPT. Choose a local portrait for your agent.</p>
           <p id="chat-identity-feedback" class="card-copy" role="status"></p>
-        </div>
-        <div class="settings-section">
-          <h3>Runtime controls</h3>
+        </section>
+        <section class="settings-section settings-runtime" aria-labelledby="settings-runtime-heading">
+          <h3 id="settings-runtime-heading">Runtime controls</h3>
           <div class="settings-actions"><button id="refresh-button" class="button secondary compact" type="button">Refresh</button><button id="restart-runtime-button" class="button secondary compact" type="button" disabled>Restart</button><button id="chat-microphone-button" class="button secondary compact" type="button" hidden>Microphone access</button></div>
-        </div>
-        <div class="sidebar-health">
-          <span id="sidebar-health-dot" class="status-dot is-neutral" aria-hidden="true"></span>
-          <div>
-            <strong id="sidebar-health-label">Connecting…</strong>
-            <span id="sidebar-version">Local runtime</span>
+          <div class="settings-runtime-footer">
+            <div class="sidebar-health">
+              <span id="sidebar-health-dot" class="status-dot is-neutral" aria-hidden="true"></span>
+              <div>
+                <strong id="sidebar-health-label">Connecting…</strong>
+                <span id="sidebar-version">Local runtime</span>
+              </div>
+            </div>
+            <div class="sidebar-updates">
+              <button id="sidebar-update-button" class="sidebar-update-button" type="button" aria-haspopup="dialog" aria-controls="update-dialog">
+                <svg class="sidebar-update-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.8 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.2-2"/></svg>
+                <span>Check for updates</span>
+                <svg class="sidebar-update-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <span id="sidebar-update-indicator" class="sidebar-update-indicator" role="status" hidden>Update available</span>
+            </div>
           </div>
-        </div>
-        <div class="sidebar-updates">
-          <button id="sidebar-update-button" class="sidebar-update-button" type="button" aria-haspopup="dialog" aria-controls="update-dialog">
-            <svg class="sidebar-update-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.8 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.2-2"/></svg>
-            <span>Check for updates</span>
-            <svg class="sidebar-update-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
-          </button>
-          <span id="sidebar-update-indicator" class="sidebar-update-indicator" role="status" hidden>Update available</span>
-        </div>
+        </section>
       </div>
     </dialog>
 
@@ -199,7 +202,10 @@
 
     <main class="main-panel" id="main-content" tabindex="-1">
       <header class="topbar">
-        <h2 id="section-title">Overview</h2>
+        <div class="page-heading">
+          <h2 id="section-title">Overview</h2>
+          <p id="section-summary" class="page-summary" hidden></p>
+        </div>
         <div class="topbar-actions">
           <span id="last-refreshed" class="last-refreshed">Not refreshed yet</span>
         </div>
@@ -229,7 +235,6 @@
       <section id="section-setup" class="page-section setup-section" aria-labelledby="section-title" hidden>
         <div class="setup-hero">
           <div>
-            <p class="eyebrow">First-time setup</p>
             <h3>Connect ChatGPT to this computer</h3>
             <p id="onboarding-copy">Follow these steps once. Control Center unlocks after ChatGPT successfully reaches Equinox Local.</p>
           </div>
@@ -502,35 +507,24 @@
       </section>
 
       <section id="section-projects" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro">
-          <div>
-            <p>Keep named shortcuts to your projects and folders. These settings do not limit Terminal access.</p>
-          </div>
-          <div class="button-group">
-            <button id="add-folder-button" class="button secondary" type="button">Add read-only folder</button>
-            <button id="add-project-button" class="button primary" type="button">Add project</button>
-          </div>
-        </div>
-
         <div class="project-layout">
-          <div>
-            <div class="list-heading">
+          <section class="project-directory" aria-labelledby="project-directory-heading">
+            <div class="panel-header directory-header">
               <div>
-                <span class="list-title">Configured roots</span>
-                <span id="root-count-label" class="muted">Loading…</span>
+                <h3 id="project-directory-heading">Configured roots</h3>
+                <p id="root-count-label" class="muted">Loading…</p>
               </div>
-              <span id="dirty-state" class="badge neutral">No unsaved changes</span>
+              <div class="button-group">
+                <button id="add-folder-button" class="button secondary compact" type="button">Add read-only folder</button>
+                <button id="add-project-button" class="button primary compact" type="button">Add project</button>
+              </div>
             </div>
             <div id="project-list" class="project-list" aria-live="polite"></div>
-          </div>
+          </section>
 
-          <aside class="settings-card">
-            <div class="panel-header compact">
-              <div>
-                <p class="eyebrow">Runtime routing</p>
-                <h3>Core folders</h3>
-              </div>
-            </div>
+          <aside class="settings-card routing-panel" aria-labelledby="routing-heading">
+            <h3 id="routing-heading">Core folders</h3>
+            <p class="card-copy">Defaults for agent work, worktrees and downloads.</p>
 
             <label class="field">
               <span>Default project</span>
@@ -550,32 +544,30 @@
               <small>Must remain a read-only folder root.</small>
             </label>
 
-            <div class="settings-divider"></div>
-
-            <div class="setting-summary">
-              <span>Control Center</span>
-              <strong id="control-center-address">127.0.0.1:—</strong>
-              <small>Loopback binding is enforced by the backend and cannot be weakened here.</small>
+            <div class="routing-actions">
+              <span id="dirty-state" class="badge neutral">No unsaved changes</span>
+              <button id="save-config-button" class="button primary" type="button" disabled>Save configuration</button>
+              <p class="save-hint">Save your changes, then restart Equinox Local to apply them.</p>
             </div>
-
-            <button id="save-config-button" class="button primary full-width" type="button" disabled>Save configuration</button>
-            <p class="save-hint">Save your changes, then restart Equinox Local to apply them.</p>
           </aside>
         </div>
       </section>
 
       <section id="section-tasks" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro"><div><p>Inspect durable task checkpoints and take control when an automatic continuation should stop or change. Task state stays private on this computer.</p></div></div>
-        <div class="tasks-workspace">
+        <div id="tasks-workspace" class="tasks-workspace">
           <aside class="task-list-pane" aria-label="Task list">
-            <div class="task-pane-heading"><div><span class="list-title">Recent tasks</span><span id="task-count-label" class="muted">Loading…</span></div></div>
+            <div class="task-pane-heading"><h3>Recent tasks</h3><span id="task-count-label" class="muted">Loading…</span></div>
             <div id="task-list" class="task-list" aria-live="polite"></div>
           </aside>
           <section class="task-detail-pane" aria-label="Task details">
-            <div id="task-detail-empty" class="task-detail-empty"><strong>Select a task</strong><p>Choose a task on the left to inspect its latest checkpoint.</p></div>
+            <div id="task-detail-empty" class="task-detail-empty">
+              <div class="surface-icon" aria-hidden="true"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M8.5 10h7M8.5 14h7M8.5 18h4"/></svg></div>
+              <strong>No tasks yet</strong>
+              <p>Tasks appear here after an agent saves a checkpoint.</p>
+            </div>
             <form id="task-form" hidden>
               <div class="task-detail-heading">
-                <div><p class="eyebrow">Task Capsule</p><div class="task-heading-line"><h3 id="task-detail-title">Task</h3><span id="task-status-badge" class="badge neutral">Active</span></div><code id="task-detail-id" class="task-detail-id">task—</code><p id="task-detail-meta" class="task-detail-meta">Checkpoint — · Updated —</p></div>
+                <div><div class="task-heading-line"><h3 id="task-detail-title">Task</h3><span id="task-status-badge" class="badge neutral">Active</span></div><code id="task-detail-id" class="task-detail-id">task—</code><p id="task-detail-meta" class="task-detail-meta">Checkpoint — · Updated —</p></div>
                 <div class="task-continuation-summary"><span>Auto Continue</span><strong id="task-continuation-state">Not armed</strong><small id="task-continuation-target">No browser target</small></div>
               </div>
               <section id="task-recovery-panel" class="task-recovery-panel" hidden aria-live="polite">
@@ -619,61 +611,50 @@
       </section>
 
       <section id="section-browser" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro">
-          <div>
-            <p>Equinox Local keeps the agent's isolated Agent Browser separate from your personal Chrome. Both use the same Equinox Browser extension and Native Messaging capability set.</p>
-          </div>
-        </div>
-
-        <div class="dashboard-grid two-column">
-          <article class="panel-card">
-            <div class="integration-title-row">
-              <div class="integration-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="16" height="14" rx="4"/><path d="M12 3v3m-4 6h.01M16 12h.01M9 16h6"/></svg></div>
+        <div class="browser-profiles">
+          <article class="browser-profile" aria-labelledby="agent-browser-heading">
+            <header class="browser-profile-header">
+              <div class="surface-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="16" height="14" rx="4"/><path d="M12 3v3m-4 6h.01M16 12h.01M9 16h6"/></svg></div>
               <div>
-                <span class="card-label">Agent Browser</span>
-                <h3 id="agent-browser-page-status">Checking…</h3>
+                <h3 id="agent-browser-heading">Agent Browser</h3>
+                <p class="card-copy">The default automation target. It uses a dedicated Chrome profile that stays isolated from your personal browser data and sessions.</p>
               </div>
               <span id="agent-browser-page-badge" class="badge neutral">Checking</span>
-            </div>
-            <p class="card-copy">The default automation target. It uses a dedicated Chrome profile that stays isolated from your personal browser data and sessions.</p>
-            <dl class="detail-list">
+            </header>
+            <dl class="profile-facts">
               <div><dt>Extension version</dt><dd id="agent-browser-page-version">—</dd></div>
               <div><dt>Connected since</dt><dd id="agent-browser-connected-at">—</dd></div>
-              <div><dt>Isolation</dt><dd>Dedicated Chrome profile</dd></div>
               <div><dt>Automation</dt><dd id="agent-browser-control-state">—</dd></div>
             </dl>
-            <button id="open-agent-browser-button" class="button primary full-width" type="button">Open Agent Browser</button>
-            <p id="agent-browser-note" class="save-hint">On first use, Agent Browser opens Chrome Web Store inside the isolated profile so Equinox Browser can be installed there.</p>
+            <footer class="browser-profile-actions">
+              <p id="agent-browser-note" class="save-hint">On first use, Agent Browser opens Chrome Web Store inside the isolated profile so Equinox Browser can be installed there.</p>
+              <button id="open-agent-browser-button" class="button primary" type="button">Open Agent Browser</button>
+            </footer>
           </article>
 
-          <article class="panel-card">
-            <div class="integration-title-row">
-              <div class="integration-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></div>
+          <article class="browser-profile" aria-labelledby="user-browser-heading">
+            <header class="browser-profile-header">
+              <div class="surface-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg></div>
               <div>
-                <span class="card-label">Your Browser</span>
-                <h3 id="browser-page-status">Checking…</h3>
+                <h3 id="user-browser-heading">Your Browser</h3>
+                <p class="card-copy">Your personal Chrome profile. Agents use it only when the task explicitly requires your existing browser sessions or accounts.</p>
               </div>
               <span id="browser-page-badge" class="badge neutral">Checking</span>
-            </div>
-            <p class="card-copy">Your personal Chrome profile. Agents use it only when the task explicitly requires your existing browser sessions or accounts.</p>
-            <dl class="detail-list">
+            </header>
+            <dl class="profile-facts">
               <div><dt>Extension version</dt><dd id="browser-page-version">—</dd></div>
               <div><dt>Connected since</dt><dd id="browser-connected-at">—</dd></div>
-              <div><dt>Connection model</dt><dd>Extension + Native Messaging</dd></div>
               <div><dt>Automation</dt><dd id="browser-control-state">—</dd></div>
             </dl>
-            <div class="browser-store-callout">
-              <div>
-                <strong>Need Equinox Browser?</strong>
-                <small>Install or open the official unlisted Equinox Browser listing in Chrome Web Store.</small>
-              </div>
-              <a class="button primary browser-store-button" href="https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj" target="_blank" rel="noopener noreferrer">Install Equinox Browser ↗</a>
-            </div>
+            <footer class="browser-profile-actions">
+              <p class="save-hint">If Agent Browser is unavailable, the task stops. Equinox Local never switches to your personal Chrome without an explicit choice.</p>
+              <a class="button secondary" href="https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj" target="_blank" rel="noopener noreferrer">Install Equinox Browser ↗</a>
+            </footer>
           </article>
+        </div>
 
-          <article class="panel-card browser-settings-card">
+        <article class="panel-card browser-settings-card">
             <div class="browser-settings-heading">
-              <p class="eyebrow">Browser controls</p>
               <h3>Local browser settings</h3>
               <p>Choose a profile. Its settings stay separate.</p>
             </div>
@@ -708,83 +689,33 @@
             <button id="apply-browser-settings" class="button primary full-width" type="button" disabled>Apply browser settings</button>
             <p id="browser-settings-note" class="save-hint">Settings apply immediately and do not require a Local restart.</p>
             </div>
-          </article>
-        </div>
-
-        <article class="panel-card soft-panel browser-boundary-card">
-          <p class="eyebrow">Safe boundary</p>
-          <h3>No silent browser fallback</h3>
-          <p>If Agent Browser is unavailable, the task stops. Equinox Local never switches to your personal Chrome without an explicit choice.</p>
         </article>
       </section>
 
       <section id="section-permissions" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro">
+        <section class="agent-state-panel" aria-labelledby="agent-state-heading">
           <div>
-            <p>Local execution is Equinox Local's core path. Pause the agent instantly when needed, and keep Browser/Desktop permissions separate from advanced structured-file restrictions.</p>
+            <div class="panel-header">
+              <h3 id="agent-state-heading">Agent state</h3>
+              <span id="agent-control-badge" class="badge neutral">Loading…</span>
+            </div>
+            <p id="agent-control-copy" class="health-copy">Checking whether the agent is active or paused.</p>
+            <details class="brake-details">
+              <summary>What Emergency Stop does</summary>
+              <p class="health-copy">Emergency Stop immediately blocks new mutating agent actions and safely stops Equinox Local-managed Terminal/process work. The MCP connection and read-only status stay alive so the agent can observe the pause and finish its response. Resume never restarts stopped work automatically.</p>
+            </details>
           </div>
-        </div>
+          <dl class="active-work-grid" aria-label="Active managed work">
+            <div><dt>Terminal sessions</dt><dd id="active-terminal-count">0</dd></div>
+            <div><dt>Managed processes</dt><dd id="active-process-count">0</dd></div>
+            <div><dt>Total active work</dt><dd id="active-work-count">0</dd></div>
+          </dl>
+        </section>
 
         <div class="safety-layout">
-        <article class="panel-card agent-safety-card">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Immediate control</p>
-              <h3>Agent state</h3>
-            </div>
-            <span id="agent-control-badge" class="badge neutral">Loading…</span>
-          </div>
-          <p id="agent-control-copy" class="health-copy">Checking whether the agent is active or paused.</p>
-          <div class="active-work-grid" aria-label="Active managed work">
-            <div><span>Terminal sessions</span><strong id="active-terminal-count">0</strong></div>
-            <div><span>Managed processes</span><strong id="active-process-count">0</strong></div>
-            <div><span>Total active work</span><strong id="active-work-count">0</strong></div>
-          </div>
-          <div class="panel-header compact-panel-header">
-            <div>
-              <p class="eyebrow">Turn safety</p>
-              <h4>Turn Budget</h4>
-            </div>
-            <span id="turn-budget-badge" class="badge neutral">Loading…</span>
-          </div>
-          <p id="turn-budget-copy" class="health-copy">Tracks the assistant turn from Browser generation when available, or the first Equinox Local call as fallback, and warns before the safety cutoff.</p>
-          <div class="active-work-grid" aria-label="Turn budget status">
-            <div><span>Elapsed</span><strong id="turn-budget-elapsed">—</strong></div>
-            <div><span>Remaining</span><strong id="turn-budget-remaining">—</strong></div>
-            <div><span>Stage</span><strong id="turn-budget-stage">Idle</strong></div>
-          </div>
-          <label class="toggle-field compact-toggle">
-            <div>
-              <span>Enable Turn Budget</span>
-              <small>Warn the agent before the per-turn safety cutoff. This never force-stops a turn.</small>
-            </div>
-            <input id="turn-budget-enabled" type="checkbox" role="switch">
-          </label>
-          <label class="field">
-            <span>Safety cutoff (minutes)</span>
-            <input id="turn-budget-cutoff" type="number" min="5" max="120" step="1" inputmode="numeric">
-            <small>Default 22 minutes. The setting applies immediately and does not require a Local restart.</small>
-          </label>
-          <label class="field">
-            <span>Fallback idle timeout (minutes)</span>
-            <input id="turn-budget-fallback-reset" type="number" min="1" max="22" step="1" inputmode="numeric">
-            <small>Default 2 minutes. Used only when Browser turn identity is unavailable; after this much Local inactivity the fallback turn becomes Idle.</small>
-          </label>
-          <label class="field">
-            <span>Auto Continue maximum hops</span>
-            <input id="auto-continue-max-hops" type="number" min="1" max="100" step="1" inputmode="numeric">
-            <small>Default 10. Each hop must still be armed explicitly; this only changes the maximum chain length.</small>
-          </label>
-          <button id="save-turn-budget-button" class="button secondary full-width" type="button">Save Turn Budget</button>
-          <p class="save-hint">Emergency Stop immediately blocks new mutating agent actions and safely stops Equinox Local-managed Terminal/process work. The MCP connection and read-only status stay alive so the agent can observe the pause and finish its response. Resume never restarts stopped work automatically.</p>
-        </article>
-
         <article class="panel-card agent-access-card">
           <div class="panel-header">
-            <div>
-              <p class="eyebrow">Capability boundaries</p>
-              <h3>Access settings</h3>
-            </div>
+            <h3>Access settings</h3>
             <span id="agent-access-badge" class="badge neutral">Loading…</span>
           </div>
           <div class="access-summary-row">
@@ -833,6 +764,42 @@
           <p class="save-hint">Browser/Desktop and advanced access changes use the validated configuration path and require a Local restart. Emergency Stop/Resume apply immediately and do not edit configuration.</p>
         </article>
 
+        <article class="panel-card turn-budget-panel">
+          <div class="panel-header">
+            <h3>Turn Budget</h3>
+            <span id="turn-budget-badge" class="badge neutral">Loading…</span>
+          </div>
+          <p id="turn-budget-copy" class="health-copy">Tracks the assistant turn from Browser generation when available, or the first Equinox Local call as fallback, and warns before the safety cutoff.</p>
+          <dl class="active-work-grid turn-budget-stats" aria-label="Turn budget status">
+            <div><dt>Elapsed</dt><dd id="turn-budget-elapsed">—</dd></div>
+            <div><dt>Remaining</dt><dd id="turn-budget-remaining">—</dd></div>
+            <div><dt>Stage</dt><dd id="turn-budget-stage">Idle</dd></div>
+          </dl>
+          <label class="toggle-field compact-toggle">
+            <div>
+              <span>Enable Turn Budget</span>
+              <small>Warn the agent before the per-turn safety cutoff. This never force-stops a turn.</small>
+            </div>
+            <input id="turn-budget-enabled" type="checkbox" role="switch">
+          </label>
+          <label class="field">
+            <span>Safety cutoff (minutes)</span>
+            <input id="turn-budget-cutoff" type="number" min="5" max="120" step="1" inputmode="numeric">
+            <small>Default 22 minutes. The setting applies immediately and does not require a Local restart.</small>
+          </label>
+          <label class="field">
+            <span>Fallback idle timeout (minutes)</span>
+            <input id="turn-budget-fallback-reset" type="number" min="1" max="22" step="1" inputmode="numeric">
+            <small>Default 2 minutes. Used only when Browser turn identity is unavailable; after this much Local inactivity the fallback turn becomes Idle.</small>
+          </label>
+          <label class="field">
+            <span>Auto Continue maximum hops</span>
+            <input id="auto-continue-max-hops" type="number" min="1" max="100" step="1" inputmode="numeric">
+            <small>Default 10. Each hop must still be armed explicitly; this only changes the maximum chain length.</small>
+          </label>
+          <button id="save-turn-budget-button" class="button secondary full-width" type="button">Save Turn Budget</button>
+        </article>
+
         </div>
         <details class="scope-details panel-card">
           <summary>Configured folder scope</summary>
@@ -840,7 +807,8 @@
           <div id="permissions-list" class="permissions-list"></div>
         </details>
 
-        <div id="permissions-uninstall-slot">
+        <details id="permissions-uninstall-slot" class="maintenance-disclosure" hidden>
+          <summary>Uninstall Equinox Local</summary>
         <article id="uninstall-card" class="panel-card danger-panel uninstall-card" hidden>
           <div class="panel-header">
             <div>
@@ -867,51 +835,46 @@
             <p id="uninstall-status" class="uninstall-status" hidden>Uninstall scheduled. Equinox Local will stop and this page will disconnect.</p>
           </form>
         </article>
-        </div>
+        </details>
       </section>
 
       <section id="section-integrations" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro">
-          <p>Connect the tools your agent needs. Optional services can be unavailable without stopping local execution.</p>
-        </div>
-        <div id="integration-list" class="integration-grid"></div>
+        <section class="service-group" aria-labelledby="local-service-heading">
+          <h3 id="local-service-heading">Local capabilities</h3>
+          <div id="local-service-list" class="service-list"></div>
+        </section>
+        <section class="service-group" aria-labelledby="connected-service-heading">
+          <h3 id="connected-service-heading">Connections</h3>
+          <div id="integration-list" class="service-list"></div>
+        </section>
       </section>
 
       <section id="section-activity" class="page-section" aria-labelledby="section-title" hidden>
-        <div class="section-intro">
+        <dl class="activity-summary" aria-label="Activity summary">
           <div>
-            <p>Review recent runtime events and configuration changes. Sensitive details are kept out of this timeline.</p>
+            <dt>Control Center requests</dt>
+            <dd id="request-count">—</dd>
+            <dd class="activity-metric-note">Since this runtime started</dd>
           </div>
-        </div>
+          <div>
+            <dt>Config mutations</dt>
+            <dd id="mutation-count">—</dd>
+            <dd class="activity-metric-note">Accepted by this runtime</dd>
+          </div>
+          <div>
+            <dt>Recent runtime events</dt>
+            <dd id="activity-event-count">—</dd>
+            <dd class="activity-metric-note">Health evaluation window</dd>
+          </div>
+        </dl>
 
-        <div class="dashboard-grid three-column">
-          <article class="metric-card large-number">
-            <p class="card-label">Control Center requests</p>
-            <strong id="request-count">—</strong>
-            <span class="muted">Since this runtime started</span>
-          </article>
-          <article class="metric-card large-number">
-            <p class="card-label">Config mutations</p>
-            <strong id="mutation-count">—</strong>
-            <span class="muted">Accepted by this runtime</span>
-          </article>
-          <article class="metric-card large-number">
-            <p class="card-label">Recent runtime events</p>
-            <strong id="activity-event-count">—</strong>
-            <span class="muted">Health evaluation window</span>
-          </article>
-        </div>
-
-        <article class="panel-card activity-panel">
-          <div class="panel-header compact">
-            <div>
-              <p class="eyebrow">Audit timeline</p>
-              <h3>Recent activity</h3>
-            </div>
+        <section class="activity-panel" aria-labelledby="activity-heading">
+          <div class="panel-header">
+            <h3 id="activity-heading">Recent activity</h3>
             <span class="mini-badge">Last 6 hours · max 30</span>
           </div>
           <div id="activity-timeline" class="activity-timeline" aria-live="polite"></div>
-        </article>
+        </section>
       </section>
     </main>
   </div>
@@ -920,8 +883,7 @@
     <form id="root-form" novalidate>
       <div class="dialog-header">
         <div>
-          <p class="eyebrow" id="dialog-kicker">Project</p>
-          <h3 id="dialog-title">Add project</h3>
+          <h2 id="dialog-title">Add project</h2>
         </div>
         <button id="close-dialog" class="icon-button" type="button" aria-label="Close">×</button>
       </div>
