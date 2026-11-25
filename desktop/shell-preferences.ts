@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-export const COMPANION_IDS = ["nyx", "hemera", "asteria"] as const;
+export const COMPANION_IDS = ["nyx", "hemera", "asteria", "selene"] as const;
 export type CompanionId = typeof COMPANION_IDS[number];
 export type ShellPreferences = { language?: "en" | "tr"; companionVisible?: boolean; companionBounds?: { x: number; y: number }; companionId?: CompanionId; chatAgentName?: string };
 export function validCompanionOrigin(value: unknown): value is { x: number; y: number } {
@@ -68,7 +68,9 @@ export function openShellPreferences(directory: string) {
           || (item.chatAgentName !== undefined && (typeof item.chatAgentName !== "string" || item.chatAgentName.length > 48 || /[\u0000-\u001f\u007f]/u.test(item.chatAgentName)))
           || (item.companionId !== undefined && !COMPANION_IDS.includes(item.companionId as CompanionId))
           || (item.companionBounds !== undefined && !validCompanionOrigin(item.companionBounds))) throw new Error("Invalid shell preferences.");
-        values = parsed as ShellPreferences;
+        // Profiles created before 7.1.0 implicitly used Nyx. Keep that
+        // prior identity when upgrading a profile with no explicit choice.
+        values = { companionId: "nyx", ...(parsed as ShellPreferences) };
       } finally { fs.closeSync(fd); }
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;

@@ -20,12 +20,7 @@ body[data-surface="speech"] #speech { display:block; position:relative; width:10
 #speech.top-tail { padding-bottom:0; padding-top:10px; }
 #speech.top-tail #tail { top:4px; bottom:auto; transform:rotate(225deg); }
 
-/* Nyx keeps its complete original sprite sheet. Other companions have a
-   distinct bundled visual identity until their own animated sheets arrive. */
-body[data-surface="pet"][data-companion="hemera"] #pet,
-body[data-surface="pet"][data-companion="asteria"] #pet { display:grid; place-items:center; background-image:none; border-radius:38px; border:2px solid var(--companion-border); background:radial-gradient(circle at 40% 28%,var(--companion-inner),var(--companion-outer)); box-shadow:0 8px 28px var(--companion-shadow); }
-body[data-surface="pet"][data-companion="hemera"] { --companion-border:#F59E0B; --companion-inner:#FDE68A; --companion-outer:#B45309; --companion-shadow:#F59E0B65; }
-body[data-surface="pet"][data-companion="asteria"] { --companion-border:#38BDF8; --companion-inner:#BAE6FD; --companion-outer:#075985; --companion-shadow:#38BDF865; }
-body[data-surface="pet"][data-companion="hemera"] #pet::before { content:"☀"; }
-body[data-surface="pet"][data-companion="asteria"] #pet::before { content:"✦"; }
-body[data-surface="pet"][data-companion]:not([data-companion="nyx"]) #pet::before { color:#fff; font-size:78px; line-height:1; text-shadow:0 2px 15px #0005; }
+/* Full 1536×2288 v2 atlas for each companion; renderer shares 11 animation rows. */
+body[data-surface="pet"][data-companion="hemera"] #pet { background-image:url("../app/EquinoxCompanionHemera.webp"); }
+body[data-surface="pet"][data-companion="asteria"] #pet { background-image:url("../app/EquinoxCompanionAsteria.webp"); }
+body[data-surface="pet"][data-companion="selene"] #pet { background-image:url("../app/EquinoxCompanionSelene.webp"); }

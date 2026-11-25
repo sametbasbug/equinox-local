@@ -1,6 +1,6 @@
 // Local output-only sprite renderer. No imports, Node, backend or private configuration.
 export {};
-type CompanionSnapshot = { companionId: "nyx" | "hemera" | "asteria"; state: string; language: "en" | "tr"; paused: boolean; speech: string; speechId: number; maxWidth: number; tailBottom: boolean; tailX: number };
+type CompanionSnapshot = { companionId: "nyx" | "hemera" | "asteria" | "selene"; state: string; language: "en" | "tr"; paused: boolean; speech: string; speechId: number; maxWidth: number; tailBottom: boolean; tailX: number };
 type CompanionBridge = { subscribe: (callback: (value: CompanionSnapshot) => void) => () => void; action: (value: string) => void; pointer: (phase: string) => void; activate: () => void; measureSpeech: (id: number, width: number, height: number) => void };
 const bridge = (window as unknown as { equinoxCompanion: CompanionBridge }).equinoxCompanion;
 const surface = new URLSearchParams(location.search).get("surface");
@@ -121,7 +121,7 @@ let lastSpeechId = -1;
 const unsubscribe = bridge.subscribe(snapshot => {
   if (!snapshot || !["en", "tr"].includes(snapshot.language)) return;
   document.documentElement.lang = snapshot.language;
-  const companionId = ["nyx", "hemera", "asteria"].includes(snapshot.companionId) ? snapshot.companionId : "nyx";
+  const companionId = ["nyx", "hemera", "asteria", "selene"].includes(snapshot.companionId) ? snapshot.companionId : "selene";
   const name = companionId[0]!.toUpperCase() + companionId.slice(1);
   document.body.dataset.companion = companionId;
   document.title = `Equinox Companion · ${name}`;

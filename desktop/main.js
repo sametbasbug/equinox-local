@@ -732,9 +732,9 @@ function updateMenus() {
             click: () => { companion?.setVisible(!companion.isVisible()); } },
         { label: text("Companion character", "Companion karakteri"), enabled: Boolean(companion) && !quitting,
             submenu: [
-                ["nyx", "Nyx"], ["hemera", "Hemera"], ["asteria", "Asteria"],
+                ["nyx", "Nyx"], ["hemera", "Hemera"], ["asteria", "Asteria"], ["selene", "Selene"],
             ].map(([id, name]) => ({ label: name, type: "radio",
-                checked: (companion?.companionId() ?? "nyx") === id,
+                checked: (companion?.companionId() ?? "selene") === id,
                 click: () => { if (companion?.setCompanionId(id))
                     window?.webContents.send("equinox-shell:companion-changed", id); }, })) },
         { label: paused ? text("Resume agent", "Ajanı sürdür") : text("Emergency Stop", "Acil durdur"),
@@ -1084,12 +1084,12 @@ ipcMain.handle("equinox-shell:language", (event, value) => {
 ipcMain.handle("equinox-shell:companion-select", (event, id) => {
     if (!trustedSender(event) || !companion || quitting)
         throw new Error("Companion selection is unavailable.");
-    if (id !== "nyx" && id !== "hemera" && id !== "asteria")
+    if (id !== "nyx" && id !== "hemera" && id !== "asteria" && id !== "selene")
         throw new Error("Unsupported companion character.");
     return companion.setCompanionId(id);
 });
 ipcMain.on("equinox-shell:companion-snapshot", (event) => {
-    event.returnValue = trustedSender(event) ? (companion?.companionId() ?? shellPreferences?.read().companionId ?? "nyx") : null;
+    event.returnValue = trustedSender(event) ? (companion?.companionId() ?? shellPreferences?.read().companionId ?? "selene") : null;
 });
 // Finite readonly preference adapter; no file path or configuration crosses the bridge.
 ipcMain.on("equinox-shell:language-snapshot", (event) => {

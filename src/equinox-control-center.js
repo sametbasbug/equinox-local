@@ -4093,13 +4093,13 @@ function bindEvents() {
         }
     });
     const companionPicker = $("companion-select");
-    companionPicker.value = window.equinoxShell?.getCompanionId() ?? "nyx";
+    companionPicker.value = window.equinoxShell?.getCompanionId() ?? "selene";
     companionPicker.disabled = !window.equinoxShell?.setCompanionId;
     const unsubscribeCompanion = window.equinoxShell?.onCompanionChanged(id => { companionPicker.value = id; });
     window.addEventListener("pagehide", () => unsubscribeCompanion?.(), { once: true });
     companionPicker.addEventListener("change", async () => {
         const id = companionPicker.value;
-        if (id !== "nyx" && id !== "hemera" && id !== "asteria")
+        if (id !== "nyx" && id !== "hemera" && id !== "asteria" && id !== "selene")
             return;
         companionPicker.disabled = true;
         try {
@@ -4108,7 +4108,7 @@ function bindEvents() {
             showToast(`Companion: ${id[0].toUpperCase()}${id.slice(1)}`);
         }
         catch (error) {
-            companionPicker.value = window.equinoxShell?.getCompanionId() ?? "nyx";
+            companionPicker.value = window.equinoxShell?.getCompanionId() ?? "selene";
             showError(error);
         }
         finally {

@@ -17,6 +17,7 @@ const SHELL_FILES = Object.freeze([
     "desktop/uninstall-handoff.js", "desktop/shell-preferences.js", "desktop/companion.js",
     "desktop/companion-preload.cjs", "desktop/companion-renderer.js", "desktop/companion.html", "desktop/companion.css",
     "app/EquinoxLocal.png", "app/EquinoxLocalMenuBar.png", "app/EquinoxCompanionNyx.webp",
+    "app/EquinoxCompanionHemera.webp", "app/EquinoxCompanionAsteria.webp", "app/EquinoxCompanionSelene.webp",
 ]);
 /** Default CLI stays attach-only; installed artifacts require the explicit managed entrypoint. */
 export async function packageDevelopmentDesktopShell({ rootDir = root, outputDir = path.join(root, "artifacts", "desktop"), target = `${process.platform}-${process.arch}`, } = {}) {
