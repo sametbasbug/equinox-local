@@ -4,6 +4,15 @@
 
 **State:** Maintainer decisions confirmed on 2026-11-24. Implement the phases below in order. This file is the permanent task authority. Read it at the start of every continuation and record actual completed code, review evidence, and next step here. Never replace the fixed requirements with a rewritten checkpoint summary.
 
+## Owner-confirmed design decisions (2026-11-25)
+
+These choices settle the two remaining questions from the Selene/Nyx design review. They do not authorize UI implementation or a public 7.1.1 release.
+
+- **Pet action label:** Keep **New Chat** as the visible menu label. Its already-agreed action opens the existing local **Chat / Asistan** workspace in Equinox Local; it does not open ChatGPT in a browser or force creation of a new conversation.
+- **Turn Budget display:** When the visible native conversation **and the active turn** are both verified as an exact identity match, show a **small, visually quiet remaining-time indicator continuously while that match holds**, with the real measured value and unit (for example, `43 dk kaldı`). Hide it if the match or measured value is absent; never infer time from unrelated sessions or show a unitless `7/50` value. **920×690** still defaults to continuous display, simplified if necessary rather than warning-only. Retain general budget status in **Control Center → Safety**. Verify the native conversation/turn identity contract before implementing any per-chat budget display.
+
+All other design-review decisions stay unchanged. Acceptance still requires installed Mac Factory screenshots in Light/Dark and narrow layouts, plus a populated authentic chat with real inline tool output. The maintainer gives final visual acceptance.
+
 ## Approved Equinox Chat design contract (2026-11-25)
 
 The maintainer preferred the first full-screen Equinox Chat concept to the installed Web-like interface, but explicitly rejected generated-image polish artifacts. The original image is preserved in the **private ChatGPT Library**, at /Equinox/Chat Tasarımı/Referanslar/equinox-chat-konsept-v1-2026-11-25.png (library id libfile_b6b3a7b98564819192feee03654a6c6b). **Do not copy this PNG into the public repo, its history, installers or built assets.** It is a reference for composition only, not an asset to embed.
