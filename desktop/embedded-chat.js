@@ -789,7 +789,10 @@ function decorateProviderIdentity(identity, language, accent) {
                 mark(element, "user", human);
         }
         for (const element of document.querySelectorAll('main [data-response-body]')) {
-            const assistantUnit = element.closest('[data-content-search-unit-key]');
+            // Not every ChatGPT assistant answer has a search-unit wrapper. The
+            // response's immediate parent contains only that answer, unlike its
+            // parent turn which can also hold the human's message.
+            const assistantUnit = element.closest('[data-content-search-unit-key]') || element.parentElement;
             if (assistantUnit && !assistantUnit.closest('[data-equinox-role]'))
                 mark(assistantUnit, "assistant", agent);
         }
@@ -821,7 +824,11 @@ function decorateProviderIdentity(identity, language, accent) {
             return;
         world.__equinoxIdentityFrame = requestAnimationFrame(() => { delete world.__equinoxIdentityFrame; sync(); });
     });
-    observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
+    // React may replace the html element during a route transition or reuse
+    // existing message nodes by setting their data attributes. Observing the
+    // document survives either operation without touching the provider's DOM.
+    observer.observe(document, { childList: true, subtree: true, attributes: true,
+        attributeFilter: ["src", "data-chatgpt-search-unit-key", "data-user-message-bubble", "data-response-body", "data-talvt-turn-state"] });
     world.__equinoxIdentityObserver = observer;
     sync();
 }
@@ -1029,18 +1036,27 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
         const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(identity) + "," + JSON.stringify(language) + "," + JSON.stringify(accent) + ")";
         void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{ code }]).catch(() => { });
     };
-    // Provider SPA navigation does not fire did-finish-load. Reattach the
-    // identity observer after each in-page transition so brand greeting and
-    // message authors survive new-chat, history selection and deletion.
-    view.webContents.on("did-navigate-in-page", () => {
+    // Provider SPA navigation may finish before React mounts the new turn
+    // nodes. Retry the identity observer at bounded mount intervals; the script
+    // is idempotent and does not reconstruct or replace provider messages.
+    const identityTimers = new Set();
+    const resyncIdentity = () => {
+        for (const timer of identityTimers)
+            clearTimeout(timer);
+        identityTimers.clear();
         applyIdentity();
-    });
+        for (const ms of [150, 700, 1_800]) {
+            const timer = setTimeout(() => { identityTimers.delete(timer); applyIdentity(); }, ms);
+            identityTimers.add(timer);
+        }
+    };
+    view.webContents.on("did-navigate-in-page", resyncIdentity);
     view.webContents.on("did-finish-load", () => {
         if (view.webContents.isDestroyed())
             return;
         try {
             if (new URL(view.webContents.getURL()).origin === CHATGPT) {
-                void view.webContents.insertCSS(STYLE).then(applyIdentity).catch(() => { });
+                void view.webContents.insertCSS(STYLE).then(resyncIdentity).catch(() => { });
             }
         }
         catch { /* Ignore intermediate navigation state. */ }
@@ -1052,6 +1068,9 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
         disposed = true;
         chatVisible = false;
         continuity.dispose();
+        for (const timer of identityTimers)
+            clearTimeout(timer);
+        identityTimers.clear();
         nativeTheme.removeListener("updated", syncViewBackground);
         microphoneGranted = false;
         microphonePromptOpen = false;
