@@ -2,7 +2,7 @@ export const EQUINOX_LOCAL_NODE_VERSION = "26.13.1";
 export const EQUINOX_LOCAL_DUGITE_VERSION = "2.56.1";
 export const EQUINOX_LOCAL_DUGITE_BUILD = "238326e";
 export const EQUINOX_LOCAL_TUNNEL_CLIENT_VERSION = "0.0.21";
-export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.9";
+export const EQUINOX_LOCAL_PEEKABOO_VERSION = "4.9.10";
 export const EQUINOX_LOCAL_WINAPP_VERSION = "0.8.0";
 export const EQUINOX_LOCAL_BUNDLED_WINAPP_SINCE_VERSION = "5.2.1";
 export const EQUINOX_LOCAL_NATIVE_JOB_OBJECT_HELPER_SINCE_VERSION = "5.2.1";
@@ -11,7 +11,7 @@ export const EQUINOX_LOCAL_BUNDLED_PEEKABOO_SINCE_VERSION = "4.4.0";
 export const EQUINOX_LOCAL_PEEKABOO_TEAM_ID = "FWJYW4S8P8";
 export const PEEKABOO_DISTRIBUTION = Object.freeze({
     filename: "peekaboo-macos-universal.tar.gz",
-    sha256: "6d2780de69058a6c8cf17dd1f9fadefcdf3d4ba0df8365d1f32aa14fefa410fc",
+    sha256: "8144e52690aa133f5337a328fa558691bd4d2203f41bf57a11b5896f592a0737",
     archiveRoot: "peekaboo-macos-universal",
     architectures: Object.freeze(["arm64", "x86_64"]),
 });

@@ -1,5 +1,13 @@
 ## Unreleased (after 7.0.0)
 
+### Dependency and component refresh (2026-11-25)
+
+- Update Electron from 46.0.0-alpha.10 to 46.0.0-alpha.13 and Peekaboo from 4.9.9 to 4.9.10 with the official universal archive digest.
+- Allow semver-compatible updates in direct npm manifest ranges while retaining lockfile integrity; Node 26.13.1, Dugite 2.56.1, Tunnel Client 0.0.21, WinApp CLI 0.8.0 and node-pty 1.2.0-beta.18 already match current upstream releases.
+- Bind the actual resolved Electron version into packaged shell metadata rather than restricting the application to one hardcoded alpha. Read selected and persisted chat avatars through a single validated file descriptor to remove CodeQL-reported file-system race windows.
+- Source-only candidate; installed-platform and public-release acceptance remain separate.
+
+
 ### Dependency and component maintenance (2026-11-07)
 
 - Remove the redundant final sentence from Auto Continue checkpoint prompts; Task Capsule instructions remain unchanged.

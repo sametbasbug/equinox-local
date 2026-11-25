@@ -127,7 +127,7 @@ npm run check
 
 ### Electron shell development
 
-The shell migration in this development tree uses pinned **Electron 46.0.0-alpha.10** to display the existing Control Center. It retains the existing backend and packaged Control Center. A separate unreleased [embedded Chat replacement](docs/plans/native-chat-codex-replacement.md) mounts the real ChatGPT provider in the existing Chat section. See the [7.0.0 completion plan](docs/plans/electron7-completion.md) for the current scope and unfinished native gates (the original [migration plan](docs/plans/electron46-shell-migration.md) is historical); this section is not a release or installed-conversion announcement.
+The shell migration in this development tree uses **Electron 46** (currently 46.0.0-alpha.13, with an npm semver range) to display the existing Control Center. It retains the existing backend and packaged Control Center. A separate unreleased [embedded Chat replacement](docs/plans/native-chat-codex-replacement.md) mounts the real ChatGPT provider in the existing Chat section. See the [7.0.0 completion plan](docs/plans/electron7-completion.md) for the current scope and unfinished native gates (the original [migration plan](docs/plans/electron46-shell-migration.md) is historical); this section is not a release or installed-conversion announcement.
 
 ```bash
 npm run build:typed-desktop
