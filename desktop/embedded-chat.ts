@@ -69,6 +69,7 @@ const STYLE = String.raw`
 html.chatgpt-theme {
   --eq-canvas: #f7f8fa;
   --eq-sidebar: #171b24;
+  --eq-subtle: #eff1f5;
   --eq-rail-text: #e9ebf3;
   --eq-rail-muted: #a2acbf;
   --eq-rail-border: #303746;
@@ -89,8 +90,8 @@ html.chatgpt-theme {
   --eq-composer-shadow: 0 1px 3px #18213b06, 0 10px 26px #18213b0a;
   --color-surface: var(--eq-canvas) !important;
   --color-surface-secondary: var(--eq-canvas) !important;
-  --color-surface-tertiary: var(--eq-sidebar) !important;
-  --color-surface-canvas: var(--eq-sidebar) !important;
+  --color-surface-tertiary: var(--eq-subtle) !important;
+  --color-surface-canvas: var(--eq-subtle) !important;
   --color-surface-elevated: var(--eq-paper) !important;
   --color-surface-elevated-secondary: var(--eq-paper) !important;
   --color-surface-card: var(--eq-paper) !important;
@@ -111,6 +112,7 @@ html.chatgpt-theme {
   html.chatgpt-theme {
     --eq-canvas: #11141b;
     --eq-sidebar: #171b24;
+    --eq-subtle: #262b37;
     --eq-paper: #1b202a;
     --eq-editor: #1c212c;
     --eq-border: #343a49;
