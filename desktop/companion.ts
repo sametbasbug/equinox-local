@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, screen, session, shell } from "electron";
+import { BrowserWindow, ipcMain, screen, session } from "electron";
 import type { IpcMainEvent, Rectangle } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,7 +12,7 @@ export type CompanionSnapshot = { connected: boolean; language: Language; presen
 export type CompanionOptions = {
   directory: string; preferences: ShellPreferenceStore; language: Language;
   /** Development attach explicitly passes false, even when its isolated saved value is true. */
-  autoShow: boolean; openControlCenter: () => void; onVisibilityChanged?: () => void;
+  autoShow: boolean; openChat: () => void; openControlCenter: () => void; onVisibilityChanged?: () => void;
 };
 const states = new Set(["idle", "connecting", "working", "waiting", "success", "needs_attention", "emergency_stopped", "offline"]);
 const bounded = (value: unknown, limit = 240): string => typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/gu, " ").slice(0, limit) : "";
@@ -257,7 +257,7 @@ export function createCompanionController(options: CompanionOptions) {
     if (!visible || !trusted(event, "actions") || !windows.get("actions")?.isVisible()) return;
     if (value !== "new-chat" && value !== "control-center" && value !== "hide") return;
     actionsRequested = false; windows.get("actions")?.hide();
-    if (value === "new-chat") void shell.openExternal("https://chatgpt.com/").catch(() => {});
+    if (value === "new-chat") { try { options.openChat(); } catch { /* Optional action. */ } }
     else if (value === "control-center") { try { options.openControlCenter(); } catch { /* Optional action. */ } }
     else setVisible(false);
   };

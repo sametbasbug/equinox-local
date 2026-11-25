@@ -48,6 +48,7 @@ let navigating = false;
 let connected = false;
 let rendererFailed = false;
 let rendererRecoveryAttempts = 0;
+let pendingCompanionWorkspace: "chat" | "control-center" | null = null;
 let refreshInFlight = false;
 let refreshRequested = false;
 let mutationPending = false;
@@ -192,6 +193,23 @@ function showControlCenter(): void {
   if (window.isMinimized()) window.restore();
   window.show();
   window.focus();
+}
+
+// A pet menu action targets one of the two existing local workspaces. Keep
+// the exact destination while the owned Control Center document is loading.
+function deliverCompanionWorkspace(): void {
+  const owner = window;
+  if (!owner || owner.isDestroyed() || !pendingCompanionWorkspace || quitting) return;
+  const contents = owner.webContents;
+  if (contents.isLoading() || !isControlDocument(contents.getURL())) return;
+  const destination = pendingCompanionWorkspace;
+  pendingCompanionWorkspace = null;
+  contents.send("equinox-shell:companion-workspace", destination);
+}
+function openCompanionWorkspace(destination: "chat" | "control-center"): void {
+  pendingCompanionWorkspace = destination;
+  showControlCenter();
+  deliverCompanionWorkspace();
 }
 
 function observeNativeNotification(value: unknown): void {
@@ -704,6 +722,7 @@ function createWindow(): void {
       if (development) window?.showInactive();
       else window?.show();
     }
+    deliverCompanionWorkspace();
   });
   contents.on("page-title-updated", (event) => { event.preventDefault(); window?.setTitle("Equinox Local"); });
   contents.on("did-start-loading", () => embeddedChat?.setBounds(null));
@@ -949,7 +968,9 @@ if (installerProfile) {
       try {
         companion = createCompanionController({ directory, preferences: shellPreferences!,
           language: language === "tr" ? "tr" : "en", autoShow: !development,
-          openControlCenter: showControlCenter, onVisibilityChanged: updateMenus });
+          openChat: () => openCompanionWorkspace("chat"),
+          openControlCenter: () => openCompanionWorkspace("control-center"),
+          onVisibilityChanged: updateMenus });
       } catch { companion = null; }
       if (uninstallRequested) { uninstallRequested = false; await confirmUninstall(); }
       if (controlLost || quitting) throw new Error("Application lifecycle ownership was lost before backend startup.");

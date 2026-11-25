@@ -4020,6 +4020,14 @@ function onNavigationShortcut(event) {
 }
 function bindEvents() {
     document.addEventListener("keydown", onNavigationShortcut);
+    const unsubscribeCompanionWorkspace = window.equinoxShell?.onCompanionWorkspaceRequest(destination => {
+        if (state.setupMode)
+            return;
+        // Only the native companion menu can request these fixed destinations.
+        // Reuse the exact same route as the two workspace tabs.
+        switchSection(destination === "chat" ? "chat" : lastLocalSection, { remember: true });
+    });
+    window.addEventListener("pagehide", () => unsubscribeCompanionWorkspace?.(), { once: true });
     for (const button of document.querySelectorAll(".nav-item")) {
         button.addEventListener("click", () => {
             if (button.closest("#settings-dialog"))

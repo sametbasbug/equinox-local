@@ -44,6 +44,7 @@ let navigating = false;
 let connected = false;
 let rendererFailed = false;
 let rendererRecoveryAttempts = 0;
+let pendingCompanionWorkspace = null;
 let refreshInFlight = false;
 let refreshRequested = false;
 let mutationPending = false;
@@ -202,6 +203,24 @@ function showControlCenter() {
         window.restore();
     window.show();
     window.focus();
+}
+// A pet menu action targets one of the two existing local workspaces. Keep
+// the exact destination while the owned Control Center document is loading.
+function deliverCompanionWorkspace() {
+    const owner = window;
+    if (!owner || owner.isDestroyed() || !pendingCompanionWorkspace || quitting)
+        return;
+    const contents = owner.webContents;
+    if (contents.isLoading() || !isControlDocument(contents.getURL()))
+        return;
+    const destination = pendingCompanionWorkspace;
+    pendingCompanionWorkspace = null;
+    contents.send("equinox-shell:companion-workspace", destination);
+}
+function openCompanionWorkspace(destination) {
+    pendingCompanionWorkspace = destination;
+    showControlCenter();
+    deliverCompanionWorkspace();
 }
 function observeNativeNotification(value) {
     // Development attaches to a resident host which already owns notifications.
@@ -888,6 +907,7 @@ function createWindow() {
             else
                 window?.show();
         }
+        deliverCompanionWorkspace();
     });
     contents.on("page-title-updated", (event) => { event.preventDefault(); window?.setTitle("Equinox Local"); });
     contents.on("did-start-loading", () => embeddedChat?.setBounds(null));
@@ -1185,7 +1205,9 @@ else {
             try {
                 companion = createCompanionController({ directory, preferences: shellPreferences,
                     language: language === "tr" ? "tr" : "en", autoShow: !development,
-                    openControlCenter: showControlCenter, onVisibilityChanged: updateMenus });
+                    openChat: () => openCompanionWorkspace("chat"),
+                    openControlCenter: () => openCompanionWorkspace("control-center"),
+                    onVisibilityChanged: updateMenus });
             }
             catch {
                 companion = null;
