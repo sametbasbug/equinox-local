@@ -685,13 +685,11 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .settings-body .language-control select { max-width: 160px; border: 1px solid var(--line); padding-inline: 10px; }
 .settings-section { display: grid; gap: 10px; padding-top: 18px; border-top: 1px solid var(--line); }
 .settings-section h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
-.settings-navigation { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.settings-navigation .nav-item { min-height: 38px; padding: 7px 9px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .settings-body .sidebar-health { margin: 0; padding-top: 16px; }
 .settings-body .sidebar-updates { margin: 0; }
 
-@media (max-width: 860px) {
+@media (max-width: 1080px) {
   .workspace-navigation { gap: 8px; padding-inline: 10px; }
   .workspace-navigation .nav-item { padding-inline: 8px; }
   .workspace-navigation .nav-item > span { display: none; }
