@@ -44,6 +44,11 @@ export function registerTaskCapsuleTools({ registerRawTool, z, store, autoContin
         inputSchema: { task_id: taskIdSchema },
         annotations: { title: "Cancel task", readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     }, async ({ task_id }) => jsonResult(await store.cancel(task_id)), { capabilityDomain: "runtime" });
+    registerRawTool("task_rebind_chat", {
+        description: "Explicitly move an existing active Task Capsule to the current verified generating ChatGPT conversation in the SAME Browser context (agent Chrome, personal Chrome, or native Chat). Use this when the human continues a task in another chat. Does not silently transfer task_checkpoint bindings, select arbitrary tab URLs or send a message. Cancels any pending Auto Continue arm, increments the checkpoint revision and refuses in-flight delivery or Fresh Chat Resume. Then use continuation_arm normally.",
+        inputSchema: { task_id: taskIdSchema, chat_context: z.enum(["agent", "user", "native"]).optional().describe("Optional same-context disambiguation; an existing task cannot change Browser context.") },
+        annotations: { title: "Rebind task to current chat", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    }, async ({ task_id, chat_context }) => jsonResult(await autoContinueController.rebindCurrent(task_id, chat_context)), { capabilityDomain: "runtime" });
     registerRawTool("continuation_arm", {
         description: "Arm one bounded next-turn Auto Continue for an active Task Capsule. Prefer the Task Capsule's verified ChatGPT binding when present; otherwise resolve the existing pinned/current generating target. Every automatic hop must be armed again.",
         inputSchema: { task_id: taskIdSchema, ttl_minutes: z.number().int().min(1).max(60).default(15) },

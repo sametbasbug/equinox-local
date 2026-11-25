@@ -106,6 +106,69 @@ export function createAutoContinueController({ store, browserBridge, agentContro
             autoContinueVersion: target.autoContinueVersion,
         };
     };
+    // Explicit chat rebind must not inherit a stale Auto Continue pin from
+    // the old conversation. Use already-shipped read-only Browser commands,
+    // so rebind works without requiring a Chrome Web Store extension update.
+    const resolveGeneratingTarget = async (preferredContext) => {
+        const snapshot = browserBridge.snapshot();
+        const candidates = [];
+        for (const context of ["agent", "user", "native"]) {
+            if (preferredContext && context !== preferredContext)
+                continue;
+            const state = snapshot?.contexts?.[context];
+            if (!state?.ready)
+                continue;
+            const instanceId = state.extension?.instanceId || state.host?.instanceId;
+            const version = extensionAutoContinueVersion(state);
+            if (!instanceId || version < REQUIRED_AUTO_CONTINUE_VERSION)
+                continue;
+            if (context === "native") {
+                try {
+                    candidates.push(await resolveTarget("native"));
+                }
+                catch { /* No generating native conversation. */ }
+                continue;
+            }
+            const tabs = await callContext(context, "tabs.list", {}, 5_000);
+            const conversations = (Array.isArray(tabs) ? tabs : []).filter((tab) => {
+                try {
+                    const url = new URL(String(tab.url || ""));
+                    return url.protocol === "https:" && url.hostname === "chatgpt.com" && !url.username && !url.password
+                        && !url.port && !url.search && !url.hash
+                        && /^\/(?:g\/[A-Za-z0-9_-]{8,160}\/)?c\/[A-Za-z0-9-]{8,160}\/?$/u.test(url.pathname);
+                }
+                catch {
+                    return false;
+                }
+            });
+            if (conversations.length > 30)
+                throw new Error("Too many open ChatGPT conversations to safely resolve a task rebind.");
+            for (const tab of conversations) {
+                const tabId = Number(tab.id ?? tab.tabId);
+                if (!Number.isSafeInteger(tabId) || tabId < 1)
+                    continue;
+                let inspected;
+                try {
+                    inspected = await callContext(context, "continuation.inspect", { tabId });
+                }
+                catch {
+                    continue;
+                }
+                if (!inspected?.generationActive || !inspected.userEpoch || !inspected.assistantTurnKey
+                    || !inspected.conversationId || !inspected.canonicalUrl || inspected.tabId !== tabId
+                    || inspected.canonicalUrl !== tab.url)
+                    continue;
+                candidates.push({ browserContext: context, browserInstanceId: instanceId, mode: "task-tab",
+                    tabId, conversationId: inspected.conversationId, canonicalUrl: inspected.canonicalUrl,
+                    title: inspected.title, userEpoch: inspected.userEpoch, assistantTurnKey: inspected.assistantTurnKey, autoContinueVersion: version });
+            }
+        }
+        if (candidates.length !== 1)
+            throw new Error(candidates.length
+                ? "Multiple ChatGPT conversations are generating; task rebind requires exactly one current conversation."
+                : "No verified ChatGPT conversation is currently generating in the task's browser context.");
+        return candidates[0];
+    };
     const reacquireBoundTab = async ({ context, conversationId }) => {
         const tabs = await callContext(context, "tabs.list", {}, 5_000);
         const matches = (Array.isArray(tabs) ? tabs : []).filter((tab) => {
@@ -200,6 +263,36 @@ export function createAutoContinueController({ store, browserBridge, agentContro
         catch {
             return store.read(taskId);
         }
+    };
+    const rebindCurrent = async (taskId, preferredContext) => {
+        agentControl.assertMutationAllowed("task_rebind_chat");
+        const task = await store.readInternal(taskId);
+        if (task.status !== "active")
+            throw new Error("Only active Task Capsules can be rebound to a conversation.");
+        const current = task.chatBinding;
+        // Explicit rebinding is permitted within the existing browser context.
+        // Never infer a transfer to another Chrome profile or the native view.
+        if (current && preferredContext && preferredContext !== current.browserContext) {
+            throw new Error("Task rebind cannot switch to another browser context. Keep the original Browser context.");
+        }
+        const priorContext = current?.browserContext || task.continuation?.target?.browserContext;
+        if (priorContext && preferredContext && preferredContext !== priorContext) {
+            throw new Error("Task rebind cannot switch to another browser context.");
+        }
+        // An old explicit pin cannot override the one currently generating turn.
+        const target = await resolveGeneratingTarget(priorContext || preferredContext);
+        if (priorContext && target.browserContext !== priorContext) {
+            throw new Error("Rebind target is outside the Task Capsule's browser context.");
+        }
+        // Target is resolved from the verified generating ChatGPT turn, never
+        // supplied as a raw URL, arbitrary tab id or user-entered conversation.
+        return store.rebindChat({ taskId, expectedBinding: current, binding: {
+                browserContext: target.browserContext,
+                browserInstanceId: target.browserInstanceId,
+                tabId: target.tabId,
+                conversationId: target.conversationId,
+                canonicalUrl: target.canonicalUrl,
+            } });
     };
     const cancelForReason = async (taskId, continuationId, reason) => {
         clearMonitor(continuationId);
@@ -381,5 +474,5 @@ export function createAutoContinueController({ store, browserBridge, agentContro
             clearMonitor(continuationId);
         await Promise.allSettled([...inFlightTicks]);
     };
-    return Object.freeze({ arm, armBound, cancel, start, shutdown, resolveTarget, resolveBoundTarget, captureBinding });
+    return Object.freeze({ arm, armBound, cancel, start, shutdown, resolveTarget, resolveBoundTarget, captureBinding, rebindCurrent });
 }
