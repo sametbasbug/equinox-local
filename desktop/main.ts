@@ -25,11 +25,14 @@ import type { ShellPreferences, ShellPreferenceStore } from "./shell-preferences
 registerControlScheme();
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(directory);
-const PINNED_ELECTRON = "46.0.0-alpha.10";
 const applicationMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const runtimeRole = app.isPackaged ? applicationMetadata.equinoxRuntimeRole : "development";
 if (!["development", "managed", "source"].includes(runtimeRole)) throw new Error("Unknown desktop application role.");
 const development = runtimeRole === "development";
+const expectedElectron = development
+  ? JSON.parse(fs.readFileSync(path.join(root, "node_modules", "electron", "package.json"), "utf8")).version
+  : applicationMetadata.equinoxElectronVersion;
+if (typeof expectedElectron !== "string" || !/^46\./u.test(expectedElectron)) throw new Error("Unsupported Electron runtime version.");
 if (!development && applicationMetadata.equinoxDesktopSchema !== 1) throw new Error("Installed desktop metadata is not admitted.");
 const installedIdentity: InstalledRuntimeIdentity | null = development ? null : runtimeRole === "managed"
   ? { role: "managed", sourceSha: applicationMetadata.equinoxSourceSha }
@@ -143,11 +146,17 @@ function chatAvatarPath(): string { return path.join(app.getPath("userData"), "p
 let chatAgentAvatar: string | null = null;
 function loadChatAvatar(): void {
   try {
-    const file = chatAvatarPath();
-    const stat = fs.statSync(file);
-    if (!stat.isFile() || stat.size > 512 * 1024) return;
-    const image = nativeImage.createFromBuffer(fs.readFileSync(file));
-    if (!image.isEmpty()) chatAgentAvatar = image.toDataURL();
+    // Validate and read through the same descriptor: the file may be
+    // swapped between two pathname-based operations.
+    const fd = fs.openSync(chatAvatarPath(), fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || stat.size <= 0 || stat.size > 512 * 1024) return;
+      const bytes = fs.readFileSync(fd);
+      if (bytes.length > 512 * 1024) return;
+      const image = nativeImage.createFromBuffer(bytes);
+      if (!image.isEmpty()) chatAgentAvatar = image.toDataURL();
+    } finally { fs.closeSync(fd); }
   } catch { /* No custom portrait yet. */ }
 }
 function chatIdentity() {
@@ -800,9 +809,17 @@ ipcMain.handle("equinox-shell:chat-avatar-choose", async (event) => {
     });
     if (!trustedSender(event) || quitting) throw new Error("Avatar picker closed.");
     if (picked.canceled || picked.filePaths.length !== 1) return chatIdentity();
-    const stat = await fs.promises.stat(picked.filePaths[0]!);
-    if (!stat.isFile() || stat.size > 16 * 1024 * 1024) throw new Error(text("Choose an image smaller than 16 MB.", "16 MB'dan küçük bir görsel seçin."));
-    const source = nativeImage.createFromBuffer(await fs.promises.readFile(picked.filePaths[0]!));
+    // Hold a single file handle from validation through reading, avoiding
+    // the pathname TOCTOU race if the selected image is replaced.
+    const handle = await fs.promises.open(picked.filePaths[0]!, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    let source: Electron.NativeImage;
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size <= 0 || stat.size > 16 * 1024 * 1024) throw new Error(text("Choose an image smaller than 16 MB.", "16 MB'dan küçük bir görsel seçin."));
+      const bytes = await handle.readFile();
+      if (bytes.length > 16 * 1024 * 1024) throw new Error(text("Choose an image smaller than 16 MB.", "16 MB'dan küçük bir görsel seçin."));
+      source = nativeImage.createFromBuffer(bytes);
+    } finally { await handle.close(); }
     if (source.isEmpty()) throw new Error(text("This image could not be opened.", "Bu görsel açılamadı."));
     const {width,height} = source.getSize();
     const edge = Math.min(width,height);
@@ -856,7 +873,7 @@ ipcMain.on("equinox-shell:language-snapshot", (event) => {
   event.returnValue = trustedSender(event) ? (language === "tr" ? "tr" : "en") : null;
 });
 
-if (process.versions.electron !== PINNED_ELECTRON || !process.versions.node.startsWith("26.")) {
+if (process.versions.electron !== expectedElectron || !process.versions.node.startsWith("26.")) {
   throw new Error("Equinox Local requires the pinned Electron 46 alpha.10 with Node 26.");
 }
 if (installerProfile) {

@@ -56,9 +56,13 @@ async function packageDesktopShell({ rootDir, outputDir, target }, identity, rol
     if (identity && process.platform !== platform)
         throw new Error("Managed desktop packaging requires its native build host.");
     const packageJson = JSON.parse(await fs.readFile(path.join(rootDir, "package.json"), "utf8"));
-    const version = packageJson.devDependencies?.electron;
-    if (version !== "46.0.0-alpha.10")
-        throw new Error("Desktop build requires the exact approved Electron pin.");
+    // Install uses the manifest range; package exactly the lockfile-resolved
+    // version, then bind it into the signed shell metadata for runtime checks.
+    const installedElectron = JSON.parse(await fs.readFile(path.join(rootDir, "node_modules", "electron", "package.json"), "utf8"));
+    const version = installedElectron.version;
+    if (!String(packageJson.devDependencies?.electron || "").startsWith("^46.") || typeof version !== "string" || !/^46\./u.test(version)) {
+        throw new Error("Desktop build requires a resolved Electron 46 version.");
+    }
     await fs.mkdir(outputDir, { recursive: true, mode: 0o700 });
     const outputStat = await fs.lstat(outputDir);
     if (!outputStat.isDirectory() || outputStat.isSymbolicLink() || await fs.realpath(outputDir) !== outputDir) {
@@ -104,6 +108,7 @@ async function packageDesktopShell({ rootDir, outputDir, target }, identity, rol
         await fs.writeFile(path.join(application, "package.json"), JSON.stringify({
             name: "equinox-local-desktop", productName: "Equinox Local", version: EQUINOX_LOCAL_VERSION,
             type: "module", main: "desktop/main.js", equinoxRuntimeRole: identity ? role : "development",
+            equinoxElectronVersion: version,
             ...(identity ? { equinoxDesktopSchema: 1, equinoxSourceSha: identity.sourceSha } : {}),
             description: "Equinox Local Control Center", author: "Samet Basbug", license: "AGPL-3.0-only",
         }, null, 2), { mode: 0o600 });

@@ -542,6 +542,38 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
         emit({ component: "task-capsule", type: "task.chat_bound", severity: "info", status: "updated", message: "Task Capsule was bound to a ChatGPT conversation.", details: { taskId: record.taskId, browserContext: normalized.browserContext } });
         return publicTask(record);
     });
+    // Only the explicit task_rebind_chat path uses this mutation. The former
+    // exact binding is checked inside the store lock so a concurrent handoff
+    // cannot silently overwrite a newer conversation selection.
+    const rebindChat = ({ taskId, expectedBinding, binding }) => withMutation(async () => {
+        await initialize();
+        const record = requireTask(taskId);
+        if (record.status !== "active")
+            throw new Error("Only active Task Capsules can be rebound to a conversation.");
+        assertDeliveryNotCommitted(record, "rebind task chat");
+        assertNoLiveFreshResume(record, "rebind task chat");
+        const normalized = normalizeChatBinding(binding);
+        const expected = normalizeChatBinding(expectedBinding);
+        if (!normalized)
+            throw new Error("Task chat binding is required.");
+        const current = record.chatBinding;
+        if (JSON.stringify(current) !== JSON.stringify(expected))
+            throw new Error("Task chat binding changed during rebind; read the current Task Capsule before retrying.");
+        if (current?.browserContext && current.browserContext !== normalized.browserContext) {
+            throw new Error("Task chat rebind cannot cross browser contexts.");
+        }
+        if (current && JSON.stringify(current) === JSON.stringify(normalized))
+            return publicTask(record);
+        clearContinuation(record, "chat_rebound");
+        record.chatBinding = normalized;
+        record.checkpointRevision += 1;
+        record.updatedAt = iso(now());
+        await persist(record);
+        emit({ component: "task-capsule", type: "task.chat_rebound", severity: "info", status: "updated",
+            message: "Active Task Capsule was explicitly rebound to a verified ChatGPT conversation.",
+            details: { taskId: record.taskId, browserContext: normalized.browserContext, checkpointRevision: record.checkpointRevision } });
+        return publicTask(record);
+    });
     const queueHumanInput = ({ taskId, source = "telegram", sourceId, text, attachments = [] } = {}) => withMutation(async () => {
         await initialize();
         const record = requireTask(taskId);
@@ -880,5 +912,5 @@ export function createTaskCapsuleStore({ rootDir, now = () => Date.now(), random
         }
         return { resumable, retired };
     });
-    return Object.freeze({ initialize, checkpoint, read, readInternal, list, finish, cancel, remove, bindChat, queueHumanInput, armContinuation, cancelContinuation, cancelAllContinuations, pendingContinuations, reserveContinuationDelivery, settleContinuationDelivery, expireContinuation, reconcileContinuationsAfterRestart, prepareFreshResume, reserveFreshResumeMutation, settleFreshResume, cancelFreshResume, abandonFreshResume, cancelAllFreshResumes, reconcileFreshResumesAfterRestart, snapshot: async () => ({ tasks: await list({ limit: 50 }), loadErrors: [...loadErrors] }) });
+    return Object.freeze({ initialize, checkpoint, read, readInternal, list, finish, cancel, remove, bindChat, rebindChat, queueHumanInput, armContinuation, cancelContinuation, cancelAllContinuations, pendingContinuations, reserveContinuationDelivery, settleContinuationDelivery, expireContinuation, reconcileContinuationsAfterRestart, prepareFreshResume, reserveFreshResumeMutation, settleFreshResume, cancelFreshResume, abandonFreshResume, cancelAllFreshResumes, reconcileFreshResumesAfterRestart, snapshot: async () => ({ tasks: await list({ limit: 50 }), loadErrors: [...loadErrors] }) });
 }

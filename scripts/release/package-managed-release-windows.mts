@@ -343,7 +343,8 @@ async function buildManagedShell(rootDir: string, releaseDir: string, transactio
     sourceSha,
     shellVersion: EQUINOX_LOCAL_DESKTOP_SHELL_VERSION,
   });
-  if (built.target !== contract.target || built.role !== "managed" || built.electron !== "46.0.0-alpha.10") {
+  const resolvedElectron = JSON.parse(await fs.readFile(path.join(rootDir, "node_modules", "electron", "package.json"), "utf8")).version;
+  if (built.target !== contract.target || built.role !== "managed" || built.electron !== resolvedElectron || !/^46\./u.test(resolvedElectron)) {
     throw new Error("Managed Windows Electron shell identity mismatch.");
   }
   await assertNormalTree(built.output);
