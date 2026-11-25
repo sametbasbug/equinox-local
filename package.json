@@ -61,7 +61,7 @@
     "zod": "^4.6.7"
   },
   "allowScripts": {
-    "node-pty@1.2.0-beta.18": true
+    "node-pty": true
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
@@ -69,11 +69,5 @@
     "@types/node": "^26.6.7",
     "electron": "^46.0.0-alpha.13",
     "typescript": "^7.0.2"
-  },
-  "overrides": {
-    "@electron/asar": {
-      "glob": "14.0.4",
-      "minimatch": "11.0.5"
-    }
   }
 }
