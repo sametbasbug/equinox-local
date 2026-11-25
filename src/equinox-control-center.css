@@ -187,6 +187,12 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .runtime-metadata { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 17px; color: var(--muted); font-size: 12px; }
 .runtime-metadata strong, .runtime-metadata small { font-size: inherit; font-variant-numeric: tabular-nums; }
 .runtime-metadata strong { color: var(--text-2); font-weight: 600; }
+.runtime-metadata .sidebar-updates { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 0 0 0 4px; }
+.runtime-metadata .sidebar-update-button { width: auto; min-height: 30px; padding: 5px 9px; background: var(--surface); color: var(--text); font-size: 12px; }
+.runtime-metadata .sidebar-update-button > span { flex: none; }
+.runtime-metadata .sidebar-update-chevron { display: none; }
+.runtime-metadata .sidebar-update-indicator { font-size: 11px; }
+.sidebar-update-indicator[hidden] { display: none; }
 .metric-divider { width: 1px; height: 11px; margin-inline: 3px; background: var(--line-strong); }
 .connection-summary { display: flex; align-items: center; gap: 11px; flex-shrink: 0; padding: 12px 14px; border-radius: var(--radius-md); background: var(--surface-2); }
 .connection-summary > .ui-icon { width: 18px; height: 18px; color: var(--accent); }
@@ -612,10 +618,10 @@ body:is(.chat-workspace-active, .setup-mode) .app-shell { grid-template-columns:
 .settings-body .language-control select { max-width: 145px; border: 1px solid var(--line); padding-inline: 9px; }
 .settings-runtime { grid-column: 1 / -1; display: grid; gap: 9px; padding-top: 14px; border-top: 1px solid var(--line); }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-.settings-runtime-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px 13px; padding: 9px 10px; border-radius: var(--radius-md); background: var(--surface-2); }
+.settings-runtime-footer { display: flex; align-items: center; padding: 9px 10px; border-radius: var(--radius-md); background: var(--surface-2); }
 .settings-body .sidebar-health, .settings-body .sidebar-updates { margin: 0; padding: 0; border: 0; }
 @media (max-width: 540px) {
-  .settings-body, .settings-runtime-footer { grid-template-columns: minmax(0, 1fr); }
+  .settings-body { grid-template-columns: minmax(0, 1fr); }
   .settings-profile { border-inline-start: 0; border-top: 1px solid var(--line); padding: 15px 0 0; }
 }
 
