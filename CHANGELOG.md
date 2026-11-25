@@ -1,4 +1,11 @@
-## Unreleased (after 7.0.0)
+## [7.1.0] - 2026-11-25
+
+### Native Chat, workspace and companions
+
+- Add a real first-party Chat workspace backed by the existing authenticated ChatGPT provider, featuring signed-in conversation history, model/Thinking controls, genuine response rendering and inline MCP Apps, alongside Nyx's reworked Control Center navigation and settings.
+- Extend the desktop companion from Nyx to four complete animated v2 sprites: **Nyx, Hemera, Asteria and Selene**. Fresh installs select Selene by default; saved companion identity, visibility and position continue to win for existing profiles.
+- Refresh the verified Electron 46 and native component baseline, preserve macOS Factory source updates and the existing four-target production-signed Main update path.
+- Prepare **Equinox Browser 1.3.0** (Chat Bridge v13) for owner-submitted Chrome Web Store review. Its existing extension ID, permissions and browser profile separation remain unchanged. Publishing the GitHub release does not submit or automatically publish the extension to CWS.
 
 ### Dependency and component refresh (2026-11-25)
 
@@ -6,7 +13,7 @@
 - Allow semver-compatible updates in direct npm manifest ranges while retaining lockfile integrity; Node 26.13.1, Dugite 2.56.1, Tunnel Client 0.0.21, WinApp CLI 0.8.0 and node-pty 1.2.0-beta.18 already match current upstream releases.
 - Remove the obsolete ASAR glob/minimatch overrides after upgrading to their latest supported releases (14.0.6/11.0.9); approve node-pty install scripts by package name rather than one beta version.
 - Bind the actual resolved Electron version into packaged shell metadata rather than restricting the application to one hardcoded alpha. Read selected and persisted chat avatars through a single validated file descriptor to remove CodeQL-reported file-system race windows.
-- Source-only candidate; installed-platform and public-release acceptance remain separate.
+- Signed Main distribution and installed-platform admission are verified independently from developer source builds.
 
 
 ### Dependency and component maintenance (2026-11-07)

@@ -95,7 +95,7 @@ flowchart LR
     TG[Optional Telegram bot] --> L
 ```
 
-- **Local management:** Since 7.0.0, the existing Control Center interface is packaged inside the native Electron application. Electron reads Control Center data through the existing private, authenticated local IPC bridge. The current 7.0.0 implementation no longer starts an HTTP dashboard or management listener; older rollback releases retain their own legacy behavior. Signed Main health gates use authenticated IPC. Runtime capabilities remain subject to configured access and product guards.
+- **Local management:** Since 7.0.0, the existing Control Center interface is packaged inside the native Electron application. Electron reads Control Center data through the existing private, authenticated local IPC bridge. The current 7.1.0 implementation does not start an HTTP dashboard or management listener; older rollback releases retain their own legacy behavior. Signed Main health gates use authenticated IPC. Runtime capabilities remain subject to configured access and product guards.
 - **Separate browser identities:** Agent Browser and Your Browser maintain independent profiles and consent. Your personal Chrome is never an implicit fallback.
 - **Resumable actions:** Task continuation preserves state without automatically repeating a chat send whose result is uncertain.
 - **One signed Main channel:** A completed four-target Main build is published as immutable source-SHA native artifacts and an Ed25519-signed latest selector. The native installer verifies this before replacing program files. Main presentation version and exact source commit are distinct; changes can ship without a new numbered GitHub Release.
@@ -127,7 +127,7 @@ npm run check
 
 ### Electron shell development
 
-The shell migration in this development tree uses **Electron 46** (currently 46.0.0-alpha.13, with an npm semver range) to display the existing Control Center. It retains the existing backend and packaged Control Center. A separate unreleased [embedded Chat replacement](docs/plans/native-chat-codex-replacement.md) mounts the real ChatGPT provider in the existing Chat section. See the [7.0.0 completion plan](docs/plans/electron7-completion.md) for the current scope and unfinished native gates (the original [migration plan](docs/plans/electron46-shell-migration.md) is historical); this section is not a release or installed-conversion announcement.
+The shell migration in this development tree uses **Electron 46** (currently 46.0.0-alpha.13, with an npm semver range) to display the existing Control Center. It retains the existing backend and packaged Control Center. The [embedded Chat workspace](docs/plans/native-chat-codex-replacement.md) mounts the real signed-in ChatGPT provider alongside the Control Center, retaining real message history, model controls and inline tool results. See the [7.0.0 completion plan](docs/plans/electron7-completion.md) for the current scope and unfinished native gates (the original [migration plan](docs/plans/electron46-shell-migration.md) is historical); managed Main installation and source Factory installs retain separate admitted identities.
 
 ```bash
 npm run build:typed-desktop
@@ -144,4 +144,4 @@ Equinox Local and Equinox Browser are licensed under **[AGPL-3.0-only](LICENSE)*
 
 ### Desktop companion
 
-The optional desktop companion can be set to **Nyx**, **Hemera**, or **Asteria** from the Control Center sidebar or the Electron app/tray menu, one at a time. Nyx uses its existing animated sprite; the other characters currently use distinct graphical emblems. This setting is local to the desktop and does **not** switch or control any agent runtime.
+The optional desktop companion can be set to **Nyx**, **Hemera**, **Asteria**, or **Selene** in Control Center or the Electron app/tray menu, one at a time. Each character includes its own bundled animated sprite sheet. Fresh 7.1.0 profiles default to Selene, while upgraded profiles retain their prior choice (including implicit Nyx defaults). This setting is local to the desktop and does **not** switch or control any agent runtime.

@@ -14,7 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -4016,19 +4016,19 @@ function bindEvents() {
     catch { showToast("ChatGPT microphone access is unavailable."); }
   });
   const companionPicker = $("companion-select");
-  companionPicker.value = window.equinoxShell?.getCompanionId() ?? "nyx";
+  companionPicker.value = window.equinoxShell?.getCompanionId() ?? "selene";
   companionPicker.disabled = !window.equinoxShell?.setCompanionId;
   const unsubscribeCompanion = window.equinoxShell?.onCompanionChanged(id => { companionPicker.value = id; });
   window.addEventListener("pagehide", () => unsubscribeCompanion?.(), { once: true });
   companionPicker.addEventListener("change", async () => {
     const id = companionPicker.value;
-    if (id !== "nyx" && id !== "hemera" && id !== "asteria") return;
+    if (id !== "nyx" && id !== "hemera" && id !== "asteria" && id !== "selene") return;
     companionPicker.disabled = true;
     try {
       if (!await window.equinoxShell?.setCompanionId(id)) throw new Error("Companion preference could not be saved.");
       showToast(`Companion: ${id[0]!.toUpperCase()}${id.slice(1)}`);
     } catch (error) {
-      companionPicker.value = window.equinoxShell?.getCompanionId() ?? "nyx";
+      companionPicker.value = window.equinoxShell?.getCompanionId() ?? "selene";
       showError(error);
     } finally { companionPicker.disabled = false; }
   });

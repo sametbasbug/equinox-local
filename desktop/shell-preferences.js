@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-export const COMPANION_IDS = ["nyx", "hemera", "asteria"];
+export const COMPANION_IDS = ["nyx", "hemera", "asteria", "selene"];
 export function validCompanionOrigin(value) {
     if (!value || typeof value !== "object")
         return false;
@@ -83,7 +83,9 @@ export function openShellPreferences(directory) {
                     || (item.companionId !== undefined && !COMPANION_IDS.includes(item.companionId))
                     || (item.companionBounds !== undefined && !validCompanionOrigin(item.companionBounds)))
                     throw new Error("Invalid shell preferences.");
-                values = parsed;
+                // Profiles created before 7.1.0 implicitly used Nyx. Keep that
+                // prior identity when upgrading a profile with no explicit choice.
+                values = { companionId: "nyx", ...parsed };
             }
             finally {
                 fs.closeSync(fd);

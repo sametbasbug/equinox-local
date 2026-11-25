@@ -175,7 +175,7 @@ const unsubscribe = bridge.subscribe(snapshot => {
     if (!snapshot || !["en", "tr"].includes(snapshot.language))
         return;
     document.documentElement.lang = snapshot.language;
-    const companionId = ["nyx", "hemera", "asteria"].includes(snapshot.companionId) ? snapshot.companionId : "nyx";
+    const companionId = ["nyx", "hemera", "asteria", "selene"].includes(snapshot.companionId) ? snapshot.companionId : "selene";
     const name = companionId[0].toUpperCase() + companionId.slice(1);
     document.body.dataset.companion = companionId;
     document.title = `Equinox Companion · ${name}`;

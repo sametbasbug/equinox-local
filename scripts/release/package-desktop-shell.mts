@@ -18,6 +18,7 @@ const SHELL_FILES = Object.freeze([
   "desktop/uninstall-handoff.js", "desktop/shell-preferences.js", "desktop/companion.js",
   "desktop/companion-preload.cjs", "desktop/companion-renderer.js", "desktop/companion.html", "desktop/companion.css",
   "app/EquinoxLocal.png", "app/EquinoxLocalMenuBar.png", "app/EquinoxCompanionNyx.webp",
+  "app/EquinoxCompanionHemera.webp", "app/EquinoxCompanionAsteria.webp", "app/EquinoxCompanionSelene.webp",
 ]);
 
 type DesktopBuildOptions = { rootDir?: string; outputDir?: string; target?: string };

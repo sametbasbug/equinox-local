@@ -27,7 +27,7 @@ export function createCompanionController(options: CompanionOptions) {
   const allowedAssets = new Set([
     ...urls.values(), pathToFileURL(path.join(options.directory, "companion-renderer.js")).href,
     pathToFileURL(path.join(options.directory, "companion.css")).href,
-    pathToFileURL(path.join(options.directory, "../app/EquinoxCompanionNyx.webp")).href,
+    ...COMPANION_IDS.map(id => pathToFileURL(path.join(options.directory, `../app/EquinoxCompanion${id[0]!.toUpperCase()}${id.slice(1)}.webp`)).href),
   ]);
   const isolated = session.fromPartition(`equinox-companion-${randomUUID()}`);
   isolated.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
@@ -35,7 +35,9 @@ export function createCompanionController(options: CompanionOptions) {
   isolated.on("will-download", event => event.preventDefault());
   isolated.webRequest.onBeforeRequest((details, reply) => reply({ cancel: !allowedAssets.has(details.url) }));
   let language = options.language;
-  let companionId: CompanionId = options.preferences.read().companionId ?? "nyx";
+  const savedCompanion = options.preferences.read().companionId;
+  let companionId: CompanionId = savedCompanion ?? "selene";
+  if (!savedCompanion) options.preferences.write({ companionId });
   let state = "offline";
   let visible = false;
   let disposed = false;
