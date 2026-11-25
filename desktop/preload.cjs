@@ -37,6 +37,16 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
             ipcRenderer.on("equinox-shell:companion-changed", listener);
             return () => ipcRenderer.removeListener("equinox-shell:companion-changed", listener);
         },
+        onCompanionWorkspaceRequest: (callback) => {
+            if (typeof callback !== "function")
+                return () => { };
+            const listener = (_event, destination) => {
+                if (destination === "chat" || destination === "control-center")
+                    callback(destination);
+            };
+            ipcRenderer.on("equinox-shell:companion-workspace", listener);
+            return () => ipcRenderer.removeListener("equinox-shell:companion-workspace", listener);
+        },
         setAppearance: (value) => {
             if (value === "system" || value === "light" || value === "dark") {
                 void ipcRenderer.invoke("equinox-shell:appearance", value).catch(() => { });

@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, screen, session, shell } from "electron";
+import { BrowserWindow, ipcMain, screen, session } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -330,8 +330,12 @@ export function createCompanionController(options) {
             return;
         actionsRequested = false;
         windows.get("actions")?.hide();
-        if (value === "new-chat")
-            void shell.openExternal("https://chatgpt.com/").catch(() => { });
+        if (value === "new-chat") {
+            try {
+                options.openChat();
+            }
+            catch { /* Optional action. */ }
+        }
         else if (value === "control-center") {
             try {
                 options.openControlCenter();

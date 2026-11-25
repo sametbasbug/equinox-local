@@ -5,6 +5,7 @@
 - Fix selecting **Selene** from Control Center Settings. The secure Electron preload bridge had not admitted Selene in its companion snapshot, selection, and change-event paths even though the native menu and persistence accepted it.
 - Keep all four companion IDs under one bounded bridge allowlist, preserve saved choices and the Selene default for first-time profiles.
 - Equinox Browser remains **1.3.0**; no extension change or Chrome Web Store resubmission is required.
+- Route Pet menu **New Chat** to the built-in Chat tab and **Control Center** to the existing Control Center workspace instead of opening ChatGPT in a browser or merely focusing the last open tab.
 
 ## [7.1.0] - 2026-11-25
 

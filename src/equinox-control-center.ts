@@ -14,7 +14,7 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -3954,6 +3954,13 @@ function onNavigationShortcut(event: UiRemoteData) {
 
 function bindEvents() {
   document.addEventListener("keydown", onNavigationShortcut);
+  const unsubscribeCompanionWorkspace = window.equinoxShell?.onCompanionWorkspaceRequest(destination => {
+    if (state.setupMode) return;
+    // Only the native companion menu can request these fixed destinations.
+    // Reuse the exact same route as the two workspace tabs.
+    switchSection(destination === "chat" ? "chat" : lastLocalSection, { remember: true });
+  });
+  window.addEventListener("pagehide", () => unsubscribeCompanionWorkspace?.(), { once: true });
   for (const button of document.querySelectorAll<HTMLElement>(".nav-item")) {
     button.addEventListener("click", () => {
       if (button.closest("#settings-dialog")) $("settings-dialog").close();
