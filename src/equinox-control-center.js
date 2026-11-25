@@ -93,10 +93,6 @@ function initialChatAccent() {
 let chatAccent = initialChatAccent();
 function applyChatAccent() {
     document.documentElement.style.setProperty("--equinox-user-accent", chatAccent);
-    document.documentElement.style.setProperty("--accent", "color-mix(in srgb, var(--equinox-user-accent) 72%, var(--text))");
-    document.documentElement.style.setProperty("--accent-hover", "color-mix(in srgb, var(--equinox-user-accent) 60%, var(--text))");
-    document.documentElement.style.setProperty("--accent-soft", "color-mix(in srgb, var(--equinox-user-accent) 14%, var(--surface))");
-    document.documentElement.style.setProperty("--workspace-active", "color-mix(in srgb, var(--equinox-user-accent) 13%, var(--workspace-chrome))");
     for (const button of document.querySelectorAll("[data-chat-accent]")) {
         const active = button.dataset.chatAccent?.toUpperCase() === chatAccent;
         button.setAttribute("aria-pressed", String(active));
@@ -212,7 +208,7 @@ function localizeUiText(value) {
     return translateUiText(value, state.language);
 }
 const DYNAMIC_TEXT_IDS = new Set([
-    "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-kicker", "section-title", "last-refreshed",
+    "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "last-refreshed",
     "chat-identity-feedback", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
     "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
     "runtime-health-badge", "overview-title", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
@@ -306,16 +302,16 @@ function setLanguage(nextLanguage, { persist = true } = {}) {
         setText("dialog-title", `${isEdit ? "Edit" : "Add"} ${isProject ? "project" : "read-only folder"}`);
     }
 }
-const sectionMeta = {
-    setup: ["Getting started", "Setup Equinox Local"],
-    dashboard: ["Your workspace", "Overview"],
-    projects: ["Your workspace", "Projects & folders"],
-    tasks: ["Your workspace", "Tasks"],
-    browser: ["Browser contexts", "Browser"],
-    chat: ["Your workspace", "Chat"],
-    permissions: ["Agent control", "Safety & access"],
-    integrations: ["Optional capabilities", "Services"],
-    activity: ["Diagnostics", "Activity"],
+const sectionTitles = {
+    setup: "Setup Equinox Local",
+    dashboard: "Overview",
+    projects: "Projects & folders",
+    tasks: "Tasks",
+    browser: "Browser",
+    chat: "Chat",
+    permissions: "Safety & access",
+    integrations: "Services",
+    activity: "Activity",
 };
 function clone(value) {
     return structuredClone(value);
@@ -494,8 +490,9 @@ function bindEmbeddedChatLayout() {
         void window.equinoxShell?.setEmbeddedChatBounds(null).catch(() => { });
     }, { once: true });
 }
+let lastLocalSection = "dashboard";
 function switchSection(section, { remember = false } = {}) {
-    if (!sectionMeta[section])
+    if (!sectionTitles[section])
         return;
     if (state.setupMode && section !== "setup")
         return;
@@ -503,8 +500,13 @@ function switchSection(section, { remember = false } = {}) {
         return;
     const changed = state.activeSection !== section;
     state.activeSection = section;
-    document.body.classList.toggle("chat-workspace-active", section === "chat");
-    $("chat-microphone-button").hidden = section !== "chat";
+    const chatActive = section === "chat";
+    const localActive = !chatActive && section !== "setup";
+    if (localActive)
+        lastLocalSection = section;
+    document.body.classList.toggle("chat-workspace-active", chatActive);
+    $("control-center-nav").hidden = !localActive;
+    $("chat-microphone-button").hidden = !chatActive;
     if (remember && section !== "setup") {
         try {
             localStorage.setItem(SECTION_STORAGE_KEY, section);
@@ -514,7 +516,7 @@ function switchSection(section, { remember = false } = {}) {
         }
     }
     for (const button of document.querySelectorAll(".nav-item")) {
-        const active = button.dataset.section === section;
+        const active = button.id === "workspace-local" ? localActive : button.dataset.section === section;
         button.classList.toggle("is-active", active);
         if (active)
             button.setAttribute("aria-current", "page");
@@ -526,9 +528,7 @@ function switchSection(section, { remember = false } = {}) {
         element.hidden = !active;
         element.classList.toggle("is-active", active);
     }
-    const [kicker, title] = sectionMeta[section];
-    setText("section-kicker", kicker);
-    setText("section-title", title);
+    setText("section-title", sectionTitles[section]);
     syncEmbeddedChatLayout();
     if (changed) {
         $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
@@ -674,7 +674,7 @@ function applySetupMode(setupMode) {
     const previous = state.setupMode;
     state.setupMode = setupMode;
     document.body.classList.toggle("setup-mode", setupMode);
-    $("control-center-nav").hidden = setupMode;
+    $("workspace-nav").hidden = setupMode;
     $("setup-nav").hidden = !setupMode;
     moveUninstallCard(setupMode);
     if (setupMode && state.activeSection !== "setup")
@@ -3987,7 +3987,7 @@ function bindEvents() {
         button.addEventListener("click", () => {
             if (button.closest("#settings-dialog"))
                 $("settings-dialog").close();
-            switchSection(button.dataset.section, { remember: true });
+            switchSection(button.id === "workspace-local" ? lastLocalSection : button.dataset.section, { remember: true });
         });
     }
     for (const button of document.querySelectorAll("[data-jump-section]")) {
@@ -4207,14 +4207,14 @@ function applyInitialNavigationIntent() {
     const section = params.get("section");
     const taskId = params.get("task");
     // Explicit links always take priority over the last section opened by hand.
-    if (section && sectionMeta[section])
+    if (section && sectionTitles[section])
         state.activeSection = section;
     else if (taskId && /^task-[a-z0-9-]{6,80}$/u.test(taskId))
         state.activeSection = "tasks";
     else {
         try {
             const remembered = localStorage.getItem(SECTION_STORAGE_KEY);
-            if (remembered && remembered !== "setup" && sectionMeta[remembered])
+            if (remembered && remembered !== "setup" && sectionTitles[remembered])
                 state.activeSection = remembered;
         }
         catch {

@@ -218,6 +218,7 @@ const TR_UI = Object.freeze({
   "Equinox Local Control Center": "Equinox Local Kontrol Merkezi",
   "Primary navigation": "Ana gezinme",
   "Control Center": "Kontrol Merkezi",
+  "Workspaces": "Çalışma alanları",
   "Control Center sections": "Kontrol Merkezi bölümleri",
   "Shortcuts: Alt/Option + Shift + 1–7": "Kısayollar: Alt/Option + Shift + 1–7",
   "Dashboard": "Gösterge Paneli",
