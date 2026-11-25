@@ -18,6 +18,7 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
       const id: unknown = ipcRenderer.sendSync("equinox-shell:companion-snapshot");
       return id === "nyx" || id === "hemera" || id === "asteria" ? id : "nyx";
     },
+    setChatAccent: (value: unknown) => ipcRenderer.invoke("equinox-shell:chat-accent", value),
     setCompanionId: (id: unknown) => {
       if (id !== "nyx" && id !== "hemera" && id !== "asteria") return Promise.resolve(false);
       return ipcRenderer.invoke("equinox-shell:companion-select", id);

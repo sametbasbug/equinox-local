@@ -7,6 +7,13 @@ export function localeForLanguage(language) {
     return normalizeLanguage(language) === "tr" ? "tr-TR" : "en-US";
 }
 const TR_UI = Object.freeze({
+    "Accent color": "Vurgu rengi",
+    "Violet": "Mor",
+    "Fuchsia": "Fuşya",
+    "Blue": "Mavi",
+    "Teal": "Turkuaz",
+    "Custom color": "Özel renk",
+    "Custom": "Özel",
     "Chat identity": "Sohbet kimliği",
     "Agent name": "Ajan adı",
     "Agent avatar": "Ajan profil fotoğrafı",

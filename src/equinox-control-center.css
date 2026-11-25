@@ -704,8 +704,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   .workspace-navigation .nav-item { padding-inline: 6px; min-width: 29px; }
 }
 
-/* The native provider child occupies only its local Chat host. The run
-   history is a horizontal dock, not a third column that squeezes messages. */
+/* The actual provider owns the chat host and per-turn MCP tool cards.
+   No separate global run history panel or second navigation column. */
 body.chat-workspace-active { overflow: hidden; }
 .chat-workspace-active .app-shell { height: 100dvh; min-height: 0; grid-template-rows: 52px minmax(0,1fr); }
 .chat-workspace-active .main-panel { max-width: none; min-height: 0; height: 100%; padding: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
@@ -724,3 +724,52 @@ body.chat-workspace-active { overflow: hidden; }
 body:not(.chat-workspace-active) .topbar { top: 52px; }
 html { scroll-padding-top: 170px; }
 body:not(.chat-workspace-active) .main-panel { grid-column: 1; }
+
+
+/* Equinox V2: one global, user-selected accent instead of per-agent colors. */
+.accent-preference { align-items: flex-start; }
+.accent-picker { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+.accent-swatch { width: 23px; height: 23px; flex: 0 0 23px; border: 2px solid var(--surface); border-radius: 50%; background: var(--swatch); box-shadow: 0 0 0 1px var(--line-strong); cursor: pointer; transition: transform 150ms ease, box-shadow 150ms ease; }
+.accent-swatch:hover { transform: scale(1.12); }
+.accent-swatch.is-active { box-shadow: 0 0 0 2px var(--text); }
+.accent-custom { display: flex; align-items: center; gap: 5px; color: var(--text-2); font-size: 12px; cursor: pointer; }
+.accent-custom input { width: 27px; height: 27px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; padding: 0; }
+.accent-custom input::-webkit-color-swatch-wrapper { padding: 2px; }
+.accent-custom input::-webkit-color-swatch { border: 1px solid var(--line-strong); border-radius: 5px; }
+
+
+/* Equinox V2 chrome: quiet premium frame, real navigation and no fake statuses. */
+:root {
+  --workspace-chrome: #f8f9fc;
+  --workspace-hover: #eef0f6;
+}
+:root[data-theme="dark"] {
+  --workspace-chrome: #151923;
+  --workspace-hover: #252a36;
+}
+.workspace-navigation {
+  height: 56px; min-height: 56px; gap: 18px;
+  border-bottom-color: var(--line);
+  box-shadow: 0 1px 0 #10152506;
+}
+.chat-workspace-active .app-shell { grid-template-rows: 56px minmax(0,1fr); }
+.workspace-navigation .brand-logo { width: 30px; height: 30px; flex-basis: 30px; border-radius: 10px; }
+.workspace-navigation .brand-block h1 { font-size: 13px; letter-spacing: -.024em; font-weight: 750; }
+.workspace-navigation .brand-caption { font-size: 10px; letter-spacing: .045em; }
+.workspace-navigation .nav-list { gap: 4px; }
+.workspace-navigation .nav-item {
+  height: 35px; min-height: 35px;
+  border-radius: 8px; font-size: 12px;
+  font-weight: 540;
+}
+.workspace-navigation .nav-item.is-active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--equinox-user-accent, #8B6CF0) 12%, var(--workspace-chrome));
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.workspace-navigation .nav-item:focus-visible, .rail-button:focus-visible {
+  outline-offset: 2px;
+}
+.chat-workspace-active .main-panel { background: var(--workspace-chrome); }
+.chat-provider-host { background: var(--workspace-chrome); }
+:root[data-theme="dark"] .chat-identity-settings { color: var(--text); }

@@ -2,6 +2,8 @@ import { localeForLanguage, normalizeLanguage, SUPPORTED_LANGUAGES, translateDoc
 const $ = (id) => document.getElementById(id);
 const LANGUAGE_STORAGE_KEY = "equinox-local-control-center-language";
 const THEME_STORAGE_KEY = "equinox-local-control-center-theme";
+const CHAT_ACCENT_STORAGE_KEY = "equinox-local-control-center-accent";
+const DEFAULT_CHAT_ACCENT = "#8B6CF0";
 const SECTION_STORAGE_KEY = "equinox-local-control-center-last-section";
 const NAVIGATION_SHORTCUTS = Object.freeze({
     Digit1: "dashboard",
@@ -76,6 +78,42 @@ function setTheme(nextTheme, { persist = true } = {}) {
         }
     }
     applyTheme();
+}
+function normalizeChatAccent(value) {
+    return typeof value === "string" && /^#[0-9a-fA-F]{6}$/u.test(value) ? value.toUpperCase() : DEFAULT_CHAT_ACCENT;
+}
+function initialChatAccent() {
+    try {
+        return normalizeChatAccent(localStorage.getItem(CHAT_ACCENT_STORAGE_KEY));
+    }
+    catch {
+        return DEFAULT_CHAT_ACCENT;
+    }
+}
+let chatAccent = initialChatAccent();
+function applyChatAccent() {
+    document.documentElement.style.setProperty("--equinox-user-accent", chatAccent);
+    document.documentElement.style.setProperty("--accent", "color-mix(in srgb, var(--equinox-user-accent) 72%, var(--text))");
+    document.documentElement.style.setProperty("--accent-hover", "color-mix(in srgb, var(--equinox-user-accent) 60%, var(--text))");
+    document.documentElement.style.setProperty("--accent-soft", "color-mix(in srgb, var(--equinox-user-accent) 14%, var(--surface))");
+    document.documentElement.style.setProperty("--workspace-active", "color-mix(in srgb, var(--equinox-user-accent) 13%, var(--workspace-chrome))");
+    for (const button of document.querySelectorAll("[data-chat-accent]")) {
+        const active = button.dataset.chatAccent?.toUpperCase() === chatAccent;
+        button.setAttribute("aria-pressed", String(active));
+        button.classList.toggle("is-active", active);
+    }
+    const input = document.getElementById("chat-accent-custom");
+    if (input)
+        input.value = chatAccent.toLowerCase();
+    void window.equinoxShell?.setChatAccent(chatAccent).catch(() => { });
+}
+function setChatAccent(value) {
+    chatAccent = normalizeChatAccent(value);
+    try {
+        localStorage.setItem(CHAT_ACCENT_STORAGE_KEY, chatAccent);
+    }
+    catch { /* The selected color still works for this session. */ }
+    applyChatAccent();
 }
 function initialLanguage() {
     try {
@@ -3958,6 +3996,12 @@ function bindEvents() {
     for (const button of document.querySelectorAll("[data-theme-value]")) {
         button.addEventListener("click", () => setTheme(button.dataset.themeValue));
     }
+    for (const button of document.querySelectorAll("[data-chat-accent]")) {
+        button.addEventListener("click", () => setChatAccent(button.dataset.chatAccent || DEFAULT_CHAT_ACCENT));
+    }
+    $("chat-accent-custom").addEventListener("input", (event) => {
+        setChatAccent(event.target.value);
+    });
     systemThemeMedia.addEventListener?.("change", () => {
         if (state.theme === "system")
             applyTheme();
@@ -4183,6 +4227,7 @@ function applyInitialNavigationIntent() {
 applyInitialNavigationIntent();
 captureStaticTranslatables();
 applyTheme();
+applyChatAccent();
 applyStaticLanguage();
 notifyNativeLanguage();
 bindEvents();

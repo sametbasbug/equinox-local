@@ -727,6 +727,15 @@ function createWindow(): void {
 // A fixed three-value appearance bridge keeps the Equinox-owned preview chrome
 // aligned with the user's Control Center preference. ChatGPT still owns its
 // own provider theme/account setting and all DOM/content permissions.
+let chatAccent = "#8B6CF0";
+ipcMain.handle("equinox-shell:chat-accent", (event, value: unknown) => {
+  if (!trustedSender(event) || quitting || typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/u.test(value))
+    throw new Error("Invalid accent preference.");
+  chatAccent = value.toUpperCase();
+  embeddedChat?.setAccent(chatAccent);
+  return true;
+});
+
 ipcMain.handle("equinox-shell:appearance", (event, value: unknown) => {
   if (!trustedSender(event) || quitting || (value !== "system" && value !== "light" && value !== "dark"))
     throw new Error("Untrusted appearance preference.");
@@ -750,7 +759,7 @@ ipcMain.handle("equinox-shell:embedded-chat-layout", (event, value: unknown) => 
   const right = Math.min(width, Math.round((Number(rect.x) + Number(rect.width)) * scale));
   const bottom = Math.min(height, Math.round((Number(rect.y) + Number(rect.height)) * scale));
   if (right <= x || bottom <= y) { embeddedChat?.setBounds(null); return; }
-  embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en", chatIdentity());
+  embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en", chatIdentity(), chatAccent);
   embeddedChat.setBounds({ x, y, width: right - x, height: bottom - y });
 });
 ipcMain.handle("equinox-shell:embedded-chat-microphone", async (event) => {

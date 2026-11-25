@@ -67,20 +67,21 @@ function permittedExternalLink(value: string): string | null {
 // semantic class names; no provider action is replaced or programmatically invoked.
 const STYLE = String.raw`
 html.chatgpt-theme {
-  --eq-canvas: #fafbfc;
-  --eq-sidebar: #f0f1f4;
-  --eq-paper: #f8f9fb;
+  --eq-canvas: #f8f9fc;
+  --eq-sidebar: #eef0f6;
+  --eq-paper: #ffffff;
   --eq-editor: #ffffff;
-  --eq-border: #dfe1e7;
-  --eq-text: #242329;
-  --eq-secondary: #66646d;
-  --eq-muted: #82808a;
-  --eq-accent: #6954b8;
+  --eq-border: #e0e4ed;
+  --eq-text: #1d2432;
+  --eq-secondary: #687083;
+  --eq-muted: #8991a1;
+  --eq-accent: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 76%, #252138);
   --eq-composer-ink: #ffffff;
-  --eq-active: #eae6f3;
-  --eq-bubble: #eeebf5;
-  --eq-bubble-text: #30283e;
-  --eq-composer-shadow: 0 1px 3px #19151d0b, 0 12px 30px #19151d09;
+  --eq-send: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 73%, #27223c);
+  --eq-active: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 11%, #ffffff);
+  --eq-bubble: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 8%, #ffffff);
+  --eq-bubble-text: #222435;
+  --eq-composer-shadow: 0 2px 4px #18213b08, 0 16px 36px #18213b0d;
   --color-surface: var(--eq-canvas) !important;
   --color-surface-secondary: var(--eq-canvas) !important;
   --color-surface-tertiary: var(--eq-sidebar) !important;
@@ -97,26 +98,26 @@ html.chatgpt-theme {
   --color-background-user-message: var(--eq-bubble) !important;
   --color-text-user-message: var(--eq-bubble-text) !important;
   --color-background-composer-surface: var(--eq-editor) !important;
-  --color-background-composer-primary: var(--eq-accent) !important;
+  --color-background-composer-primary: var(--eq-send) !important;
   --color-text-composer-primary: var(--eq-composer-ink) !important;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   html.chatgpt-theme {
-    --eq-canvas: #1e2025;
-    --eq-sidebar: #191b20;
-    --eq-paper: #272a31;
-    --eq-editor: #272a31;
-    --eq-border: #383b44;
-    --eq-text: #eeedf2;
-    --eq-secondary: #b6b3bf;
-    --eq-muted: #96939f;
-    --eq-accent: #b9a7f3;
-    --eq-composer-ink: #24202d;
-    --eq-active: #383143;
-    --eq-bubble: #363040;
-    --eq-bubble-text: #f0eaf9;
-    --eq-composer-shadow: 0 2px 5px #0003, 0 7px 28px #0002;
+    --eq-canvas: #12151c;
+    --eq-sidebar: #171b24;
+    --eq-paper: #1c212c;
+    --eq-editor: #202532;
+    --eq-border: #343947;
+    --eq-text: #ecedf4;
+    --eq-secondary: #b5bbc9;
+    --eq-muted: #8893a6;
+    --eq-accent: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 72%, #ffffff);
+    --eq-composer-ink: #ffffff;
+    --eq-active: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 18%, #232731);
+    --eq-bubble: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 13%, #272b35);
+    --eq-bubble-text: #f0eef8;
+    --eq-composer-shadow: 0 2px 7px #0004, 0 12px 30px #0003;
     color-scheme: dark;
   }
 }
@@ -377,8 +378,8 @@ html.chatgpt-theme [data-message-author-role="user"] {
   max-width: 100% !important;
 }
 html.chatgpt-theme [data-message-author-role="user"] :is(div,section):has(> .bg-user-message.text-user-message) {
-  justify-content: flex-start !important;
-  align-items: flex-start !important;
+  justify-content: flex-end !important;
+  align-items: flex-end !important;
 }
 /* The same native input, attachment and action controls stay mounted. A
    two-row editor matches the Codex reference in both new and ongoing chats. */
@@ -428,9 +429,8 @@ html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="respons
 html.chatgpt-theme [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
   min-height: 56px;
 }
-/* A shorter editor in ongoing chats and compact windows leaves room
-   for the transcript and the native run dock. Actual input/attachment
-   content still grows normally; no fixed editor maximum is imposed. */
+/* Keep the ongoing composer compact while preserving native attachment,
+   expansion and textarea growth. Inline runs stay inside agent messages. */
 html.chatgpt-theme form[data-chatgpt-composer]:not([data-composer-placement="home"]) [data-composer-footer-responsive][data-composer-rows="responsive"] {
   grid-template-rows: minmax(36px, auto) auto !important;
   padding-block: 6px !important;
@@ -545,10 +545,166 @@ html.chatgpt-theme main [data-equinox-role="user"] [data-user-message-bubble="tr
   background: var(--eq-paper) !important;
 }
 html.chatgpt-theme main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] { line-height: 1.72; }
+
+/* Equinox Chat V2: two distinct people, not two copies of a Web message.
+   Provider-owned message nodes, streaming, menus and conversation controls
+   remain untouched. Only the existing annotated message wrapper is styled. */
+html.chatgpt-theme main [data-equinox-role] {
+  margin-block: 16px 27px;
+  padding-block-start: 30px !important;
+  width: 100%;
+  max-width: 100%;
+}
+html.chatgpt-theme main [data-equinox-role]::before {
+  width: 36px;
+  height: 36px;
+  border: 2px solid var(--eq-canvas);
+  box-shadow: 0 0 0 1px var(--eq-border);
+}
+html.chatgpt-theme main [data-equinox-role]::after {
+  top: 3px;
+  font-size: 12px;
+  font-weight: 680;
+  letter-spacing: .012em;
+  color: var(--eq-secondary);
+}
+html.chatgpt-theme main [data-equinox-role="user"] {
+  padding-inline-start: 0 !important;
+  padding-inline-end: 54px !important;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end !important;
+  text-align: start;
+}
+html.chatgpt-theme main [data-equinox-role="user"]::before {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  background-image: var(--eq-human-avatar, none);
+}
+html.chatgpt-theme main [data-equinox-role="user"]::after {
+  inset-inline-start: auto;
+  inset-inline-end: 54px;
+  text-align: right;
+  color: var(--eq-accent);
+}
+html.chatgpt-theme main [data-equinox-role="user"] [class~="group/user-message"] {
+  align-items: flex-end !important;
+  justify-content: flex-end !important;
+  width: 100%;
+}
+html.chatgpt-theme main [data-equinox-role="user"] [data-user-message-bubble="true"] {
+  width: fit-content !important;
+  max-width: min(690px, 100%) !important;
+  min-width: 0;
+  margin-inline-start: auto !important;
+  padding: 12px 17px !important;
+  border: 1px solid color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 18%, var(--eq-border)) !important;
+  border-radius: 13px 4px 13px 13px !important;
+  background: var(--eq-bubble) !important;
+  color: var(--eq-bubble-text) !important;
+  text-align: start !important;
+  line-height: 1.6;
+  box-shadow: 0 2px 8px #080a1005;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] {
+  padding-inline-start: 54px !important;
+  padding-inline-end: 0 !important;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"]::before { inset-inline-start: 0; }
+html.chatgpt-theme main [data-equinox-role="assistant"]::after {
+  inset-inline-start: 54px;
+  color: var(--eq-text);
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] [data-response-body] {
+  max-width: 100%;
+  padding: 14px 18px 15px !important;
+  border: 1px solid var(--eq-border);
+  border-radius: 4px 13px 13px 13px;
+  background: var(--eq-paper);
+  box-shadow: 0 2px 8px #080a1006;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] {
+  line-height: 1.68;
+  font-size: 14px;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(h1,h2,h3) {
+  letter-spacing: -.024em;
+  color: var(--eq-text);
+}
+/* Provider's measured table width (880px) can exceed the padded card
+   (788px). Keep the semantic table and constrain its columns to its reader. */
+html.chatgpt-theme main [data-equinox-role="assistant"] [class*="TableFrame-"] {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  margin-inline: 0 !important;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] [class*="TableViewport-"] {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  /* The provider aligns narrower native tables to the right of this
+     scrollable viewport. Reverse just the wrapper and restore table text. */
+  direction: rtl;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] table {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  direction: ltr;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(th,td) {
+  overflow-wrap: anywhere;
+}
+html.chatgpt-theme main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
+  max-width: 100% !important;
+  overflow: hidden;
+}
+
+/* Clear, quiet reading line for the real per-tool MCP App card. */
+html.chatgpt-theme main [data-equinox-role="assistant"] iframe {
+  max-width: 100%;
+  border-radius: 8px;
+}
+/* Real sidebar sections: restrained typography and discoverable navigation. */
+html.chatgpt-theme #app-shell-sidebar .sidebar-navigation {
+  font-size: 12px;
+  letter-spacing: -.007em;
+}
+html.chatgpt-theme #app-shell-sidebar :is(a,button):hover {
+  background-color: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 6%, var(--eq-sidebar));
+}
+html.chatgpt-theme #app-shell-sidebar :is(a,button)[aria-current="page"] {
+  box-shadow: inset 2px 0 0 var(--eq-accent);
+}
+html.chatgpt-theme form[data-chatgpt-composer] [class*="ComposerSurface-"] {
+  border-radius: 15px !important;
+  border-color: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 10%, var(--eq-border)) !important;
+}
+html.chatgpt-theme form[data-chatgpt-composer]:focus-within [class*="ComposerSurface-"] {
+  border-color: color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 45%, var(--eq-border)) !important;
+  box-shadow: var(--eq-composer-shadow), 0 0 0 2px color-mix(in srgb, var(--eq-user-accent, #8B6CF0) 9%, transparent) !important;
+}
+html.chatgpt-theme form[data-chatgpt-composer] [data-composer-trailing-controls] button:enabled:hover {
+  filter: brightness(1.08);
+}
+@media (max-width: 700px) {
+  html.chatgpt-theme main [data-equinox-role="user"] { padding-inline-end: 40px !important; }
+  html.chatgpt-theme main [data-equinox-role="assistant"] { padding-inline-start: 40px !important; }
+  html.chatgpt-theme main [data-equinox-role]::before { width: 30px; height: 30px; }
+  html.chatgpt-theme main [data-equinox-role="user"]::after { inset-inline-end: 40px; }
+  html.chatgpt-theme main [data-equinox-role="assistant"]::after { inset-inline-start: 40px; }
+  html.chatgpt-theme main [data-equinox-role="assistant"] [data-response-body] { padding: 11px 12px !important; }
+  html.chatgpt-theme main [data-equinox-role="user"] [data-user-message-bubble="true"] { padding: 10px 12px !important; }
+}
+
 @media(max-width:550px) {
-  html.chatgpt-theme main [data-equinox-role] { padding-inline-start: 37px !important; }
+  html.chatgpt-theme main [data-equinox-role="assistant"] { padding-inline-start: 37px !important; }
+  html.chatgpt-theme main [data-equinox-role="user"] { padding-inline-start: 0 !important; padding-inline-end: 37px !important; }
   html.chatgpt-theme main [data-equinox-role]::before { width: 27px; height: 27px; }
-  html.chatgpt-theme main [data-equinox-role]::after { inset-inline-start: 37px; }
+  html.chatgpt-theme main [data-equinox-role="assistant"]::after { inset-inline-start: 37px; }
+  html.chatgpt-theme main [data-equinox-role="user"]::after { inset-inline-start: auto; inset-inline-end: 37px; }
 }
 /* Home suggestions remain real, selectable provider controls. Compact
    only the ordinary small button lists below the composer; never restyle
@@ -600,8 +756,10 @@ html.chatgpt-theme [class~="group/home-composer-layout"]:not(:has([data-homepage
 // Its separate session and webPreferences never receive the Control Center preload.
 type ChatIdentity = {name:string;avatar:string|null};
 
-function decorateProviderIdentity(identity: ChatIdentity, language: "en" | "tr"): void {
+function decorateProviderIdentity(identity: ChatIdentity, language: "en" | "tr", accent: string): void {
   const root = document.documentElement;
+  document.documentElement.style.setProperty("--eq-user-accent",
+    /^#[0-9a-fA-F]{6}$/u.test(accent) ? accent : "#8B6CF0");
   const agent = identity.name.trim() || "Equinox";
   const human = language === "tr" ? "Sen" : "You";
   const mark = (element: Element, role: "user" | "assistant", name: string) => {
@@ -659,7 +817,7 @@ function decorateProviderIdentity(identity: ChatIdentity, language: "en" | "tr")
   sync();
 }
 
-export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "tr" = "en", initialIdentity: ChatIdentity = {name:"",avatar:null}) {
+export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "tr" = "en", initialIdentity: ChatIdentity = {name:"",avatar:null}, initialAccent = "#8B6CF0") {
   let language = initialLanguage;
   const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
   // Electron's default UA adds a non-browser product token to the actual
@@ -828,9 +986,10 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     }
   });
   let identity = initialIdentity;
+  let accent = initialAccent;
   const applyIdentity = () => {
     if (view.webContents.isDestroyed() || !isChatGPTOrigin(view.webContents.getURL())) return;
-    const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(identity) + "," + JSON.stringify(language) + ")";
+    const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(identity) + "," + JSON.stringify(language) + "," + JSON.stringify(accent) + ")";
     void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code}]).catch(() => {});
   };
   // Provider SPA navigation does not fire did-finish-load. Reattach the
@@ -879,6 +1038,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     },
     setLanguage(value: "en" | "tr"): void { language = value; applyIdentity(); },
     setIdentity(value: ChatIdentity): void { identity = value; applyIdentity(); },
+    setAccent(value: string): void { accent = value; applyIdentity(); },
     async requestMicrophone(): Promise<boolean> {
       const granted = await askMicrophonePermission();
       if (granted && !view.webContents.isDestroyed()) view.webContents.reload();

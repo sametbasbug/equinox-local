@@ -14,13 +14,15 @@ type UiDomControl = HTMLInputElement & HTMLSelectElement & HTMLDialogElement & H
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria";setCompanionId:(id:"nyx"|"hemera"|"asteria")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<void>;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
 
 const LANGUAGE_STORAGE_KEY = "equinox-local-control-center-language";
 const THEME_STORAGE_KEY = "equinox-local-control-center-theme";
+const CHAT_ACCENT_STORAGE_KEY = "equinox-local-control-center-accent";
+const DEFAULT_CHAT_ACCENT = "#8B6CF0";
 const SECTION_STORAGE_KEY = "equinox-local-control-center-last-section";
 const NAVIGATION_SHORTCUTS:Readonly<Record<string,string>> = Object.freeze({
   Digit1: "dashboard",
@@ -95,6 +97,40 @@ function setTheme(nextTheme: UiRemoteData, { persist = true } = {}) {
     }
   }
   applyTheme();
+}
+
+function normalizeChatAccent(value: unknown): string {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/u.test(value) ? value.toUpperCase() : DEFAULT_CHAT_ACCENT;
+}
+function initialChatAccent(): string {
+  try { return normalizeChatAccent(localStorage.getItem(CHAT_ACCENT_STORAGE_KEY)); }
+  catch { return DEFAULT_CHAT_ACCENT; }
+}
+let chatAccent = initialChatAccent();
+function applyChatAccent(): void {
+  document.documentElement.style.setProperty("--equinox-user-accent", chatAccent);
+  document.documentElement.style.setProperty("--accent",
+    "color-mix(in srgb, var(--equinox-user-accent) 72%, var(--text))");
+  document.documentElement.style.setProperty("--accent-hover",
+    "color-mix(in srgb, var(--equinox-user-accent) 60%, var(--text))");
+  document.documentElement.style.setProperty("--accent-soft",
+    "color-mix(in srgb, var(--equinox-user-accent) 14%, var(--surface))");
+  document.documentElement.style.setProperty("--workspace-active",
+    "color-mix(in srgb, var(--equinox-user-accent) 13%, var(--workspace-chrome))");
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-chat-accent]")) {
+    const active = button.dataset.chatAccent?.toUpperCase() === chatAccent;
+    button.setAttribute("aria-pressed", String(active));
+    button.classList.toggle("is-active", active);
+  }
+  const input = document.getElementById("chat-accent-custom") as HTMLInputElement|null;
+  if (input) input.value = chatAccent.toLowerCase();
+  void window.equinoxShell?.setChatAccent(chatAccent).catch(() => {});
+}
+function setChatAccent(value: string): void {
+  chatAccent = normalizeChatAccent(value);
+  try { localStorage.setItem(CHAT_ACCENT_STORAGE_KEY, chatAccent); }
+  catch { /* The selected color still works for this session. */ }
+  applyChatAccent();
 }
 
 function initialLanguage() {
@@ -3899,6 +3935,12 @@ function bindEvents() {
   for (const button of document.querySelectorAll<HTMLElement>("[data-theme-value]")) {
     button.addEventListener("click", () => setTheme(button.dataset.themeValue));
   }
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-chat-accent]")) {
+    button.addEventListener("click", () => setChatAccent(button.dataset.chatAccent || DEFAULT_CHAT_ACCENT));
+  }
+  $("chat-accent-custom").addEventListener("input", (event) => {
+    setChatAccent((event.target as HTMLInputElement).value);
+  });
   systemThemeMedia.addEventListener?.("change", () => {
     if (state.theme === "system") applyTheme();
   });
@@ -4102,6 +4144,7 @@ function applyInitialNavigationIntent() {
 applyInitialNavigationIntent();
 captureStaticTranslatables();
 applyTheme();
+applyChatAccent();
 applyStaticLanguage();
 notifyNativeLanguage();
 bindEvents();

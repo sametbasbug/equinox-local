@@ -7,8 +7,8 @@ export const INLINE_RUN_URI = "ui://equinox-local/run/v1.html";
 const HTML = String.raw `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Equinox Local run</title>
 <style>
-:root{color-scheme:light dark;--fg:#24272e;--muted:#777b85;--line:#dfe1e7;--surface:#fafbfc;--code:#f1f2f5;--accent:#7057b9;--ok:#168052;--bad:#b74444;--pending:#9a7020;font:13px/1.5 system-ui,sans-serif}
-:root[data-theme="dark"]{--fg:#e6e7eb;--muted:#a4a7b0;--line:#41434b;--surface:#24262d;--code:#1e2025;--accent:#b9a7f3;--ok:#71cba2;--bad:#ff9696;--pending:#e1b45b}
+:root{color-scheme:light dark;--fg:#222735;--muted:#788092;--line:#dee3ec;--surface:#f8f9fc;--code:#f0f2f7;--accent:#725baf;--ok:#168052;--bad:#b74444;--pending:#9a7020;font:13px/1.5 system-ui,sans-serif}
+:root[data-theme="dark"]{--fg:#ebeef5;--muted:#a5adbf;--line:#383d4c;--surface:#1d222d;--code:#151922;--accent:#ae9cdd;--ok:#71cba2;--bad:#ff9696;--pending:#e1b45b}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--fg:#e6e7eb;--muted:#a4a7b0;--line:#41434b;--surface:#24262d;--code:#1e2025;--accent:#b9a7f3;--ok:#71cba2;--bad:#ff9696;--pending:#e1b45b}}
 *{box-sizing:border-box}body{margin:0;padding:2px 0;color:var(--fg);background:transparent}
 details{border:1px solid var(--line);border-radius:9px;background:var(--surface);overflow:hidden}
@@ -16,7 +16,7 @@ summary{display:grid;grid-template-columns:22px minmax(0,1fr) auto 14px;align-it
 summary::-webkit-details-marker{display:none}summary:hover{background:var(--code)}
 summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .icon{display:grid;place-items:center;width:22px;height:22px;color:var(--accent);border-radius:5px;background:var(--code);font:600 13px ui-monospace,monospace}
-.title{min-width:0}.eyebrow{font-size:11px;color:var(--muted);margin-bottom:3px;font-weight:600}.command{font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.title{min-width:0}.eyebrow{font-size:10px;color:var(--muted);margin-bottom:3px;font-weight:670;letter-spacing:.075em}.command{font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .status{white-space:nowrap;font-size:11px;color:var(--pending);padding-top:3px}.status[data-kind=ok]{color:var(--ok)}.status[data-kind=bad]{color:var(--bad)}.status[data-kind=neutral]{color:var(--muted)}
 .arrow{color:var(--muted);font-size:16px;line-height:22px;text-align:center}details[open] .arrow{transform:rotate(90deg)}
 .body{border-top:1px solid var(--line);padding:10px 12px;display:grid;gap:9px}.field{display:grid;gap:4px}.field-label{font-size:11px;color:var(--muted);font-weight:600}
