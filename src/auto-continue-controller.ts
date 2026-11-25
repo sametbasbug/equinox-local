@@ -259,9 +259,13 @@ export function createAutoContinueController({
         let inspected: InspectedTurn;
         try { inspected = await callContext(context, "continuation.inspect", {tabId}) as InspectedTurn; }
         catch { continue; }
+        // The provider canonicalizes optional trailing slashes. Reject a
+        // changed route without requiring raw Chrome URL string identity.
+        const observedUrl = new URL(String(tab.url));
+        const canonicalRoute = observedUrl.origin + observedUrl.pathname.replace(/\/$/u, "");
         if (!inspected?.generationActive || !inspected.userEpoch || !inspected.assistantTurnKey
           || !inspected.conversationId || !inspected.canonicalUrl || inspected.tabId !== tabId
-          || inspected.canonicalUrl !== tab.url) continue;
+          || inspected.canonicalUrl !== canonicalRoute) continue;
         candidates.push({browserContext:context,browserInstanceId:instanceId,mode:"task-tab",
           tabId,conversationId:inspected.conversationId,canonicalUrl:inspected.canonicalUrl,
           title:inspected.title,userEpoch:inspected.userEpoch,assistantTurnKey:inspected.assistantTurnKey,autoContinueVersion:version});

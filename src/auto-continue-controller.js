@@ -154,9 +154,13 @@ export function createAutoContinueController({ store, browserBridge, agentContro
                 catch {
                     continue;
                 }
+                // The provider canonicalizes optional trailing slashes. Reject a
+                // changed route without requiring raw Chrome URL string identity.
+                const observedUrl = new URL(String(tab.url));
+                const canonicalRoute = observedUrl.origin + observedUrl.pathname.replace(/\/$/u, "");
                 if (!inspected?.generationActive || !inspected.userEpoch || !inspected.assistantTurnKey
                     || !inspected.conversationId || !inspected.canonicalUrl || inspected.tabId !== tabId
-                    || inspected.canonicalUrl !== tab.url)
+                    || inspected.canonicalUrl !== canonicalRoute)
                     continue;
                 candidates.push({ browserContext: context, browserInstanceId: instanceId, mode: "task-tab",
                     tabId, conversationId: inspected.conversationId, canonicalUrl: inspected.canonicalUrl,
