@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import path from "node:path";
 const READY = Buffer.from("EQUINOX_UNINSTALL_READY\n");
 const GO = "EQUINOX_UNINSTALL_GO\n";
 // The existing native uninstall acknowledgement window is three seconds.
@@ -27,7 +26,9 @@ export async function prepareWindowsUninstallHandoff(launch, options) {
     }
     env.EQUINOX_LOCAL_UNINSTALL_SHELL_PID = String(options.ownerPid);
     env.EQUINOX_LOCAL_EXPECTED_STARTUP_COMMAND = options.expectedStartupCommand;
-    const child = spawn(launch.command, [path.join(launch.cwd, "equinox-local-uninstall-helper.js"),
+    if (!launch.windowsMaintenance)
+        throw new Error("Admitted Windows uninstall helper is unavailable.");
+    const child = spawn(launch.windowsMaintenance.node, [launch.windowsMaintenance.helper,
         "--uninstall", options.removeUserData ? "--remove-user-data" : "--preserve-user-data",
         "--wait-for-desktop-release"], {
         cwd: launch.cwd, env, shell: false, windowsHide: true, detached: true,

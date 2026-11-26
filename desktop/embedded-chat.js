@@ -1,12 +1,138 @@
 import { createNativeChatContinuity } from "./native-chat-continuity.js";
 import { decorateNativeToolActivity } from "./native-tool-activity.js";
-import { WebContentsView, dialog, nativeTheme, session, shell } from "electron";
+import { BrowserWindow, WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
 const HOSTS = new Set(["chatgpt.com", "auth.openai.com"]);
 let googleNoticeOpen = false;
+const SIGN_IN_URL = CHATGPT + "/auth/login";
+/** Separate app-owned chrome, with a credential-free provider-only view.
+ * The native header never displays OAuth parameters or trusts remote DOM text.
+ * Both provider views use the same isolated partition; no browser cookies are
+ * exported, imported or read by Equinox. */
+function openProviderAuthentication(parent, isolated, language, onClose) {
+    const tr = language === "tr";
+    const popup = new BrowserWindow({
+        parent, modal: false, show: false, width: 690, height: 760, minWidth: 420, minHeight: 480,
+        fullscreenable: false, minimizable: false,
+        title: tr ? "Equinox Local | ChatGPT girişi" : "Equinox Local | ChatGPT sign-in",
+        backgroundColor: nativeTheme.shouldUseDarkColors ? "#161822" : "#f8faff",
+        autoHideMenuBar: true,
+        webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false, devTools: false, partition: "equinox-auth-chrome" },
+    });
+    popup.setMenuBarVisibility(false);
+    const provider = new WebContentsView({ webPreferences: { session: isolated, sandbox: true, contextIsolation: true, nodeIntegration: false,
+            nodeIntegrationInWorker: false, nodeIntegrationInSubFrames: false, webviewTag: false, webSecurity: true, allowRunningInsecureContent: false, devTools: false } });
+    const header = 90;
+    let closed = false;
+    let busy = false;
+    let committedOrigin = "";
+    let documentGeneration = 0;
+    const loading = tr ? "OpenAI sayfası yükleniyor…" : "Loading OpenAI page…";
+    const blocked = tr ? "Sayfa açılamadı. Pencereyi kapatıp yeniden dene." : "Page unavailable. Close this window and try again.";
+    const updateHeader = (origin, message = "") => {
+        if (closed || popup.isDestroyed())
+            return;
+        // Only the main-process committed HTTPS origin is shown, never query
+        // strings, credentials or the page's own title. No misleading lock icon.
+        const code = `document.getElementById('origin').textContent=${JSON.stringify(origin || message || loading)};document.getElementById('origin').dataset.verified=${JSON.stringify(origin ? "true" : "false")};`;
+        void popup.webContents.executeJavaScriptInIsolatedWorld(1001, [{ code }]).catch(() => { });
+        popup.setTitle(origin ? `Equinox Local | ${origin}` : (tr ? "Equinox Local | ChatGPT girişi" : "Equinox Local | ChatGPT sign-in"));
+    };
+    const resize = () => {
+        if (closed || popup.isDestroyed())
+            return;
+        const [width = 690, height = 760] = popup.getContentSize();
+        provider.setBounds({ x: 0, y: header, width, height: Math.max(0, height - header) });
+    };
+    popup.on("resize", resize);
+    popup.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    popup.webContents.on("will-navigate", event => event.preventDefault());
+    const navigateAllowed = (url) => {
+        if (admitted(url))
+            return true;
+        if (isEmbeddedGoogleAuth(url))
+            warnGoogleRestriction(popup, language);
+        return false;
+    };
+    provider.webContents.setWindowOpenHandler(({ url }) => {
+        if (navigateAllowed(url))
+            void provider.webContents.loadURL(url).catch(() => { });
+        return { action: "deny" };
+    });
+    provider.webContents.on("will-navigate", (event, url) => { if (!navigateAllowed(url))
+        event.preventDefault(); });
+    provider.webContents.on("will-redirect", (event, url) => { if (!navigateAllowed(url))
+        event.preventDefault(); });
+    provider.webContents.on("did-start-navigation", ({ isMainFrame, isSameDocument }) => {
+        if (isMainFrame && !isSameDocument) {
+            documentGeneration++;
+            committedOrigin = "";
+            updateHeader("");
+        }
+    });
+    const commit = (url) => {
+        committedOrigin = admitted(url) ? new URL(url).origin : "";
+        updateHeader(committedOrigin);
+    };
+    provider.webContents.on("did-navigate", (_event, url) => commit(url));
+    provider.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => { if (isMainFrame)
+        commit(url); });
+    provider.webContents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
+        if (isMainFrame && code !== -3) {
+            committedOrigin = "";
+            updateHeader("", blocked);
+        }
+    });
+    // A return to the genuine signed-in workspace is a positive success signal;
+    // absence of a guest form alone does not prove authentication.
+    const inspect = async () => {
+        if (busy || closed || provider.webContents.isDestroyed() || committedOrigin !== CHATGPT)
+            return;
+        const url = provider.webContents.getURL();
+        if (!isChatGPTOrigin(url) || /^\/auth(?:\/|$)/u.test(new URL(url).pathname))
+            return;
+        const generation = documentGeneration;
+        busy = true;
+        try {
+            const ready = await provider.webContents.executeJavaScriptInIsolatedWorld(1002, [{ code: `Boolean(document.querySelector('#app-shell-sidebar') && document.querySelector('form[data-chatgpt-composer]:not([data-logged-out])') && !document.querySelector('form[data-logged-out]'))` }]);
+            if (ready === true && !closed && generation === documentGeneration && provider.webContents.getURL() === url)
+                popup.close();
+        }
+        catch { /* document may be navigating */ }
+        finally {
+            busy = false;
+        }
+    };
+    const timer = setInterval(() => { void inspect(); }, 350);
+    timer.unref();
+    provider.webContents.on("did-finish-load", () => { void inspect(); });
+    popup.once("closed", () => {
+        closed = true;
+        clearInterval(timer);
+        if (!provider.webContents.isDestroyed())
+            provider.webContents.close();
+        onClose();
+    });
+    // Static trusted chrome. Provider web contents never share its renderer,
+    // do not overlap its bounds, and cannot navigate or draw inside it.
+    const html = `<!doctype html><html lang="${language}"><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
+  :root{color-scheme:light dark;--bg:#f1f4fa;--surface:#fff;--text:#181a29;--muted:#61677b;--border:#e2e6ef;--accent:#6546b5}@media(prefers-color-scheme:dark){:root{--bg:#20222e;--surface:#161822;--text:#f0f1f7;--muted:#a7aabd;--border:#393c4a;--accent:#b6a6ff}}
+  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px system-ui,sans-serif;padding:9px 16px;border-bottom:1px solid var(--border);height:90px;overflow:hidden}.label{font-size:11px;font-weight:650;letter-spacing:.06em;color:var(--accent);margin-bottom:5px}.address{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:7px 10px;font:600 13px ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.note{color:var(--muted);font-size:11px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}</style><body><div class="label">${tr ? "EQUINOX • GİRİŞ" : "EQUINOX • AUTHENTICATION"}</div><div class="address" id="origin">${loading}</div><div class="note">${tr ? "Adres uygulama tarafından gösterilir. Giriş formu OpenAI'ye aittir." : "Address shown by Equinox. The sign-in form belongs to OpenAI."}</div></body></html>`;
+    void popup.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html)).then(() => {
+        if (closed || popup.isDestroyed())
+            return;
+        popup.contentView.addChildView(provider);
+        resize();
+        popup.show();
+        void provider.webContents.loadURL(SIGN_IN_URL).catch(() => { if (!closed)
+            updateHeader("", blocked); });
+    }).catch(() => { if (!popup.isDestroyed())
+        popup.close(); });
+    return popup;
+}
 function isEmbeddedGoogleAuth(value) {
     try {
         const url = new URL(value);
@@ -1660,7 +1786,23 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
             void shell.openExternal(destination).catch(() => { });
         }).catch(() => { }).finally(() => { externalPromptOpen = false; });
     };
+    let authWindow = null;
+    const openAuthentication = () => {
+        if (authWindow && !authWindow.isDestroyed()) {
+            authWindow.focus();
+            return;
+        }
+        authWindow = openProviderAuthentication(win, isolated, language, () => {
+            authWindow = null;
+            if (!disposed && !win.isDestroyed() && !view.webContents.isDestroyed())
+                openProvider();
+        });
+    };
     view.webContents.setWindowOpenHandler(({ url }) => {
+        if (url === SIGN_IN_URL) {
+            openAuthentication();
+            return { action: "deny" };
+        }
         if (isEmbeddedGoogleAuth(url))
             warnGoogleRestriction(win, language);
         else if (admitted(url))
@@ -1670,6 +1812,11 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
         return { action: "deny" };
     });
     view.webContents.on("will-navigate", (event, url) => {
+        if (url === SIGN_IN_URL) {
+            event.preventDefault();
+            openAuthentication();
+            return;
+        }
         if (admitted(url))
             return;
         event.preventDefault();
@@ -1866,6 +2013,8 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
         if (disposed)
             return;
         disposed = true;
+        if (authWindow && !authWindow.isDestroyed())
+            authWindow.close();
         chatVisible = false;
         clearInterval(historyTimer);
         continuity.dispose();

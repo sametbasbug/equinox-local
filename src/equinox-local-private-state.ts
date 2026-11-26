@@ -63,6 +63,28 @@ function windowsPrivateStateEnvironment(env: PrivateEnv = process.env): Record<s
   return Object.fromEntries(Object.entries(entries).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0));
 }
 
+// Only the packaged helper adjacent to this exact runtime module is eligible.
+// Older signed payloads and source checkouts retain the OS PowerShell path.
+async function nativePrivateStateVerifier(): Promise<string | null> {
+  if (process.platform !== "win32") return null;
+  const folder = path.join(path.dirname(WINDOWS_PRIVATE_STATE_HELPER), "runtime", "job");
+  const marker = path.join(folder, "desktop-runtime-v1.marker");
+  const helper = path.join(folder, "equinox-local-job-object-helper.exe");
+  try {
+    const stat = await fs.lstat(marker);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size !== Buffer.byteLength("equinox-desktop-runtime-v1\n") ||
+        (await fs.realpath(marker)).toLowerCase() !== marker.toLowerCase() ||
+        await fs.readFile(marker, "utf8") !== "equinox-desktop-runtime-v1\n") throw new Error("Native ACL verifier ABI is invalid.");
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    throw error;
+  }
+  const stat = await fs.lstat(helper);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 ||
+      (await fs.realpath(helper)).toLowerCase() !== helper.toLowerCase()) throw new Error("Native ACL verifier path is invalid.");
+  return helper;
+}
+
 async function runWindowsPrivateStateAcl(action: string, {
   target,
   type,
@@ -76,10 +98,15 @@ async function runWindowsPrivateStateAcl(action: string, {
   if (typeof helperPath !== "string" || !path.win32.isAbsolute(helperPath) || helperPath.includes("\0") || path.win32.basename(helperPath) !== "equinox-local-windows-private-state.ps1") {
     throw new Error("Windows private-state helper path is invalid.");
   }
-  const { stdout } = await execFileAsync(windowsPowerShellPath(env), [
+  const native = action === "verify" && helperPath === WINDOWS_PRIVATE_STATE_HELPER && execFileAsync === execFile
+    ? await nativePrivateStateVerifier() : null;
+  const command = native ?? windowsPowerShellPath(env);
+  const args = native ? ["--verify-private-state", target, type] : [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
     "-File", helperPath, "-Action", action, "-Target", target, "-Type", type,
-  ], { windowsHide: true, timeout: WINDOWS_PRIVATE_STATE_TIMEOUT_MS, maxBuffer: 16 * 1024, env: windowsPrivateStateEnvironment(env) });
+  ];
+  const { stdout } = await execFileAsync(command, args, { windowsHide: true,
+    timeout: WINDOWS_PRIVATE_STATE_TIMEOUT_MS, maxBuffer: 16 * 1024, env: windowsPrivateStateEnvironment(env) });
   let parsed: unknown;
   try { parsed = JSON.parse(String(stdout).trim()); }
   catch { throw new Error("Windows private-state ACL helper returned invalid JSON."); }

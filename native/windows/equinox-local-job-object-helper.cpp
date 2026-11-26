@@ -1,5 +1,7 @@
 #include <windows.h>
 #include <shlobj.h>
+#include <aclapi.h>
+#include <cstddef>
 
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "Shell32.lib")
@@ -28,6 +30,81 @@ std::wstring ReadEnvironment(const wchar_t* name) {
   if (copied == 0 || copied >= size) return {};
   value.resize(copied);
   return value;
+}
+
+// Read-only equivalent of the private-state PowerShell ACL verifier. No ACL
+// mutations, elevation, shell invocation, path output or privilege grants.
+const char* InspectPrivateStateAcl(const wchar_t* target, bool directory) {
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return "owner-unresolved";
+  DWORD tokenBytes = 0;
+  GetTokenInformation(token, TokenUser, nullptr, 0, &tokenBytes);
+  if (!tokenBytes || tokenBytes > 16384) { CloseHandle(token); return "owner-unresolved"; }
+  std::vector<BYTE> tokenData(tokenBytes);
+  const BOOL gotUser = GetTokenInformation(token, TokenUser, tokenData.data(), tokenBytes, &tokenBytes);
+  CloseHandle(token);
+  if (!gotUser) return "owner-unresolved";
+  PSID user = reinterpret_cast<TOKEN_USER*>(tokenData.data())->User.Sid;
+  alignas(DWORD) BYTE systemSid[SECURITY_MAX_SID_SIZE]{};
+  DWORD systemBytes = sizeof(systemSid);
+  if (!IsValidSid(user) || !CreateWellKnownSid(WinLocalSystemSid, nullptr, systemSid, &systemBytes)) return "owner-unresolved";
+  // Open the actual entry without following a final reparse point, and read
+  // attributes and its ACL from the same handle rather than resolving twice.
+  HANDLE file = CreateFileW(target, READ_CONTROL | FILE_READ_ATTRIBUTES,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+  if (file == INVALID_HANDLE_VALUE) return "target-unavailable";
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  const char* result = [&]() -> const char* {
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(file, &info)) return "target-unavailable";
+    if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) return "reparse-point";
+    if (((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) != directory) return "type";
+    PSID owner = nullptr;
+    PACL dacl = nullptr;
+    if (GetSecurityInfo(file, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+          &owner, nullptr, &dacl, nullptr, &descriptor) != ERROR_SUCCESS || !descriptor) return "acl-unverified";
+    if (!owner || !IsValidSid(owner) || !EqualSid(owner, user)) return "owner";
+    SECURITY_DESCRIPTOR_CONTROL control{};
+    DWORD revision = 0;
+    if (!GetSecurityDescriptorControl(descriptor, &control, &revision) || !(control & SE_DACL_PROTECTED)) return "inheritance";
+    if (!dacl || !IsValidAcl(dacl)) return "acl-unverified";
+    bool seenUser = false, seenSystem = false;
+    for (DWORD i = 0; i < dacl->AceCount; ++i) {
+      void* raw = nullptr;
+      if (!GetAce(dacl, i, &raw) || !raw) return "acl-unverified";
+      const auto* header = static_cast<const ACE_HEADER*>(raw);
+      if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) return "deny-or-unsupported-rule";
+      if (header->AceFlags & INHERITED_ACE) return "inherited-rule";
+      if (header->AceFlags & INHERIT_ONLY_ACE) return "inherit-only-rule";
+      constexpr BYTE inheritance = CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE;
+      if (directory ? (header->AceFlags & inheritance) != inheritance : (header->AceFlags & inheritance) != 0)
+        return directory ? "child-inheritance" : "file-inheritance";
+      const auto* ace = static_cast<const ACCESS_ALLOWED_ACE*>(raw);
+      constexpr size_t sidOffset = offsetof(ACCESS_ALLOWED_ACE, SidStart);
+      if (header->AceSize < sidOffset + 8) return "acl-unverified";
+      const auto* sidData = reinterpret_cast<const SID*>(&ace->SidStart);
+      if (header->AceSize < sidOffset + GetSidLengthRequired(sidData->SubAuthorityCount)) return "acl-unverified";
+      PSID sid = const_cast<DWORD*>(&ace->SidStart);
+      if (!IsValidSid(sid)) return "acl-unverified";
+      if ((ace->Mask & FILE_ALL_ACCESS) != FILE_ALL_ACCESS) return "insufficient-rights";
+      if (EqualSid(sid, user)) seenUser = true;
+      else if (EqualSid(sid, systemSid)) seenSystem = true;
+      else return "foreign-principal";
+    }
+    return seenUser && seenSystem ? nullptr : "missing-owner-rule";
+  }();
+  if (descriptor) LocalFree(descriptor);
+  CloseHandle(file);
+  return result;
+}
+
+int VerifyPrivateStateAcl(int argc, wchar_t* argv[]) {
+  if (argc != 4 || (std::wstring(argv[3]) != L"file" && std::wstring(argv[3]) != L"directory")) return 12;
+  const char* reason = InspectPrivateStateAcl(argv[2], std::wstring(argv[3]) == L"directory");
+  if (reason) std::cout << "{\"safe\":false,\"reason\":\"" << reason << "\"}\n";
+  else std::cout << "{\"safe\":true,\"reason\":null}\n";
+  return 0;
 }
 
 // One-shot OS identity query for the already-validated native Main update
@@ -333,7 +410,7 @@ bool EnsureInheritedWindowlessConsole() {
 
 // The GUI-subsystem helper is assigned to the Job Object before it receives GO.
 // A child created here cannot escape the owned job and needs no console window.
-int RunOwnedProcessGate(int argc, wchar_t* argv[]) {
+int RunOwnedProcessGate(int argc, wchar_t* argv[], bool runtimeGate = false) {
   if (argc < 3) return 127;
   std::string signal;
   if (!std::getline(std::cin, signal) || signal != "EQUINOX_GO") return 125;
@@ -404,6 +481,9 @@ int RunOwnedProcessGate(int argc, wchar_t* argv[]) {
     return 127;
   }
   CloseHandle(child.hThread);
+  // The desktop owner waits for this exact marker after assigning the gate
+  // to its Job Object and releasing GO. No extra Node bootstrap process.
+  if (runtimeGate) std::cout << "EQUINOX_RUNTIME_CHILD_STARTED\n" << std::flush;
   DWORD exitCode = 127;
   const DWORD waited = WaitForSingleObject(child.hProcess, INFINITE);
   if (waited != WAIT_OBJECT_0 || !GetExitCodeProcess(child.hProcess, &exitCode)) {
@@ -421,6 +501,8 @@ int wmain(int argc, wchar_t* argv[]) {
   if (argc == 2 && std::wstring(argv[1]) == L"--inspect-process") return InspectWorkerProcess();
   if (argc == 2 && std::wstring(argv[1]) == L"--inspect-owned-wpf") return InspectOwnedWpfProcess();
   if (argc >= 2 && std::wstring(argv[1]) == L"--owned-process-gate") return RunOwnedProcessGate(argc, argv);
+  if (argc >= 2 && std::wstring(argv[1]) == L"--owned-runtime-gate") return RunOwnedProcessGate(argc, argv, true);
+  if (argc >= 2 && std::wstring(argv[1]) == L"--verify-private-state") return VerifyPrivateStateAcl(argc, argv);
   if (argc != 1) return 12;
   HANDLE job = CreateJobObjectW(nullptr, nullptr);
   if (!job) {

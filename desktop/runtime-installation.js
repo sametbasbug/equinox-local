@@ -116,22 +116,24 @@ export async function resolveInstalledRuntime(identity, resourcesPath) {
     const server = path.join(release, "server.js");
     const jobModule = path.join(release, "equinox-local-windows-job-object.js");
     const helper = path.join(release, "runtime", "job", "equinox-local-job-object-helper.exe");
-    for (const file of [node, gate, supervisor, server, jobModule, helper])
-        await normalFile(file);
+    const maintenanceHelper = path.join(release, "equinox-local-uninstall-helper.js");
+    const abiMarker = path.join(path.dirname(helper), "desktop-runtime-v1.marker");
+    await Promise.all([node, gate, supervisor, server, jobModule, helper, maintenanceHelper, abiMarker].map(file => normalFile(file)));
+    if (await fs.readFile(abiMarker, "utf8") !== "equinox-desktop-runtime-v1\n")
+        throw new Error("Native desktop runtime helper ABI is unavailable.");
     const imported = await import(pathToFileURL(jobModule).href);
     if (typeof imported.createWindowsJobObjectLease !== "function")
         throw new Error("Native runtime Job Object ownership is unavailable.");
     env.EQUINOX_LOCAL_RELEASE_DIR = release;
     env.EQUINOX_LOCAL_INSTALL_ROOT = installRoot;
     env.EQUINOX_LOCAL_DESKTOP_OWNER = "1";
-    env.EQUINOX_LOCAL_OWNED_PROCESS_SPEC = Buffer.from(JSON.stringify({ command: node, args: [supervisor, server] })).toString("base64");
-    env.EQUINOX_LOCAL_OWNED_PROCESS_READY_MARKER = "EQUINOX_RUNTIME_CHILD_STARTED";
     const createLease = imported.createWindowsJobObjectLease;
     return {
         // Never make the signed native release tree the process working directory.
         // Windows GPU drivers and other injected native components can create
         // incidental log directories under CWD, invalidating the exact tree seal.
-        command: node, args: [gate], cwd: installRoot, env, controlHelper: helper,
+        command: helper, args: ["--owned-runtime-gate", node, supervisor, server], cwd: installRoot, env, controlHelper: helper,
         createJob: () => createLease({ helperPath: helper }), readyMarker: "EQUINOX_RUNTIME_CHILD_STARTED",
+        windowsMaintenance: { node, helper: maintenanceHelper },
     };
 }

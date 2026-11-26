@@ -2799,14 +2799,16 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         if (equinoxBrowserIpc.implemented) {
             await equinoxBrowserBridge.start();
         }
-        await autoContinueController.start();
-        await freshChatResumeController.start();
-        await telegramTaskInboxController.start();
+        // Independent controller initialization may overlap, but the management
+        // IPC is not exposed until all required controllers have initialized.
+        // Keep the recovery policy after its repair engine and the janitor after
+        // recovery initialization (their state/ownership contracts are preserved).
+        await Promise.all([
+            (async () => { await autoContinueController.start(); await freshChatResumeController.start(); })(),
+            telegramTaskInboxController.start(),
+            (async () => { await repairEngine.initialize(); await recoveryPolicyController.initialize(); await runtimeJanitor.initialize(); })(),
+        ]);
         setTimeout(() => { void syncTelegramCommandMenuSafely("runtime_start"); }, 250).unref?.();
-        await repairEngine.initialize();
-        await recoveryPolicyController.initialize();
-        await runtimeJanitor.initialize();
-        await runtimeJanitor.startMaintenance();
         // Reclaim all superseded big Main/Stable payloads only from the installed,
         // genuinely healthy B runtime after the detached handoff has RELEASED its
         // active marker. Do not let the old A worker, first-install Stable or a
@@ -2870,6 +2872,10 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         if (managementBridgeReady && EQUINOX_LOCAL_CONFIG.controlCenter.enabled) {
             await equinoxLocalControlApi.start();
         }
+        await runtimeObservability.record({ component: "runtime", type: "runtime.control_ready", severity: "info", status: managementBridgeReady ? "healthy" : "degraded", message: "Private Control Center startup admission finished.", details: { pid: process.pid } });
+        // Periodic maintenance is not an admission condition. Scheduling failure
+        // must not leave the authenticated UI waiting behind optional work.
+        void runtimeJanitor.startMaintenance().catch(() => { console.error("[Equinox Local] Optional startup maintenance scheduling failed."); });
         // Factory/source checkout has no immutable signed release tree. Reconcile
         // its user CLI launcher against this exact source file and running Node.
         if (platform === "darwin" && equinoxLocalInstallation.kind === "source") {
