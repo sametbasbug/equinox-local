@@ -466,12 +466,19 @@ async function initializeOwner(): Promise<void> {
     onFailure: loseLifecycleOwnership,
   });
   if (controlLost || quitting) { await lifecycleControl.close(); throw new Error("Application lifecycle ownership was lost."); }
-  try { await readLoginPreference(); } catch { loginAvailable = false; }
   const migrations = process.argv.filter((value) => value.startsWith("--migrate-startup="));
   if (migrations.length > 1 || (migrations.length === 1 && !["--migrate-startup=enabled", "--migrate-startup=disabled"].includes(migrations[0]!))) {
     throw new Error("Invalid startup preference migration.");
   }
   if (migrations.length === 1) await changeLoginPreference(migrations[0] === "--migrate-startup=enabled");
+  else {
+    // Startup registration is presentation state, not a runtime admission
+    // condition. Do not serialize a Windows Node/PowerShell registry probe
+    // ahead of the owned backend. Mutation paths still verify ownership.
+    void readLoginPreference().catch(() => { loginAvailable = false; }).finally(() => {
+      if (!controlLost && !quitting) updateMenus();
+    });
+  }
   if (controlLost || quitting) throw new Error("Application lifecycle ownership was lost during initialization.");
 }
 

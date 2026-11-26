@@ -4,15 +4,32 @@ import path from "node:path";
 const MAX_ENTRIES = 20_000;
 const MAX_BYTES = 2 * 1024 * 1024 * 1024;
 const DOMAIN = "equinox-local-native-state-v1\0";
-async function hashFile(filePath, fsImpl) {
+// At most four files are open concurrently; read each through a bounded
+// buffer without allocating a per-file ReadStream and async iterator.
+const FILE_BATCH = 4;
+const HASH_BUFFER_BYTES = 256 * 1024;
+async function hashFile(filePath, expectedBytes, fsImpl) {
     const digest = createHash("sha256");
     const handle = await fsImpl.open(filePath, "r");
     try {
-        for await (const chunk of handle.createReadStream())
-            digest.update(chunk);
+        const before = await handle.stat();
+        if (!before.isFile() || before.size !== expectedBytes)
+            throw new Error("Native state file changed before hashing.");
+        const buffer = Buffer.allocUnsafe(Math.max(1, Math.min(expectedBytes, HASH_BUFFER_BYTES)));
+        let offset = 0;
+        while (offset < expectedBytes) {
+            const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, expectedBytes - offset), offset);
+            if (bytesRead === 0)
+                throw new Error("Native state file ended during hashing.");
+            digest.update(buffer.subarray(0, bytesRead));
+            offset += bytesRead;
+        }
+        const after = await handle.stat();
+        if (after.size !== expectedBytes || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs)
+            throw new Error("Native state file changed during hashing.");
     }
     finally {
-        await handle.close().catch(() => { });
+        await handle.close();
     }
     return digest.digest("hex");
 }
@@ -32,29 +49,46 @@ export async function fingerprintEquinoxLocalNativeState(root, { fsImpl = fs } =
             break;
         const children = await fsImpl.readdir(current.absolute, { withFileTypes: true });
         children.sort((a, b) => a.name.localeCompare(b.name, "en"));
-        for (let index = children.length - 1; index >= 0; index -= 1) {
-            const child = children[index];
-            if (!child)
-                continue;
-            entries += 1;
+        // Preserve the original deterministic traversal/order while overlapping
+        // bounded filesystem operations. Never descend before lstat admission.
+        children.reverse();
+        for (let index = 0; index < children.length; index += FILE_BATCH) {
+            const batch = children.slice(index, index + FILE_BATCH);
+            entries += batch.length;
             if (entries > MAX_ENTRIES)
                 throw new Error("Native state fingerprint contains too many entries.");
-            const absolute = path.join(current.absolute, child.name);
-            const relative = current.relative ? `${current.relative}/${child.name}` : child.name;
-            const stat = await fsImpl.lstat(absolute);
-            if (stat.isSymbolicLink())
-                throw new Error("Native state fingerprint may not contain symbolic links or junctions.");
-            if (stat.isDirectory()) {
-                rows.push(Object.freeze({ type: "dir", relative, mode: stat.mode & 0o777 }));
-                stack.push({ absolute, relative });
-                continue;
+            const inspected = await Promise.all(batch.map(async (child) => {
+                const absolute = path.join(current.absolute, child.name);
+                const relative = current.relative ? `${current.relative}/${child.name}` : child.name;
+                return { absolute, relative, stat: await fsImpl.lstat(absolute) };
+            }));
+            for (const { stat } of inspected) {
+                if (stat.isSymbolicLink())
+                    throw new Error("Native state fingerprint may not contain symbolic links or junctions.");
+                if (!stat.isDirectory() && !stat.isFile())
+                    throw new Error("Native state fingerprint contains an unsupported filesystem entry.");
+                if (stat.isFile()) {
+                    bytes += stat.size;
+                    if (bytes > MAX_BYTES)
+                        throw new Error("Native state fingerprint exceeds the size limit.");
+                }
             }
-            if (!stat.isFile())
-                throw new Error("Native state fingerprint contains an unsupported filesystem entry.");
-            bytes += stat.size;
-            if (bytes > MAX_BYTES)
-                throw new Error("Native state fingerprint exceeds the size limit.");
-            rows.push(Object.freeze({ type: "file", relative, mode: stat.mode & 0o777, bytes: stat.size, sha256: await hashFile(absolute, fsImpl) }));
+            const batchRows = await Promise.allSettled(inspected.map(async ({ absolute, relative, stat }) => {
+                if (stat.isDirectory())
+                    return Object.freeze({ type: "dir", relative, mode: stat.mode & 0o777 });
+                return Object.freeze({ type: "file", relative, mode: stat.mode & 0o777, bytes: stat.size,
+                    sha256: await hashFile(absolute, stat.size, fsImpl) });
+            }));
+            // Settle all admitted reads before reporting a failure to the caller.
+            for (let i = 0; i < batchRows.length; i += 1) {
+                const result = batchRows[i];
+                if (result.status === "rejected")
+                    throw result.reason;
+                rows.push(result.value);
+                const item = inspected[i];
+                if (result.value.type === "dir")
+                    stack.push({ absolute: item.absolute, relative: item.relative });
+            }
         }
     }
     rows.sort((a, b) => a.relative.localeCompare(b.relative, "en"));

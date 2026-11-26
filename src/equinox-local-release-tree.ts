@@ -31,25 +31,23 @@ export async function walkBoundedReleaseTree(root: string, {
     const directory = stack.pop();
     if (directory === undefined) break;
     const entries = await fsImpl.readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      entryCount += 1;
-      if (entryCount > MAX_RELEASE_TREE_ENTRIES) {
-        throw new Error(errors.entryLimit ?? DEFAULT_ERRORS.entryLimit);
-      }
-      const absolute = path.join(directory, entry.name);
-      const stat = await fsImpl.lstat(absolute);
-      if (stat.isSymbolicLink()) {
-        throw new Error(errors.symlink ?? DEFAULT_ERRORS.symlink);
-      }
-      if (stat.isDirectory()) {
-        stack.push(absolute);
-      } else if (stat.isFile()) {
-        totalBytes += stat.size;
-        if (totalBytes > MAX_RELEASE_TREE_BYTES) {
-          throw new Error(errors.byteLimit ?? DEFAULT_ERRORS.byteLimit);
-        }
-      } else {
-        throw new Error(errors.unsupportedEntry ?? DEFAULT_ERRORS.unsupportedEntry);
+    // Bound parallel metadata lookups; count and validate every entry before
+    // traversing any admitted directory. No symlink or byte-limit shortcuts.
+    for (let offset = 0; offset < entries.length; offset += 8) {
+      const batch = entries.slice(offset, offset + 8);
+      entryCount += batch.length;
+      if (entryCount > MAX_RELEASE_TREE_ENTRIES) throw new Error(errors.entryLimit ?? DEFAULT_ERRORS.entryLimit);
+      const inspected = await Promise.all(batch.map(async entry => {
+        const absolute = path.join(directory, entry.name);
+        return { absolute, stat: await fsImpl.lstat(absolute) };
+      }));
+      for (const { absolute, stat } of inspected) {
+        if (stat.isSymbolicLink()) throw new Error(errors.symlink ?? DEFAULT_ERRORS.symlink);
+        if (stat.isDirectory()) stack.push(absolute);
+        else if (stat.isFile()) {
+          totalBytes += stat.size;
+          if (totalBytes > MAX_RELEASE_TREE_BYTES) throw new Error(errors.byteLimit ?? DEFAULT_ERRORS.byteLimit);
+        } else throw new Error(errors.unsupportedEntry ?? DEFAULT_ERRORS.unsupportedEntry);
       }
     }
   }

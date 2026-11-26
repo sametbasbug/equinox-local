@@ -128,6 +128,7 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 .update-dialog-body h3 { font-size: 14px; margin: 0; line-height: 1.45; font-weight: 650; }
 .update-dialog-body .health-copy { margin-top: 7px; font-size: 12px; }
 .update-dialog-facts { display: flex; flex-wrap: wrap; column-gap: 15px; row-gap: 5px; margin-top: 14px; color: var(--muted); font-size: 11px; }
+#update-target-version { color: var(--text); font-weight: 650; font-variant-numeric: tabular-nums; }
 .update-dialog-main { padding-top: 10px; }
 .update-dialog-caption { margin: 14px 0 7px; font-weight: 650; font-size: 12px; }
 .update-dialog-changes { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--text-2); font-size: 12px; }

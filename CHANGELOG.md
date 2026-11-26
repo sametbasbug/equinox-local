@@ -2,6 +2,9 @@
 
 - Reduce Windows cold-start work by verifying the production-signed ZIP and deriving the native-store fingerprint from the same authenticated physical file scan. All archive, path, inventory, mode, digest and selector checks remain mandatory.
 - Show a clear startup status and retry action in Control Center, and avoid repeated parallel IPC requests before the local runtime is available.
+- Accelerate native release verification on Windows and macOS using bounded parallel filesystem work; overlap Windows physical file hashing with the authenticated ZIP read while preserving every integrity check.
+- Reveal the authenticated Control Center workspace before optional update and service checks, reuse the reconciled onboarding status, and avoid blocking runtime launch on startup-registration presentation reads.
+- Show the available update’s verified target version and short commit SHA alongside the installed version in the update dialog.
 
 ## [7.1.1] - 2026-11-26
 

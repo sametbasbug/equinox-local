@@ -458,6 +458,8 @@ const TR_UI = Object.freeze({
   "Equinox Local updates": "Equinox Local güncellemeleri",
   "Close updates": "Güncellemeleri kapat",
   "Looking for updates.": "Güncellemeler kontrol ediliyor.",
+  "Loading service details…": "Servis bilgileri yükleniyor…",
+  "Loading update status…": "Güncelleme durumu yükleniyor…",
   "Recent Main changes": "Son Main değişiklikleri",
   "Main channel": "Main kanalı",
   "An admitted Main snapshot is available separately from Stable.": "Stable kanalından bağımsız onaylanmış bir Main snapshot mevcut.",
@@ -948,6 +950,8 @@ export function translateUiText(value:unknown,language:unknown="en"):string {
   if (match) return `Kontrol edildi: ${match[1]}`;
   match = source.match(/^Refreshed (.+)$/u);
   if (match) return `Yenilendi: ${match[1]}`;
+  match = source.match(/^Target version (.+)$/u);
+  if (match) return `Hedef sürüm ${match[1]}`;
   match = source.match(/^Current version (.+)$/u);
   if (match) return `Mevcut sürüm ${match[1]}`;
   match = source.match(/^Current SHA ([a-f0-9]{7})$/u);

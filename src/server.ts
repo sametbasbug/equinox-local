@@ -626,14 +626,16 @@ async function factoryUpdateStatus() {
         !/^[a-f0-9]{40}$/u.test(installedSha) || !/^[a-f0-9]{40}$/u.test(targetSha)) {
       return {mode:"factory-source",state:"blocked",currentSha:installedSha,targetSha,applying:Boolean(current),reason:"Factory requires a clean main checkout and an installed Source-role Electron application."};
     }
-    const [node, tunnel, peekaboo] = await Promise.all([
+    const [targetVersionSource, node, tunnel, peekaboo] = await Promise.all([
+      git("show", `${targetSha}:src/equinox-local-version.ts`),
       inspectSourceNodeRuntime({ homeDir: runtimeHomeDir }),
       inspectSourceTunnelRuntime({ configPath: runtimeEnv.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG }),
       inspectSourcePeekabooRuntime({ configPath: runtimeEnv.EQUINOX_LOCAL_DEV_RUNTIME_CONFIG }),
     ]);
+    const targetVersion = targetVersionSource.match(/EQUINOX_LOCAL_VERSION\s*=\s*"((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))"/u)?.[1] ?? null;
     const runtimeDrift = [node, tunnel, peekaboo].some(item => item.synchronized !== true);
     const updateAvailable = installedSha !== targetSha || runtimeDrift;
-    return {mode:"factory-source",state:updateAvailable?"behind":"up_to_date",currentSha:installedSha,targetSha,
+    return {mode:"factory-source",state:updateAvailable?"behind":"up_to_date",currentSha:installedSha,targetSha,targetVersion,
       updateAvailable,applying:Boolean(current),restartScheduledFor:current?factoryUpdatePending:null};
   } catch {
     return {mode:"factory-source",state:"unavailable",applying:Boolean(current),reason:"Factory source identity could not be verified."};
@@ -3162,24 +3164,22 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     const browser = equinoxBrowserBridge.snapshot();
     const browserSettingsByContext:Record<"agent"|"user",RuntimeBoundary> = { agent: null, user: null };
     const settingsConnectionIds = { agent: equinoxBrowserBridge.settingsConnectionId("agent"), user: equinoxBrowserBridge.settingsConnectionId("user") };
-    for (const context of ["agent", "user"] as const) {
-      const expectedConnectionId = settingsConnectionIds[context];
-      if (!expectedConnectionId) continue;
-      try {
-        browserSettingsByContext[context] = await equinoxBrowserBridge.call("settings.status", {}, {
-          timeoutMs: 2_500,
-          context,
-          expectedConnectionId,
-        });
-      } catch {
-        // Older extension builds may not expose the settings control plane yet.
-      }
-    }
+    const [, agentBrowserStatus, observabilityHealth] = await Promise.all([
+      Promise.all((["agent", "user"] as const).map(async context => {
+        const expectedConnectionId = settingsConnectionIds[context];
+        if (!expectedConnectionId) return;
+        try {
+          browserSettingsByContext[context] = await equinoxBrowserBridge.call("settings.status", {}, {
+            timeoutMs: 2_500, context, expectedConnectionId,
+          });
+        } catch {
+          // Older extension builds may not expose the settings control plane yet.
+        }
+      })),
+      equinoxAgentBrowser.status(),
+      runtimeObservability.health({ windowMs: 15 * 60 * 1000 }),
+    ]);
     const browserSettings:RuntimeBoundary = browserSettingsByContext.user;
-    const agentBrowserStatus = await equinoxAgentBrowser.status();
-    const observabilityHealth = await runtimeObservability.health({
-      windowMs: 15 * 60 * 1000,
-    });
     const supervisorMode = process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null;
     const managedConnection = equinoxLocalInstallation.managed === true;
     const chatgptConnection = managedConnection
@@ -3195,6 +3195,21 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
           needsAttention: false,
           mode: "source",
         };
+    const [turnBudget, tasks, onboarding] = await Promise.all([
+      turnBudgetController.refreshSnapshot(),
+      taskCapsuleStore.list({ limit: 50 }),
+      getManagedOnboardingStatus({
+        installation: equinoxLocalInstallation,
+        homeDir: runtimeHomeDir,
+        supervisorMode,
+        browserUser: {
+          ready: Boolean(browser.contexts?.user?.ready),
+          consentAccepted: browserSettingsByContext.user?.consentAccepted === true,
+          controlEnabled: browserSettingsByContext.user?.enabled === true,
+        },
+        reconcileCompletion: true,
+      }),
+    ]);
     const status = {
       server: {
         name: SERVER_NAME,
@@ -3270,26 +3285,13 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
         reconnectCount: peekabooBridge.reconnectCount,
       },
       agentControl: agentControl.snapshot(),
-      turnBudget: await turnBudgetController.refreshSnapshot(),
+      turnBudget,
       nativeChat: nativeChatChannel.status(),
       capabilities: capabilityRegistry.summary(),
     };
-    const [tasks, onboarding] = await Promise.all([
-      taskCapsuleStore.list({ limit: 50 }),
-      getManagedOnboardingStatus({
-        installation: equinoxLocalInstallation,
-        homeDir: runtimeHomeDir,
-        supervisorMode: process.env.EQUINOX_LOCAL_SUPERVISOR_MODE || null,
-        browserUser: {
-          ready: Boolean(browser.contexts?.user?.ready),
-          consentAccepted: browserSettingsByContext.user?.consentAccepted === true,
-          controlEnabled: browserSettingsByContext.user?.enabled === true,
-        },
-        reconcileCompletion: true,
-      }),
-    ]);
     return {
       ...status,
+      onboarding,
       presentation: deriveEquinoxLocalPresentationState({ status, tasks, onboarding }),
     };
   },

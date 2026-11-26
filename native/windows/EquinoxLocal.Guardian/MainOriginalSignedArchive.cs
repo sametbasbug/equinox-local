@@ -76,55 +76,95 @@ internal static partial class Program
         // There is no persistent cache or metadata-only integrity shortcut.
         var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "" };
         List<NativeFingerprintRow>? rows = measureFingerprint ? new() : null;
+        // ZIP entries use one authenticated archive stream and are read only
+        // by this thread. Overlap physical reads with that sequential work,
+        // keeping at most four jobs and buffers alive. No cross-launch cache.
+        var fileJobs = new List<Task<NativeFingerprintRow>>(4);
+        var parallelFiles = Math.Min(4, Environment.ProcessorCount);
+        void DrainFileJobs()
+        {
+            if (fileJobs.Count == 0) return;
+            try { rows!.AddRange(Task.WhenAll(fileJobs).GetAwaiter().GetResult()); }
+            finally { fileJobs.Clear(); }
+        }
         var pending = new Stack<(string Full, string Relative)>();
         pending.Push((releaseDir, ""));
-        while (pending.Count > 0)
+        try
         {
-            var (parent, parentRelative) = pending.Pop();
-            RequireNormalDirectory(parent);
-            foreach (var item in Directory.EnumerateFileSystemEntries(parent))
+            while (pending.Count > 0)
             {
-                if (discovered.Count > MaxNativeFingerprintEntries + 1)
-                    throw new InvalidDataException("Original signed B has too many filesystem entries.");
-                var attributes = File.GetAttributes(item);
-                if ((attributes & FileAttributes.ReparsePoint) != 0)
-                    throw new InvalidDataException("Original signed B contains an unauthorized reparse path.");
-                var relative = parentRelative.Length == 0
-                    ? Path.GetFileName(item) : parentRelative + "/" + Path.GetFileName(item);
-                if (!discovered.Add(relative) || !archiveEntries.TryGetValue(relative, out var expected))
-                    throw new InvalidDataException("Original signed B contains an extra or duplicate release path.");
-                var directory = (attributes & FileAttributes.Directory) != 0;
-                if (directory != expected.Directory)
-                    throw new InvalidDataException("Original signed B entry type differs from archive.");
-                if (directory)
+                var (parent, parentRelative) = pending.Pop();
+                RequireNormalDirectory(parent);
+                foreach (var item in Directory.EnumerateFileSystemEntries(parent))
                 {
-                    rows?.Add(new NativeFingerprintRow("dir", relative, WindowsNodeMode(attributes), 0, null));
-                    pending.Push((item, relative));
-                    continue;
+                    if (discovered.Count > MaxNativeFingerprintEntries + 1)
+                        throw new InvalidDataException("Original signed B has too many filesystem entries.");
+                    var attributes = File.GetAttributes(item);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        throw new InvalidDataException("Original signed B contains an unauthorized reparse path.");
+                    var relative = parentRelative.Length == 0
+                        ? Path.GetFileName(item) : parentRelative + "/" + Path.GetFileName(item);
+                    if (!discovered.Add(relative) || !archiveEntries.TryGetValue(relative, out var expected))
+                        throw new InvalidDataException("Original signed B contains an extra or duplicate release path.");
+                    var directory = (attributes & FileAttributes.Directory) != 0;
+                    if (directory != expected.Directory)
+                        throw new InvalidDataException("Original signed B entry type differs from archive.");
+                    if (directory)
+                    {
+                        // Keep the original row order even for equal collation keys.
+                        DrainFileJobs();
+                        rows?.Add(new NativeFingerprintRow("dir", relative, WindowsNodeMode(attributes), 0, null));
+                        pending.Push((item, relative));
+                        continue;
+                    }
+                    var length = expected.Entry.Length;
+                    byte[] archiveDigest;
+                    using (var original = expected.Entry.Open()) archiveDigest = SHA256.HashData(original);
+                    if (rows is not null)
+                    {
+                        // Values are iteration-local; no shared archive position
+                        // or mutable fingerprint collection crosses worker threads.
+                        fileJobs.Add(Task.Run(() => VerifyOriginalExtractedFile(item, relative, attributes, length, archiveDigest)));
+                        if (fileJobs.Count >= parallelFiles) DrainFileJobs();
+                    }
+                    else _ = VerifyOriginalExtractedFile(item, relative, attributes, length, archiveDigest);
                 }
-                RequireNormalFile(item);
-                var length = expected.Entry.Length;
-                if (new FileInfo(item).Length != length)
-                    throw new InvalidDataException("Original signed ZIP extracted B file size differs from archive.");
-                using var original = expected.Entry.Open();
-                using var extracted = new FileStream(item, FileMode.Open, FileAccess.Read,
-                    FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
-                if (extracted.Length != length)
-                    throw new InvalidDataException("Original signed B file changed before inspection.");
-                var archiveDigest = SHA256.HashData(original);
-                var releaseDigest = SHA256.HashData(extracted);
-                if (!CryptographicOperations.FixedTimeEquals(archiveDigest, releaseDigest) ||
-                    extracted.Length != length || new FileInfo(item).Length != length)
-                    throw new InvalidDataException("Original signed ZIP extracted B file differs from production archive.");
-                rows?.Add(new NativeFingerprintRow("file", relative, WindowsNodeMode(attributes), length,
-                    Convert.ToHexStringLower(releaseDigest)));
+                DrainFileJobs();
+            }
+            if (discovered.Count != archiveEntries.Count)
+                throw new InvalidDataException("Original signed Windows archive and extracted B have different entries.");
+        }
+        finally
+        {
+            // If inventory/ZIP validation fails, observe any already-issued
+            // bounded reads before returning failure. No task survives audit.
+            if (fileJobs.Count > 0)
+            {
+                try { DrainFileJobs(); } catch { /* Primary audit failure is preserved. */ }
             }
         }
-        if (discovered.Count != archiveEntries.Count)
-            throw new InvalidDataException("Original signed Windows archive and extracted B have different entries.");
         // No B WPF launch or pointer mutation here. Future mutation MUST
         // independently bind the OS-owned handles through its journal lease.
         InspectionPhase = "signed-native-original-archive-reconciled-read-only";
         return rows is null ? null : BuildNativeFingerprint(rows, discovered.Count - 1, total);
+    }
+
+    private static NativeFingerprintRow VerifyOriginalExtractedFile(string file, string relative,
+        FileAttributes attributes, long length, byte[] archiveDigest)
+    {
+        RequireNormalFile(file);
+        var info = new FileInfo(file);
+        if (info.Length != length || WindowsNodeMode(info.Attributes) != WindowsNodeMode(attributes))
+            throw new InvalidDataException("Original signed ZIP extracted B file size or mode changed before inspection.");
+        using var extracted = new FileStream(file, FileMode.Open, FileAccess.Read,
+            FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
+        if (extracted.Length != length)
+            throw new InvalidDataException("Original signed B file changed before inspection.");
+        var releaseDigest = SHA256.HashData(extracted);
+        if (!CryptographicOperations.FixedTimeEquals(archiveDigest, releaseDigest) ||
+            extracted.Length != length || new FileInfo(file).Length != length)
+            throw new InvalidDataException("Original signed ZIP extracted B file differs from production archive.");
+        return new NativeFingerprintRow("file", relative, WindowsNodeMode(attributes), length,
+            Convert.ToHexStringLower(releaseDigest));
     }
 }
