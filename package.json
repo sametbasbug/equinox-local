@@ -12,7 +12,7 @@
     "start": "node src/server.js",
     "desktop:dev": "electron desktop/main.js",
     "desktop:package": "npm run build:typed-desktop && node scripts/release/package-desktop-shell.mjs",
-    "build:typed-desktop": "tsc --project tsconfig.desktop.json --outDir desktop",
+    "build:typed-desktop": "tsc --project tsconfig.desktop.json --outDir desktop && node scripts/verify-typescript-desktop.mjs --build-commentary-preload",
     "verify:typed-desktop": "node scripts/verify-typescript-desktop.mjs",
     "browser:package": "bash scripts/package-browser-extension.sh",
     "local:release:package": "node scripts/release/package-managed-release.mjs",

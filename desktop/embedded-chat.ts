@@ -4,6 +4,7 @@ import type { NativeActivityHistory } from "./native-activity-history.js";
 import { WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import type { BrowserWindow, Rectangle } from "electron";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
@@ -1270,6 +1271,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
   isolated.setUserAgent(providerUserAgent);
   const view = new WebContentsView({
     webPreferences: {
+      preload: fileURLToPath(new URL("./chatgpt-commentary-preload.cjs",import.meta.url)),
       session: isolated, sandbox: true, contextIsolation: true,
       nodeIntegration: false, nodeIntegrationInWorker: false,
       nodeIntegrationInSubFrames: false, webviewTag: false,

@@ -1,6 +1,8 @@
-// Classic MAIN-world document_start script. Only ChatGPT's conversation SSE
-// response is eligible; no token, request body or conversation is retained.
+// Shared MAIN-world document_start script for Browser and native Assistant.
+// Only exact ChatGPT conversation stream and history responses are eligible.
+// No token, request body or conversation is retained.
 (() => {
+  if (location.origin !== "https://chatgpt.com" || window.top !== window) return;
   const nativeFetch = window.fetch;
   const encoder = new TextEncoder();
   const MAX_FRAME = 1024 * 1024;
@@ -74,6 +76,60 @@
     return changed ? frame.replace(data[0]!, "data: " + JSON.stringify(payload)) : frame;
   }
 
+  function wrap(response: Response, body: BodyInit): Response {
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+    const wrapped = new Response(body, {status:response.status,statusText:response.statusText,headers});
+    Object.defineProperties(wrapped, {
+      url:{value:response.url}, redirected:{value:response.redirected}, type:{value:response.type},
+    });
+    return wrapped;
+  }
+
+  // A completed turn can be hydrated from a fresh conversation response.
+  // Only full, explicitly public commentary records in the exact mapping
+  // are eligible. Never reconstruct missing records or read other endpoints.
+  async function rewriteHistory(response:Response, conversationId:string):Promise<Response> {
+    if(response.status!==200 || !response.body ||
+      !/^application\/json(?:\s*;|\s*$)/iu.test(response.headers.get("content-type")||""))return response;
+    try {
+      const url=new URL(response.url);
+      if(url.origin!==location.origin||url.pathname!=="/backend-api/conversations/"+conversationId)return response;
+      const MAX_HISTORY=16*1024*1024;
+      const length=Number(response.headers.get("content-length")||0);
+      if(length>MAX_HISTORY)return response;
+      const reader=response.clone().body!.getReader();
+      const decoder=new TextDecoder();
+      let raw="",bytes=0;
+      try {
+        while(true){
+          const {done,value}=await reader.read();
+          if(done)break;
+          bytes+=value.byteLength;
+          if(bytes>MAX_HISTORY){void reader.cancel().catch(()=>{});return response;}
+          raw+=decoder.decode(value,{stream:true});
+        }
+        raw+=decoder.decode();
+      }finally{reader.releaseLock();}
+      const payload=JSON.parse(raw);
+      if(!payload||typeof payload!=="object"||Array.isArray(payload))return response;
+      const conversation=payload.mapping?payload:payload.conversation;
+      if(!conversation||typeof conversation!=="object"||
+        (conversation.conversation_id!==undefined&&conversation.conversation_id!==conversationId)||
+        (conversation.id!==undefined&&conversation.id!==conversationId)||
+        !conversation.mapping||typeof conversation.mapping!=="object"||Array.isArray(conversation.mapping))return response;
+      let changed=false;
+      for(const node of Object.values(conversation.mapping) as any[]){
+        const message=node?.message;
+        if(message?.recipient==="all"&&isPublicProgress(message)&&message.metadata.is_visually_hidden_from_conversation===true){
+          message.metadata.is_visually_hidden_from_conversation=false;
+          changed=true;
+        }
+      }
+      return changed?wrap(response,JSON.stringify(payload)):response;
+    }catch{return response;}
+  }
+
   function rewrite(response: Response): Response {
     if (!response.body || response.status !== 200 ||
         !/^text\/event-stream(?:\s*;|\s*$)/iu.test(response.headers.get("content-type") || "")) return response;
@@ -106,26 +162,19 @@
         }
       },
     }));
-    const headers = new Headers(response.headers);
-    headers.delete("content-length"); // SSE bytes may change after a safe edit.
-    const wrapped = new Response(stream, { status: response.status, statusText: response.statusText, headers });
-    Object.defineProperties(wrapped, {
-      url: { value: response.url },
-      redirected: { value: response.redirected },
-      type: { value: response.type },
-    });
-    return wrapped;
+    return wrap(response,stream);
   }
 
   window.fetch = function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const result = nativeFetch.apply(this, arguments as any);
-    let matches = false;
     try {
       const url = new URL(typeof input === "string" || input instanceof URL ? String(input) : input.url, location.href);
       const method = (init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
-      matches = url.origin === location.origin && url.pathname === "/backend-api/f/conversation"
-        && method === "POST";
+      if(url.origin!==location.origin)return result;
+      if(url.pathname==="/backend-api/f/conversation"&&method==="POST")return result.then(rewrite);
+      const history=/^\/backend-api\/conversations\/([a-f0-9-]{36})$/iu.exec(url.pathname);
+      if(method==="GET"&&history?.[1])return result.then(response=>rewriteHistory(response,history[1]!));
     } catch { /* Unknown requests are untouched. */ }
-    return matches ? result.then(rewrite) : result;
+    return result;
   };
 })();

@@ -2,6 +2,7 @@ import { createNativeChatContinuity } from "./native-chat-continuity.js";
 import { decorateNativeToolActivity } from "./native-tool-activity.js";
 import { WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 // Explicitly isolated remote browser. No privileged Equinox preload or IPC.
 const CHATGPT = "https://chatgpt.com";
 const HOSTS = new Set(["chatgpt.com", "auth.openai.com"]);
@@ -1307,6 +1308,7 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
     isolated.setUserAgent(providerUserAgent);
     const view = new WebContentsView({
         webPreferences: {
+            preload: fileURLToPath(new URL("./chatgpt-commentary-preload.cjs", import.meta.url)),
             session: isolated, sandbox: true, contextIsolation: true,
             nodeIntegration: false, nodeIntegrationInWorker: false,
             nodeIntegrationInSubFrames: false, webviewTag: false,
