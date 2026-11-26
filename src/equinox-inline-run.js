@@ -1,4 +1,5 @@
-export const INLINE_RUN_URI = "ui://equinox-local/run/v2.html";
+export const INLINE_RUN_URI = "ui://equinox-local/run/v3.html";
+const PREVIOUS_INLINE_RUN_URI = "ui://equinox-local/run/v2.html";
 const LEGACY_INLINE_RUN_URI = "ui://equinox-local/run/v1.html";
 /**
  * One component instance belongs to one real provider tool call. Its input
@@ -6,7 +7,7 @@ const LEGACY_INLINE_RUN_URI = "ui://equinox-local/run/v1.html";
  * conversation attribution, and no extra fetches or duplicate execution.
  */
 const HTML = String.raw `<!doctype html>
-<html lang="en" data-equinox-run-version="2"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Equinox Local run</title>
+<html lang="en" data-equinox-run-version="3"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Equinox Local run</title>
 <style>
 :root{color-scheme:light;--fg:#181a29;--muted:#61677b;--line:#e1e6f0;--surface:#fff;--code:#eff2f8;--focus:#6546a9;--ok:#237253;--bad:#b53e4b;--pending:#916218;font:13px/1.5 system-ui,sans-serif}
 :root[data-theme="dark"]{color-scheme:dark}
@@ -46,7 +47,7 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
    const background=p?.promoted===true&&p?.completed===false;
    const args=terminal?input.arguments:null;
    const limit=24000;
-   parent.postMessage({type:"equinox-native-run/v1",nonce:nativeNonce,data:{
+   top.postMessage({type:"equinox-native-run/v1",nonce:nativeNonce,data:{
      operation:bounded(op,160),command:bounded(args?.command,12000),
      state:result?.cancelled===true?"cancelled":!done?"running":failed?"failed":background?"background":exit===0?"success":"complete",
      exitCode:exit,durationMs:Number.isFinite(p?.durationMs)?p.durationMs:null,
@@ -148,13 +149,15 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
    render();
  }
  window.addEventListener("message",event=>{
-   if(event.source!==parent)return;
    const m=event.data;
-   if(event.origin==="https://chatgpt.com"&&m?.type==="equinox-native-run/request-v1"&&
+   // The MCP host wraps our resource in an additional sandbox frame.
+   // Accept the data-only handshake from the actual ChatGPT top window;
+   // ordinary MCP protocol messages still belong exclusively to parent.
+   if(event.source===top&&event.origin==="https://chatgpt.com"&&m?.type==="equinox-native-run/request-v1"&&
       typeof m.nonce==="string"&&/^[a-f0-9-]{36}$/.test(m.nonce)){
      nativeNonce=m.nonce;publishNative();return;
    }
-   if(!m||m.jsonrpc!=="2.0")return;
+   if(event.source!==parent||!m||m.jsonrpc!=="2.0")return;
    if(m.id===1&&m.result){context(m.result.hostContext);initialized=true;send("ui/notifications/initialized",{});render();return}
    if(m.method==="ui/notifications/tool-input"){input=m.params?.arguments||null;render()}
    if(m.method==="ui/notifications/tool-result"){const value=m.params?.result||m.params;result=value&&typeof value==="object"?value:null;render()}
@@ -165,7 +168,7 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
  });
  window.addEventListener("openai:set_globals",legacy);
  new ResizeObserver(size).observe(document.body);
- parent.postMessage({jsonrpc:"2.0",id:1,method:"ui/initialize",params:{protocolVersion:"2026-01-26",appInfo:{name:"Equinox Local run",version:"2.0.0"},appCapabilities:{}}},"*");
+ parent.postMessage({jsonrpc:"2.0",id:1,method:"ui/initialize",params:{protocolVersion:"2026-01-26",appInfo:{name:"Equinox Local run",version:"3.0.0"},appCapabilities:{}}},"*");
  $("run").addEventListener("toggle",size);
  legacy();render();
 })();
@@ -173,7 +176,7 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
 export function registerInlineRunResource(server) {
     // A new URI invalidates hosts that cache the presentation by resource URI.
     // Keep older conversation resource references valid without changing tools.
-    for (const [uri, name] of [[INLINE_RUN_URI, "Equinox Local activity"], [LEGACY_INLINE_RUN_URI, "Equinox Local run (legacy)"]]) {
+    for (const [uri, name] of [[INLINE_RUN_URI, "Equinox Local activity"], [PREVIOUS_INLINE_RUN_URI, "Equinox Local activity (v2)"], [LEGACY_INLINE_RUN_URI, "Equinox Local run (legacy)"]]) {
         server.registerResource(name, uri, {}, async () => ({
             contents: [{
                     uri,

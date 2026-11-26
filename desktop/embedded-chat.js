@@ -1128,6 +1128,23 @@ function decorateProviderIdentity(update, generation) {
             syncProfile();
         syncSurface();
         if (threadRecognized) {
+            // The provider recycles whole turn wrappers on completion. A marked
+            // assistant wrapper can subsequently contain a user unit or no longer
+            // own any response; remove the stale speaker before re-evaluating.
+            for (const element of marks) {
+                if (element.getAttribute("data-equinox-role") !== "assistant")
+                    continue;
+                const realResponse = element.matches(assistantMessage + "," + responseBody) ||
+                    element.querySelector(assistantMessage + "," + responseBody);
+                const hasContent = element.textContent?.trim() ||
+                    element.querySelector("iframe,[data-response-body] > [data-mcp-app-portal-target]");
+                if (!element.isConnected || element.matches(userEvidence) || element.querySelector(userEvidence) ||
+                    !realResponse || !hasContent) {
+                    clearMark(element);
+                    if (element.isConnected)
+                        changed.add(element);
+                }
+            }
             for (const branch of changed)
                 syncBranch(branch);
         }

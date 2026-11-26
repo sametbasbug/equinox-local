@@ -27,11 +27,32 @@ export function decorateNativeToolActivity(update, generation) {
     const valid = (e) => !disposed && sameRoute() && e.frame.isConnected && e.body.isConnected &&
         e.frame.src === e.src && e.body.getAttribute("data-response-body") === e.id &&
         e.portal.parentElement === e.body && e.portal.contains(e.frame);
-    const request = (e) => {
-        if (valid(e) && e.frame.contentWindow) {
-            requests = Math.min(10000, requests + 1);
-            e.frame.contentWindow.postMessage({ type: "equinox-native-run/request-v1", nonce: e.nonce }, e.origin);
+    // WindowProxy exposes child references across origins without granting DOM
+    // access. The observed provider shell has exactly one inner resource frame.
+    // Do not enumerate arbitrary descendants or deliver data to them.
+    const resourceWindow = (e) => {
+        try {
+            const outer = e.frame.contentWindow;
+            if (!outer)
+                return null;
+            if (outer.length === 0)
+                return outer;
+            return outer.length === 1 ? outer.frames[0] ?? null : null;
         }
+        catch {
+            return null;
+        }
+    };
+    const request = (e) => {
+        if (!valid(e))
+            return;
+        const target = resourceWindow(e);
+        if (!target)
+            return;
+        requests = Math.min(10000, requests + 1);
+        // An inner sandbox may have an opaque origin. Only an opaque random
+        // challenge is sent with wildcard targeting, never command/result data.
+        target.postMessage({ type: "equinox-native-run/request-v1", nonce: e.nonce }, target === e.frame.contentWindow ? e.origin : "*");
     };
     const forget = (e) => {
         for (const timer of e.timers)
@@ -110,7 +131,11 @@ export function decorateNativeToolActivity(update, generation) {
         if (disposed || !sameRoute() || event.data?.type !== "equinox-native-run/v1")
             return;
         replies = Math.min(10000, replies + 1);
-        const e = [...entries.values()].find(x => x.frame.contentWindow === event.source && x.origin === event.origin && x.nonce === event.data.nonce);
+        const e = [...entries.values()].find(x => {
+            const source = resourceWindow(x);
+            return source !== null && source === event.source && x.nonce === event.data.nonce &&
+                (event.origin === x.origin || (source !== x.frame.contentWindow && event.origin === "null"));
+        });
         if (!e || !valid(e))
             return;
         const d = event.data.data;
@@ -232,7 +257,7 @@ export function decorateNativeToolActivity(update, generation) {
             const e = { frame, body, portal, id, src: frame.src, origin, nonce: crypto.randomUUID(), timers: [] };
             candidates = Math.min(10000, candidates + 1);
             entries.set(frame, e);
-            for (const delay of [0, 300, 1200, 4000, 9000])
+            for (const delay of [0, 300, 1200, 4000, 9000, 16000])
                 e.timers.push(window.setTimeout(() => request(e), delay));
         }
         if (changed)
