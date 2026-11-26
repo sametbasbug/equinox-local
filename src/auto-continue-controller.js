@@ -195,18 +195,22 @@ export function createAutoContinueController({ store, browserBridge, agentContro
             throw new Error("The reacquired ChatGPT tab id is invalid.");
         return { tabId, canonicalUrl: String(matches[0]?.url || "") };
     };
-    const resolveBoundTarget = async (taskId) => {
+    const resolveBoundTarget = async (taskId, preferredContext) => {
         const task = await store.readInternal(taskId);
         const binding = task.chatBinding || task.continuation?.target || null;
         if (!binding)
-            return resolveTarget();
+            return resolveTarget(preferredContext);
+        if (preferredContext && binding.browserContext !== preferredContext)
+            throw new Error("The task is bound to another ChatGPT context. Use task_rebind_chat with the explicit context while the intended conversation is generating, then arm again.");
         const snapshot = browserBridge.snapshot();
         const contextState = snapshot?.contexts?.[binding.browserContext];
         if (!contextState?.ready)
             throw new Error("The task's bound ChatGPT browser context is not connected.");
         const instanceId = contextState.extension?.instanceId || contextState.host?.instanceId || null;
         if (!instanceId || instanceId !== binding.browserInstanceId)
-            throw new Error("The task's bound ChatGPT browser instance changed. Open the task conversation and checkpoint it again.");
+            throw new Error(binding.browserContext === "native"
+                ? "The native Assistant instance changed. Open the task conversation, then use task_rebind_chat with chat_context native while its response is generating."
+                : "The task's bound ChatGPT browser instance changed. Open the task conversation and checkpoint it again.");
         const autoContinueVersion = extensionAutoContinueVersion(contextState);
         if (autoContinueVersion < REQUIRED_AUTO_CONTINUE_VERSION)
             throw new Error("The task's bound browser needs the current Equinox Browser Auto Continue capability.");
@@ -254,7 +258,7 @@ export function createAutoContinueController({ store, browserBridge, agentContro
     const captureBinding = async (taskId, preferredContext) => {
         try {
             const task = await store.readInternal(taskId);
-            const existing = task.chatBinding;
+            const existing = task.chatBinding || task.continuation?.target || null;
             // Checkpoints must not silently transfer a live Chrome task to another
             // native/account context, or vice versa.
             if (existing && preferredContext && existing.browserContext !== preferredContext)
@@ -274,20 +278,21 @@ export function createAutoContinueController({ store, browserBridge, agentContro
         if (task.status !== "active")
             throw new Error("Only active Task Capsules can be rebound to a conversation.");
         const current = task.chatBinding;
-        // Explicit rebinding is permitted within the existing browser context.
-        // Never infer a transfer to another Chrome profile or the native view.
-        if (current && preferredContext && preferredContext !== current.browserContext) {
-            throw new Error("Task rebind cannot switch to another browser context. Keep the original Browser context.");
-        }
-        const priorContext = current?.browserContext || task.continuation?.target?.browserContext;
-        if (priorContext && preferredContext && preferredContext !== priorContext) {
-            throw new Error("Task rebind cannot switch to another browser context.");
-        }
-        // An old explicit pin cannot override the one currently generating turn.
-        const target = await resolveGeneratingTarget(priorContext || preferredContext);
-        if (priorContext && target.browserContext !== priorContext) {
+        const prior = current || task.continuation?.target || null;
+        const priorContext = prior?.browserContext;
+        const crossing = Boolean(priorContext && preferredContext && priorContext !== preferredContext);
+        // A human can open the SAME conversation in the native Assistant or
+        // personal Chrome. Only an explicit context request may move it.
+        // The isolated Agent Browser is never eligible for a context transfer.
+        if (crossing && !(priorContext === "native" && preferredContext === "user" ||
+            priorContext === "user" && preferredContext === "native"))
+            throw new Error("Task rebind cannot switch between isolated browser contexts.");
+        const target = await resolveGeneratingTarget(preferredContext || priorContext);
+        if (crossing && (!prior || target.conversationId !== prior.conversationId ||
+            target.canonicalUrl !== prior.canonicalUrl))
+            throw new Error("Moving between Your Browser and native Assistant requires the same verified ChatGPT conversation.");
+        if (!crossing && priorContext && target.browserContext !== priorContext)
             throw new Error("Rebind target is outside the Task Capsule's browser context.");
-        }
         // Target is resolved from the verified generating ChatGPT turn, never
         // supplied as a raw URL, arbitrary tab id or user-entered conversation.
         return store.rebindChat({ taskId, expectedBinding: current, binding: {
@@ -456,7 +461,7 @@ export function createAutoContinueController({ store, browserBridge, agentContro
         return armed;
     };
     const arm = async ({ taskId, ttlMinutes = 15 } = {}) => armWithResolver({ taskId, ttlMinutes, resolver: async () => resolveTarget() });
-    const armBound = async ({ taskId, ttlMinutes = 15 } = {}) => armWithResolver({ taskId, ttlMinutes, resolver: resolveBoundTarget });
+    const armBound = async ({ taskId, ttlMinutes = 15, preferredContext } = {}) => armWithResolver({ taskId, ttlMinutes, resolver: id => resolveBoundTarget(id, preferredContext) });
     const cancel = async (taskId, reason = "agent_cancelled") => {
         const current = await store.readInternal(taskId);
         if (current.continuation?.continuationId)

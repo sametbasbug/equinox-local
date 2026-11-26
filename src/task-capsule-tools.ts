@@ -16,7 +16,7 @@ type TaskSnapshot = {
 type TaskCheckpoint = TaskSnapshot & { taskId: string | undefined };
 type TaskIdentity = { taskId: string };
 type TaskListing = { status?: TaskStatus; limit: number };
-type ArmInput = { task_id: TaskId; ttl_minutes: number };
+type ArmInput = { task_id: TaskId; ttl_minutes: number; chat_context?: "agent" | "user" | "native" | undefined };
 type CancelInput = { task_id: TaskId };
 type ToolInputs = {
   task_checkpoint: TaskSnapshot;
@@ -53,7 +53,7 @@ type Store = {
 };
 type AutoContinueController = {
   captureBinding: (taskId: TaskId, preferredContext?: "agent" | "user" | "native") => Promise<unknown>;
-  armBound: (input: {taskId: TaskId;ttlMinutes: number}) => Promise<unknown>;
+  armBound: (input: {taskId: TaskId;ttlMinutes: number;preferredContext?: "agent" | "user" | "native" | undefined}) => Promise<unknown>;
   rebindCurrent: (taskId: TaskId, preferredContext?: "agent" | "user" | "native") => Promise<unknown>;
   cancel: (taskId: TaskId, reason: "agent_cancelled") => Promise<unknown>;
 };
@@ -89,7 +89,7 @@ export function registerTaskCapsuleTools({ registerRawTool, z, store, autoContin
 
   registerRawTool("task_checkpoint", {
     description: "Create or update a durable bounded Task Capsule checkpoint for long-running work. Updating an existing task invalidates any older pending continuation.",
-    inputSchema: { task_id: taskIdSchema.optional(), chat_context: z.enum(["agent", "user", "native"]).optional().describe("Optional exact context for binding a new task; existing bindings are not transferred between contexts."), ...snapshotSchema },
+    inputSchema: { task_id: taskIdSchema.optional(), chat_context: z.enum(["agent", "user", "native"]).optional().describe("Use native inside Equinox Local Assistant, user in Your Browser, agent in Agent Browser; checkpointing never transfers an existing task to another context."), ...snapshotSchema },
     annotations: { title: "Save task checkpoint", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (input) => {
     const task = await store.checkpoint({ ...input, taskId: input.task_id });
@@ -122,16 +122,16 @@ export function registerTaskCapsuleTools({ registerRawTool, z, store, autoContin
   }, async ({ task_id }) => jsonResult(await store.cancel(task_id)), { capabilityDomain: "runtime" });
 
   registerRawTool("task_rebind_chat", {
-    description: "Explicitly move an existing active Task Capsule to the current verified generating ChatGPT conversation in the SAME Browser context (agent Chrome, personal Chrome, or native Chat). Use this when the human continues a task in another chat. Does not silently transfer task_checkpoint bindings, select arbitrary tab URLs or send a message. Cancels any pending Auto Continue arm, increments the checkpoint revision and refuses in-flight delivery or Fresh Chat Resume. Then use continuation_arm normally.",
-    inputSchema: {task_id: taskIdSchema, chat_context: z.enum(["agent", "user", "native"]).optional().describe("Optional same-context disambiguation; an existing task cannot change Browser context.")},
+    description: "Explicitly rebind an active task to the current verified generating ChatGPT conversation in its original context. If the human opened the SAME conversation in native Assistant or Your Browser, explicitly pass chat_context to transfer between those two contexts. Agent Browser remains isolated. Does not silently transfer task_checkpoint bindings, select arbitrary tab URLs or send a message. Cancels any pending Auto Continue arm, increments the checkpoint revision and refuses in-flight delivery or Fresh Chat Resume. Then use continuation_arm normally.",
+    inputSchema: {task_id: taskIdSchema, chat_context: z.enum(["agent", "user", "native"]).optional().describe("Explicit destination context; a native/Your Browser transfer requires the identical verified conversation.")},
     annotations: { title: "Rebind task to current chat", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async ({task_id,chat_context}) => jsonResult(await autoContinueController.rebindCurrent(task_id,chat_context)), { capabilityDomain: "runtime" });
 
   registerRawTool("continuation_arm", {
-    description: "Arm one bounded next-turn Auto Continue for an active Task Capsule. Prefer the Task Capsule's verified ChatGPT binding when present; otherwise resolve the existing pinned/current generating target. Every automatic hop must be armed again.",
-    inputSchema: { task_id: taskIdSchema, ttl_minutes: z.number().int().min(1).max(60).default(15) },
+    description: "Arm one bounded next-turn Auto Continue for an active Task Capsule. Use chat_context native when working inside Equinox Local Assistant, user for personal Chrome, agent for Agent Browser. A saved binding must match; if the human moved the same conversation, explicitly rebind first. Without a saved binding or explicit context, resolve the existing pinned/current generating target. Every automatic hop must be armed again.",
+    inputSchema: { task_id: taskIdSchema, ttl_minutes: z.number().int().min(1).max(60).default(15), chat_context: z.enum(["agent","user","native"]).optional().describe("Explicit conversation context; does not silently transfer an existing task binding.") },
     annotations: { title: "Arm Auto Continue", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, async ({ task_id, ttl_minutes }) => jsonResult(await autoContinueController.armBound({ taskId: task_id, ttlMinutes: ttl_minutes })), { capabilityDomain: "runtime" });
+  }, async ({ task_id, ttl_minutes, chat_context }) => jsonResult(await autoContinueController.armBound({ taskId: task_id, ttlMinutes: ttl_minutes, ...(chat_context ? {preferredContext:chat_context} : {}) })), { capabilityDomain: "runtime" });
 
   registerRawTool("continuation_cancel", {
     description: "Cancel the pending Auto Continue arm for a Task Capsule without cancelling the task.",

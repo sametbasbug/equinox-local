@@ -468,8 +468,12 @@ export function createTaskCapsuleStore({rootDir,now=()=>Date.now(),randomId=()=>
     if (!normalized) throw new Error("Task chat binding is required.");
     const current = record.chatBinding;
     if (JSON.stringify(current) !== JSON.stringify(expected)) throw new Error("Task chat binding changed during rebind; read the current Task Capsule before retrying.");
-    if (current?.browserContext && current.browserContext !== normalized.browserContext) {
-      throw new Error("Task chat rebind cannot cross browser contexts.");
+    const prior = current || record.continuation?.target || null;
+    if (prior && prior.browserContext !== normalized.browserContext &&
+        (!((prior.browserContext === "native" && normalized.browserContext === "user") ||
+          (prior.browserContext === "user" && normalized.browserContext === "native")) ||
+          prior.conversationId !== normalized.conversationId || prior.canonicalUrl !== normalized.canonicalUrl)) {
+      throw new Error("Task chat rebind cannot cross isolated contexts or transfer to a different conversation.");
     }
     if (current && JSON.stringify(current) === JSON.stringify(normalized)) return publicTask(record);
     clearContinuation(record, "chat_rebound");

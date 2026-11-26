@@ -107,7 +107,7 @@ export function createNativeChatChannel({ assertMutationAllowed = () => { } } = 
         const target = current();
         if (method === "continuation.target.resolve") {
             const state = target?.state;
-            return { mode: "task-tab", status: state?.generationActive && state.userEpoch && state.assistantTurnKey ? "ready" : "idle",
+            return { mode: "task-tab", status: target?.viewVisible && state?.generationActive && state.userEpoch && state.assistantTurnKey ? "ready" : "idle",
                 target: state ? { ...state, autoContinueVersion: 1 } : null };
         }
         if (!target)
