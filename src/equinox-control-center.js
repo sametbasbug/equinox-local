@@ -4317,7 +4317,7 @@ function bindEvents() {
             checkbox.checked = status.enabled;
             checkbox.disabled = !status.available && !status.enabled;
             clear.disabled = status.available && !status.count && !status.enabled;
-            setText("command-history-status", status.available ? (status.enabled ? localizeUiText("Local history enabled") + " · " + status.count : "Not saved") : "Encryption or storage unavailable");
+            setText("command-history-status", status.available ? (status.enabled ? localizeUiText("Local history enabled") + " · " + status.count : "Not saved") : "Local storage unavailable");
             // Factory-only numeric diagnostics from trusted main; no command,
             // output, URL or invocation identity is included.
             const diagnostic = status.diagnostics;

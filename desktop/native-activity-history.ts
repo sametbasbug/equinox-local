@@ -1,4 +1,3 @@
-import { safeStorage } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -34,13 +33,13 @@ function validated(pathname: string, input: unknown): ActivityHistoryItem | null
   }catch{return null;}
 }
 
-/** Role-local opt-in encrypted cache. Unavailable encryption or invalid
- * storage disables persistence, never the live native activity timeline. */
+/** Bounded role-local command history. Invalid storage disables persistence,
+ * never the live native activity timeline. No OS credential-store access. */
 export function createNativeActivityHistory(directory: string, initialEnabled: boolean) {
-  const file=path.join(directory,"native-command-history.enc");
+  const file=path.join(directory,"native-command-history.json");
+  const legacyFile=path.join(directory,"native-command-history.enc");
   let enabled=false, failed=false, epoch=0, nextPruneAt=0;
   let received=0, validCount=0;
-  let available=process.platform==="darwin"||process.platform==="win32";
   let tail:Promise<unknown>=Promise.resolve();
   function enqueue<T>(action:()=>Promise<T>):Promise<T>{
     const work=tail.then(action);
@@ -54,10 +53,10 @@ export function createNativeActivityHistory(directory: string, initialEnabled: b
     if(!stat.isDirectory()||stat.isSymbolicLink()||(process.platform!=="win32"&&
       (stat.uid!==process.getuid?.()||(stat.mode&0o077)!==0)))throw new Error("History directory is not private.");
   };
-  const checkFile=()=>{
+  const checkFile=(target=file)=>{
     privateDirectory();
     try {
-      const stat=fs.lstatSync(file);
+      const stat=fs.lstatSync(target);
       if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||
         (process.platform!=="win32"&&(stat.uid!==process.getuid?.()||(stat.mode&0o077)!==0)))throw new Error("Unsafe history file.");
       return stat;
@@ -79,40 +78,38 @@ export function createNativeActivityHistory(directory: string, initialEnabled: b
     checkFile();
     const temporary=path.join(directory,".native-command-history-"+randomUUID()+".tmp");
     try {
-      const encrypted=await safeStorage.encryptStringAsync(JSON.stringify(records));
+      const serialized=JSON.stringify(records);
       checkFile();
       const fd=fs.openSync(temporary,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|(fs.constants.O_NOFOLLOW||0),0o600);
-      try{fs.writeFileSync(fd,encrypted);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+      try{fs.writeFileSync(fd,serialized,"utf8");fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
       fs.renameSync(temporary,file);
     }finally{try{fs.unlinkSync(temporary);}catch{/* only owned temporary */}}
   }
   function clearFile(){
     if(checkFile())fs.unlinkSync(file);
+    if(checkFile(legacyFile))fs.unlinkSync(legacyFile);
     records=[];
     failed=false;
   }
   async function activate() {
-    available=await safeStorage.isAsyncEncryptionAvailable();
-    if(!available)throw new Error("OS encryption is unavailable.");
     const stat=checkFile();
     records=[];
     if(stat) {
-      if(stat.size<1||stat.size>MAX_BYTES+65536)throw new Error("Invalid encrypted command history.");
+      if(stat.size<1||stat.size>MAX_BYTES)throw new Error("Invalid command history.");
       const fd=fs.openSync(file,fs.constants.O_RDONLY|(fs.constants.O_NOFOLLOW||0));
-      let encrypted:Buffer;
+      let serialized:string;
       try {
         const opened=fs.fstatSync(fd);
         if(!opened.isFile()||opened.ino!==stat.ino||opened.size!==stat.size||opened.nlink!==1)throw new Error("History changed.");
-        encrypted=fs.readFileSync(fd);
+        serialized=fs.readFileSync(fd,"utf8");
       }finally{fs.closeSync(fd);}
-      const decrypted=await safeStorage.decryptStringAsync(encrypted);
-      const parsed:unknown=JSON.parse(decrypted.result);
+      const parsed:unknown=JSON.parse(serialized);
       if(!Array.isArray(parsed)||parsed.length>MAX_ITEMS)throw new Error("Invalid command history.");
       records=parsed.flatMap((x:Saved)=>{
         const item=typeof x?.pathname==="string"?validated(x.pathname,x):null;
         return item&&Number.isSafeInteger(x.at)?[{...item,pathname:x.pathname,at:x.at}]:[];
       });
-      const before=parsed.length;prune();if(records.length!==before||decrypted.shouldReEncrypt)await persist();
+      const before=parsed.length;prune();if(records.length!==before)await persist();
     }
     enabled=true;failed=false;
   }
@@ -122,7 +119,7 @@ export function createNativeActivityHistory(directory: string, initialEnabled: b
     ready:()=>ready,
     epoch:()=>epoch,
     diagnostics:()=>({received,valid:validCount}),
-    status:()=>({enabled,available:available&&!failed,count:currentRecords().length}),
+    status:()=>({enabled,available:!failed,count:currentRecords().length}),
     setEnabled(value:boolean) {
       epoch++;
       return enqueue(async()=>{

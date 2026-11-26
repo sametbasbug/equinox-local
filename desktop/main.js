@@ -1271,7 +1271,7 @@ else {
         language = app.getLocale().toLowerCase().startsWith("tr") ? "tr" : "en";
         shellPreferences = openShellPreferences(path.join(app.getPath("userData"), "private-shell"));
         language = shellPreferences.read().language ?? language;
-        activityHistory = createNativeActivityHistory(path.join(app.getPath("userData"), "private-shell"), shellPreferences.read().commandHistory === true);
+        activityHistory = createNativeActivityHistory(path.join(app.getPath("userData"), "private-shell"), shellPreferences.read().commandHistory !== false);
         void activityHistory.ready().then(() => embeddedChat?.refreshHistory());
         loadChatAvatar();
         if (process.platform === "win32")
