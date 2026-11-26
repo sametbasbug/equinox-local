@@ -68,7 +68,7 @@ Get [Equinox Browser from the Chrome Web Store](https://chromewebstore.google.co
 
 The native **Plugins** workspace offers curated integrations. **Equinox Brain**, powered by [Avenox Beyin](https://github.com/avenoxai/avenoxbeyin) (MIT), is optional: create a new vault or connect an existing V3 vault. Python 3.11+ is required for installation and memory access. The Brain settings section appears in Control Center after connection; disconnecting preserves the vault.
 
-Agent memory search is disabled by default. Enable it explicitly in Brain settings to prepare the verified local engine and index, then use `brain_search` through the integrations capability. Search currently supports upstream V3.17.0 and returns bounded, source-backed results excluding private and untrusted notes. Refresh the index manually as needed. Automatic context injection and agent memory writing are not yet implemented.
+Agent memory search is disabled by default. Enable it explicitly in Brain settings to prepare the verified local engine and index, then use `brain_search` through the integrations capability. Search currently supports upstream V3.17.0 and returns bounded, source-backed results excluding private and untrusted notes. Refresh the index manually as needed. `brain_read` reads an exact current record by ID under the same privacy gates. Separately enable agent writing to use `brain_create` for new internal notes with source attribution and stable idempotency keys; existing notes are never overwritten. Potential secrets detected by the upstream filter are refused without changing the shared vault preferences. Automatic context injection is not yet implemented.
 
 ## Agent CLI
 

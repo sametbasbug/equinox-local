@@ -2930,6 +2930,8 @@ function renderPlugins() {
   $("brain-disconnect").disabled = !brain || busy;
   $("brain-access").disabled = !brain || busy || (!brain.searchEnabled && !brain.searchCompatible);
   $("brain-sync").disabled = !brain?.searchEnabled || busy || !brain.searchCompatible;
+  $("brain-write").disabled = busy || !brain?.searchEnabled || (!brain.writeEnabled && !brain.searchCompatible);
+  setText("brain-write", state.brainWriteBusy ? "Working…" : brain?.writeEnabled ? "Disable writing" : "Enable writing");
   $("brain-compatibility").hidden = !brain || brain.searchCompatible;
   setText("brain-access", state.brainAccessBusy ? "Working…" : brain?.searchEnabled ? "Disable search" : "Enable search");
   setText("brain-sync", state.brainSyncBusy ? "Refreshing…" : "Refresh index");
@@ -2986,6 +2988,13 @@ async function changeBrainSearch() {
     showToast(state.plugins.brain.searchEnabled ? "Memory search enabled" : "Memory search disabled");
   } catch(error){showError(error);}
   finally{state.pluginsBusy=false;state.brainAccessBusy=false;renderPlugins();}
+}
+async function changeBrainWrite() {
+  if(state.pluginsBusy || !state.plugins?.brain?.searchEnabled)return;
+  state.pluginsBusy=true;state.brainWriteBusy=true;renderPlugins();
+  try { const result=await mutationJson("/api/v1/plugins/brain/write-access","POST",{enabled:!state.plugins.brain.writeEnabled});state.plugins=result.plugins;showToast(state.plugins.brain.writeEnabled?"Memory writing enabled":"Memory writing disabled"); }
+  catch(error){showError(error);}
+  finally{state.pluginsBusy=false;state.brainWriteBusy=false;renderPlugins();}
 }
 async function refreshBrainIndex() {
   if(state.pluginsBusy || !state.plugins?.brain?.searchEnabled)return;
@@ -4527,6 +4536,7 @@ function bindEvents() {
   $("brain-disconnect").addEventListener("click", () => { void disconnectBrain(); });
   $("brain-access").addEventListener("click", () => { void changeBrainSearch(); });
   $("brain-sync").addEventListener("click", () => { void refreshBrainIndex(); });
+  $("brain-write").addEventListener("click", () => { void changeBrainWrite(); });
   $("plugins-retry").addEventListener("click", () => { void refreshPlugins(); });
   $("startup-retry").addEventListener("click", () => { void refreshAll({ initial: true }); });
   $("run-doctor-button").addEventListener("click", () => { void runFullDoctorChecks(); });

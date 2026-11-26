@@ -5,7 +5,7 @@ import { BRAIN_RELEASE, installBrainVault, prepareBrainEngine, runBrainMemory } 
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 
-type BrainConnection = { vault: string; version: string; searchEnabled?: boolean; indexState?: string };
+type BrainConnection = { vault: string; version: string; searchEnabled?: boolean; writeEnabled?: boolean; indexState?: string };
 type VaultMetadata = {vault:string;version:string;indexState:string};
 const MAX_SETTINGS_BYTES = 8192;
 const VERSION = /^\d+\.\d+\.\d+$/u;
@@ -43,6 +43,7 @@ export function createPluginCatalog(stateRoot: string) {
     const parsed = JSON.parse(data as string);
     if (parsed.schema !== 1 || (parsed.brain !== null && (!validPath(parsed.brain?.vault) || !VERSION.test(parsed.brain?.version)))) throw invalid("Plugin settings are invalid.");
     if(parsed.brain && (parsed.brain.searchEnabled!==undefined && typeof parsed.brain.searchEnabled!=="boolean" || parsed.brain.searchEnabled===true && !validPath(parsed.brain.indexState)))throw invalid("Plugin settings are invalid.");
+    if(parsed.brain && (parsed.brain.writeEnabled!==undefined && typeof parsed.brain.writeEnabled!=="boolean" || parsed.brain.writeEnabled===true && !parsed.brain.searchEnabled))throw invalid("Plugin settings are invalid.");
     return parsed.brain;
   }
   async function save(brain: BrainConnection | null) {
@@ -57,7 +58,7 @@ export function createPluginCatalog(stateRoot: string) {
   async function status() {
     const brain = await read();
     if (!brain) return {brain:null, offeredVersion:BRAIN_RELEASE.version};
-    const base={vault:brain.vault,version:brain.version,searchEnabled:brain.searchEnabled===true};
+    const base={vault:brain.vault,version:brain.version,searchEnabled:brain.searchEnabled===true,writeEnabled:brain.writeEnabled===true};
     try {
       const actual=await inspectVault(brain.vault);
       return {brain:{...base,version:actual.version,available:true,searchCompatible:actual.version===BRAIN_RELEASE.version && (!brain.searchEnabled || actual.indexState===brain.indexState)},offeredVersion:BRAIN_RELEASE.version};
@@ -96,6 +97,12 @@ export function createPluginCatalog(stateRoot: string) {
     if(!["succeeded","degraded"].includes(result.status))throw invalid("The Brain index could not be refreshed.");
     await save({vault:brain.vault,version:BRAIN_RELEASE.version,searchEnabled:true,indexState:connection.state});
     return status();
+  }, async setWriteEnabled(enabled:unknown) {
+    if(typeof enabled!=="boolean")throw invalid("Choose whether agent memory writing is enabled.");
+    const brain=await read(); if(!brain?.searchEnabled)throw invalid("Enable agent memory search first.");
+    if(enabled)await engineConnection(brain);
+    await save({...brain,writeEnabled:enabled});
+    return status();
   }, async sync() {
     const brain=await read(); if(!brain?.searchEnabled)throw invalid("Enable agent memory search first.");
     const connection=await engineConnection(brain);
@@ -110,5 +117,15 @@ export function createPluginCatalog(stateRoot: string) {
        !Number.isInteger(limit) || limit<1 || limit>10 || !Number.isInteger(budget) || budget<1000 || budget>8000)throw invalid("Invalid bounded memory search request.");
     const connection=await engineConnection(brain);
     return runBrainMemory(stateRoot,{action:"search",...connection,query,...(project===undefined?{}:{project}),limit,budget});
+  }, async readMemory(input:{id:string;project?:string;budget:number}) {
+    const brain=await read(); if(!brain?.searchEnabled)throw invalid("Equinox Brain memory access is disabled.");
+    const {id,project,budget}=input;
+    if(typeof id!=="string" || !id.trim() || id.length>200 || (project!==undefined && (typeof project!=="string" || !project.trim() || project.length>160)) || !Number.isInteger(budget) || budget<1000 || budget>8000)throw invalid("Invalid memory read request.");
+    return runBrainMemory(stateRoot,{action:"read",...await engineConnection(brain),id,budget,...(project===undefined?{}:{project})});
+  }, async createMemory(input:{key:string;title:string;text:string;project?:string}) {
+    const brain=await read(); if(!brain?.searchEnabled || !brain.writeEnabled)throw invalid("Equinox Brain memory writing is disabled. The user can enable it in Control Center.");
+    const {key,title,text,project}=input;
+    if(typeof key!=="string" || !/^[a-zA-Z0-9_-]{8,100}$/u.test(key) || typeof title!=="string" || !title.trim() || title.length>160 || typeof text!=="string" || !text.trim() || text.length>12000 || (project!==undefined && (typeof project!=="string" || !project.trim() || project.length>160)))throw invalid("Invalid memory note request.");
+    return runBrainMemory(stateRoot,{action:"create",...await engineConnection(brain),key,title,text,...(project===undefined?{}:{project})});
   }, async disconnect() { await save(null); return status(); }};
 }

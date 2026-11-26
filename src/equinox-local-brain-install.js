@@ -206,8 +206,16 @@ export async function prepareBrainEngine(stateRoot) {
 const MEMORY = `import json, pathlib, sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'template/.claude/scripts'))
-from beyin_v3 import MemoryStore
+from beyin_v3 import MemoryStore, _status_allowed
 request = json.load(sys.stdin)
+fields = ('id','source','title','text','kind','status','visibility','updated_at','text_truncated','revision','source_sha256')
+def remote(record):
+    return record.get('visibility') in ('public','internal') and record.get('remote_allowed') is not False
+def visible_exact(store, record_id, project):
+    records = store._records()
+    eligible, _ = store._eligible('internal', project, records=records)
+    retired = store._superseded_ids(records)
+    return next((r for r in eligible if r['id'] == record_id and r['id'] not in retired and _status_allowed(r, None) and remote(r)), None)
 if request['action'] == 'sync':
     from beyin_v3_sync import SyncEngine
     result = SyncEngine(request['vault'], request['state']).sync()
@@ -216,9 +224,36 @@ elif request['action'] == 'search':
     store = MemoryStore(request['state'], request['vault'], read_only=True)
     result = store.retrieve(request['query'], project=request.get('project'), audience='internal', limit=request['limit'], budget_chars=request['budget'], explicit=True)
     # No unrestricted metadata or private/untrusted sources cross the MCP boundary.
-    fields = ('id','source','title','text','kind','status','visibility','updated_at','text_truncated')
-    records = [{k:r[k] for k in fields if k in r} for r in result['records'] if r.get('visibility') in ('public','internal') and r.get('remote_allowed') is not False]
+    records = [{k:r[k] for k in fields if k in r} for r in result['records'] if remote(r)]
     print(json.dumps({'records':records,'citations':[{'id':r['id'],'source':r['source']} for r in records],'abstained':not records,'truncated':result.get('truncated',False) or len(records)!=len(result['records']),'stale_count':result.get('stale_count',0)},ensure_ascii=False))
+elif request['action'] == 'read':
+    store = MemoryStore(request['state'], request['vault'], read_only=True)
+    record = visible_exact(store, request['id'], request.get('project'))
+    if record is None:
+        print(json.dumps({'found':False}))
+    else:
+        item = {k:record[k] for k in fields if k in record}
+        text = item.get('text', '')
+        item['text'] = text[:request['budget']]
+        item['text_truncated'] = len(text) > request['budget']
+        print(json.dumps({'found':True,'record':item,'citation':{'id':item['id'],'source':item['source']}},ensure_ascii=False))
+elif request['action'] == 'create':
+    from beyin_v3_sync import SyncEngine
+    from beyin_v3_secrets import redact
+    import hashlib
+    engine = SyncEngine(request['vault'], request['state'])
+    # Always screen EL agent writes without changing the shared vault's preferences.
+    if any(redact(request[field], engine.state)[1] for field in ('title','text','project') if request.get(field)):
+        print(json.dumps({'status':'refused','reason':'Potential secret detected; remove it before saving.'}))
+        sys.exit(0)
+    key = 'el-' + hashlib.sha256(request['key'].encode('ascii')).hexdigest()
+    record_id = key
+    source = 'notes/' + key + '.md'
+    metadata = {'id':record_id,'title':request['title'],'kind':'note','revision':1,'status':'active','visibility':'internal','facts':{'origin':'Equinox Local / ChatGPT Web'}}
+    if request.get('project'):
+        metadata['project'] = request['project']
+    result = engine.note_create(source, request['text'], metadata, idempotency_key=key)
+    print(json.dumps({'status':result['status'],'id':record_id,'source':source,'sha256':result['sha256'],'secrets_redacted':result.get('secrets_redacted',0)},ensure_ascii=False))
 else:
     raise ValueError('unsupported operation')
 `;
