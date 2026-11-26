@@ -510,7 +510,7 @@ html:root[data-equinox-surface="home"][data-equinox-home-style="type"] [data-equ
   html:root[data-equinox-surface="home"] [data-equinox-greeting]::after { font-size: clamp(25px, 3.5vw, 42px); }
 }
 /* The existing turn wrappers carry the original provider messages and activity. */
-html:root[data-equinox-surface] main [data-equinox-role] {
+html:root[data-equinox-surface="thread"] [data-equinox-role] {
   position: relative;
   box-sizing: border-box;
   min-width: 0;
@@ -521,7 +521,7 @@ html:root[data-equinox-surface] main [data-equinox-role] {
   width: 100%;
   max-width: 100%;
 }
-html:root[data-equinox-surface] main [data-equinox-role]::before {
+html:root[data-equinox-surface="thread"] [data-equinox-role]::before {
   content: attr(data-equinox-initial);
   position: absolute;
   inset-inline-start: 0;
@@ -537,7 +537,7 @@ html:root[data-equinox-surface] main [data-equinox-role]::before {
   border-radius: 50%;
   background: var(--eq-active) center / cover no-repeat;
 }
-html:root[data-equinox-surface] main [data-equinox-role]::after {
+html:root[data-equinox-surface="thread"] [data-equinox-role]::after {
   content: attr(data-equinox-author);
   position: absolute;
   inset-inline-start: var(--eq-author-offset);
@@ -548,7 +548,7 @@ html:root[data-equinox-surface] main [data-equinox-role]::after {
   letter-spacing: .012em;
   color: var(--eq-secondary);
 }
-html:root[data-equinox-surface] main [data-equinox-role="user"] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="user"] {
   padding-inline-start: 0 !important;
   padding-inline-end: var(--eq-author-offset) !important;
   display: flex;
@@ -556,23 +556,23 @@ html:root[data-equinox-surface] main [data-equinox-role="user"] {
   align-items: flex-end !important;
   text-align: start;
 }
-html:root[data-equinox-surface] main [data-equinox-role="user"]::before {
+html:root[data-equinox-surface="thread"] [data-equinox-role="user"]::before {
   inset-inline-start: auto;
   inset-inline-end: 0;
   background-image: var(--eq-human-avatar, none);
 }
-html:root[data-equinox-surface] main [data-equinox-role="user"]::after {
+html:root[data-equinox-surface="thread"] [data-equinox-role="user"]::after {
   inset-inline-start: auto;
   inset-inline-end: var(--eq-author-offset);
   text-align: right;
   color: var(--eq-accent);
 }
-html:root[data-equinox-surface] main [data-equinox-role="user"] [class~="group/user-message"] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="user"] [class~="group/user-message"] {
   align-items: flex-end !important;
   justify-content: flex-end !important;
   width: 100%;
 }
-html:root[data-equinox-surface] main [data-equinox-role="user"] [data-user-message-bubble="true"] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="user"] :is([data-user-message-bubble="true"],.bg-user-message.text-user-message) {
   width: fit-content !important;
   max-width: min(34rem, 100%) !important;
   min-width: 0;
@@ -586,24 +586,24 @@ html:root[data-equinox-surface] main [data-equinox-role="user"] [data-user-messa
   line-height: 1.58;
   box-shadow: none;
 }
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] {
   padding-inline-start: var(--eq-author-offset) !important;
   padding-inline-end: 0 !important;
 }
-html:root[data-equinox-surface] main [data-equinox-role="assistant"]::before {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"]::before {
   inset-inline-start: 0;
   background-image: var(--eq-agent-avatar, none);
 }
-html:root[data-equinox-surface][data-equinox-agent-photo="true"] main [data-equinox-role="assistant"]::before,
-html:root[data-equinox-surface][data-equinox-human-photo="true"] main [data-equinox-role="user"]::before { color: transparent; }
+html:root[data-equinox-surface="thread"][data-equinox-agent-photo="true"] [data-equinox-role="assistant"]::before,
+html:root[data-equinox-surface="thread"][data-equinox-human-photo="true"] [data-equinox-role="user"]::before { color: transparent; }
 
-html:root[data-equinox-surface] main [data-equinox-role="assistant"]::after {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"]::after {
   inset-inline-start: var(--eq-author-offset);
   color: var(--eq-text);
 }
 /* Plain agent prose, like the approved reference. Only genuine tool
    results receive framed surfaces inside the original assistant turn. */
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-response-body] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-response-body] {
   max-width: 100%;
   min-width: 0;
   padding: 0 !important;
@@ -612,24 +612,24 @@ html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-respo
   background: transparent !important;
   box-shadow: none !important;
 }
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] {
   max-width: 72ch;
   line-height: 1.67;
   font-size: 15px;
 }
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(h1,h2,h3) {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(h1,h2,h3) {
   letter-spacing: -.024em;
   color: var(--eq-text);
 }
 /* Provider's measured table width (880px) can exceed the padded card
    (788px). Keep the semantic table and constrain its columns to its reader. */
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] [class*="TableFrame-"] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [class*="TableFrame-"] {
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
   margin-inline: 0 !important;
 }
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] [class*="TableViewport-"] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [class*="TableViewport-"] {
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
@@ -638,22 +638,22 @@ html:root[data-equinox-surface] main [data-equinox-role="assistant"] [class*="Ta
      only the scroll container, never the table's own text or columns. */
   direction: rtl;
 }
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] table {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] table {
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
   direction: ltr;
 }
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(th,td) {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(th,td) {
   overflow-wrap: anywhere;
 }
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
   max-width: 100% !important;
   overflow: hidden;
 }
 
 /* Clear, quiet reading line for the real per-tool MCP App card. */
-html:root[data-equinox-surface] main [data-equinox-role="assistant"] iframe {
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] iframe {
   max-width: 100%;
   border-radius: 8px;
 }
@@ -682,7 +682,7 @@ html:root[data-equinox-surface] form[data-chatgpt-composer]:focus-within [class*
   border-color: color-mix(in srgb, var(--eq-accent) 58%, var(--eq-border)) !important;
 }
 @media (max-width: 700px) {
-  html:root[data-equinox-surface] main [data-equinox-role] { --eq-avatar-size: 26px; --eq-author-offset: 35px; }
+  html:root[data-equinox-surface="thread"] [data-equinox-role] { --eq-avatar-size: 26px; --eq-author-offset: 35px; }
 }
 /* Home suggestions remain real, selectable provider controls. Compact
    only the ordinary small button lists below the composer; never restyle
@@ -759,28 +759,32 @@ function decorateProviderIdentity(update: {
   const root = document.documentElement;
   const homeRoute = update?.pathname === "/";
   const threadRoute = !!update && /^\/(?:g\/[A-Za-z0-9_-]{8,160}\/)?c\/[A-Za-z0-9-]{8,160}\/?$/u.test(update.pathname);
-  const carryThread = threadRoute || (homeRoute && world.__equinoxDecoration?.pathname === update?.pathname);
-  let threadRecognized = carryThread && root.getAttribute("data-equinox-surface") === "thread";
+  let threadRecognized = threadRoute || (homeRoute && world.__equinoxDecoration?.pathname === update?.pathname &&
+    root.getAttribute("data-equinox-surface") === "thread");
   world.__equinoxDecoration?.dispose();
   const decoration = { generation, pathname: update?.pathname, dispose: () => {} };
   world.__equinoxDecoration = decoration;
   if (!update || (!homeRoute && !threadRoute)) return;
 
-  const { identity, language, accent, composition, pathname } = update;
+  const options = update;
+  const { identity, language, accent, composition, pathname } = options;
   const agent = identity.name.trim();
   const human = language === "tr" ? "Sen" : "You";
   const agentInitial = Array.from(agent || "E")[0]?.toLocaleUpperCase(language) ?? "E";
   const url = (value: string) => "url(" + JSON.stringify(value) + ")";
   const agentImage = identity.avatar && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/u.test(identity.avatar) ? url(identity.avatar) : "none";
   const userUnit = '[data-chatgpt-search-unit-key$=":user"]';
-  const userMessage = '[data-user-message-bubble="true"],[data-message-author-role="user"]';
-  const assistantMessage = '[data-chatgpt-search-unit-key$=":assistant"],[data-message-author-role="assistant"]';
-  const messageSelector = [userUnit, userMessage, assistantMessage, '[data-response-body]'].join(",");
+  const userTurn = '[data-message-author-role="user"],:is(article,section)[data-turn="user"][data-testid]';
+  const userBubble = '[data-user-message-bubble="true"],.bg-user-message.text-user-message';
+  const userMessage = userTurn + "," + userBubble;
+  const assistantMessage = '[data-chatgpt-search-unit-key$=":assistant"],[data-message-author-role="assistant"],:is(article,section)[data-turn="assistant"][data-testid]';
+  const responseBody = '[data-response-body],[data-markdown-text-style="assistant-message"]';
+  const messageSelector = [userUnit, userMessage, assistantMessage, responseBody].join(",");
   const greetingSelector = '[class*="Greeting-"]';
   // Provider conversation routes sometimes replace the app-shell main with
   // an ordinary <main>. Keep route/identity guards in syncSurface instead of
   // losing all avatars and message styling when that attribute is absent.
-  const mainSelector = "main[data-app-shell-main-surface]";
+  const mainSelector = "[data-app-shell-main-surface], main, [role=main]";
   const profileSelector = '#app-shell-sidebar';
   const marker = '[data-equinox-role],[data-equinox-greeting],[data-equinox-home]';
   const marks = new Set<Element>();
@@ -791,6 +795,7 @@ function decorateProviderIdentity(update: {
   let frame = 0;
   let profileChanged = true;
   let shellChanged = true;
+  let discoveringTranscript = false;
   let homeChanged = true;
   let greeting: Element | null = null;
   let greetingRegion: Element | null = null;
@@ -816,11 +821,16 @@ function decorateProviderIdentity(update: {
       return;
     }
     if (evidence.matches(userMessage)) {
-      const attributed = evidence.closest('[data-message-author-role="user"]');
-      mark(attributed ?? evidence.closest('[class~="group/user-message"]') ?? evidence, "user");
+      const wrapper = evidence.closest('[data-message-author-role="user"]') ??
+        evidence.closest(userTurn) ?? evidence.closest('[class~="group/user-message"]');
+      if (wrapper) mark(wrapper, "user");
+      else {
+        const parent = evidence.parentElement;
+        if (parent && !parent.querySelector(assistantMessage + "," + responseBody)) mark(parent, "user");
+      }
       return;
     }
-    const isResponseBody = evidence.matches("[data-response-body]");
+    const isResponseBody = evidence.matches(responseBody);
     if (!isResponseBody && !evidence.matches(assistantMessage)) return;
     const attributed = evidence.closest(assistantMessage);
     const response = attributed ?? evidence.closest('[data-content-search-unit-key]') ?? evidence.parentElement;
@@ -851,18 +861,9 @@ function decorateProviderIdentity(update: {
 
   function syncSurface() {
     if (threadRoute) {
-      // Confirm a thread once. The composer, sidebar and all visible turns can
-      // disappear together when the provider hydrates or remounts the transcript.
-      if (!threadRecognized && main) {
-        const hasMessages = main.querySelector(messageSelector);
-        const hasComposer = (main.matches(mainSelector) || profile) &&
-          main.querySelector('form[data-chatgpt-composer]:not([data-composer-placement="home"])');
-        if (hasMessages || hasComposer) {
-          threadRecognized = true;
-          changed.add(main);
-        }
-      }
-      if (threadRecognized && root.getAttribute("data-equinox-surface") !== "thread") {
+      // The admitted conversation route owns the base theme. Speaker styling
+      // still requires message evidence, which may mount in a separate region.
+      if (root.getAttribute("data-equinox-surface") !== "thread") {
         root.setAttribute("data-equinox-surface", "thread");
       }
       return;
@@ -912,17 +913,13 @@ function decorateProviderIdentity(update: {
   function flush() {
     frame = 0;
     if (world.__equinoxDecoration?.generation !== generation) return;
-    if (!root.isConnected) {
-      decorateProviderIdentity(update, generation);
+    if (!root.isConnected || location.pathname !== pathname) {
+      // A same-document navigation can reach the renderer before Electron
+      // reports it. Reconcile from this document rather than dropping styling.
+      decorateProviderIdentity({ ...options, pathname: location.pathname }, generation);
       return;
     }
-    if (location.pathname !== pathname) {
-      // Wait for the native main-frame navigation event to swap decorations.
-      // Keep the current styling until the new route can take over.
-      observer.disconnect();
-      return;
-    }
-    if (shellChanged) bindRoots();
+    if (shellChanged || (discoveringTranscript && changed.size > 0)) bindRoots();
     if (profileChanged) syncProfile();
     syncSurface();
     if (threadRecognized) {
@@ -985,9 +982,15 @@ function decorateProviderIdentity(update: {
   });
 
   function bindRoots() {
-    const nextMain = document.querySelector(mainSelector) ?? document.querySelector("main");
+    const shell = document.querySelector("[data-app-shell-main-surface]") ?? document.querySelector(mainSelector);
+    const evidence = document.querySelector(messageSelector);
+    const thread = document.getElementById("thread");
+    const nextMain = shell && (!evidence || shell.contains(evidence)) ? shell
+      : thread && (!evidence || thread.contains(evidence)) ? thread
+      : evidence ? document.body : shell;
     const nextProfile = document.querySelector(profileSelector);
-    if (nextMain === main && nextProfile === profile && (main || profile)) return;
+    const nextDiscovery = threadRoute && !evidence;
+    if (nextMain === main && nextProfile === profile && nextDiscovery === discoveringTranscript && (main || profile)) return;
     if (main !== nextMain) {
       for (const element of marks) clearMark(element);
       changed.clear();
@@ -997,17 +1000,23 @@ function decorateProviderIdentity(update: {
     if (profile !== nextProfile) homeChanged = true;
     main = nextMain;
     profile = nextProfile;
+    discoveringTranscript = nextDiscovery;
     profileChanged = true;
     observer.disconnect();
-    if (!main) {
-      // A known route can mount late. Once main exists, narrow the observer
+    if (!main || discoveringTranscript) {
+      // The first turn can mount beside the shell's main, not inside it.
+      // Once the actual transcript is found, narrow the observer
       // back to its subtree and the host's direct wrapper replacements.
-      observer.observe(document, {childList: true, subtree: true});
+      observer.observe(document, {childList: true, subtree: true, attributes: true, attributeFilter: [
+        "data-chatgpt-search-unit-key", "data-user-message-bubble", "data-response-body", "data-markdown-text-style",
+        "data-message-author-role", "data-turn", "data-testid",
+      ]});
       return;
     }
     if (profile) observer.observe(profile, {childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset"]});
     observer.observe(main, {childList: true, subtree: true, attributes: true, attributeFilter: [
-      "data-chatgpt-search-unit-key", "data-user-message-bubble", "data-response-body", "data-message-author-role",
+      "data-chatgpt-search-unit-key", "data-user-message-bubble", "data-response-body", "data-markdown-text-style",
+      "data-message-author-role", "data-turn", "data-testid",
       "data-chatgpt-composer", "data-composer-placement", "data-homepage-takeover",
     ]});
     // Observe wrapper replacement along each ancestry path, not its descendants.
@@ -1206,9 +1215,9 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
   let loadState: EmbeddedChatLoadState = "loading";
   let decorationGeneration = 0;
   let decoratedPath: string | null = null;
-  const applyIdentity = (visible = chatVisible) => {
+  const applyIdentity = (visible = chatVisible, navigationURL?: string) => {
     if (view.webContents.isDestroyed()) return;
-    const url = view.webContents.getURL();
+    const url = navigationURL ?? view.webContents.getURL();
     if (!isChatGPTOrigin(url)) return;
     decoratedPath = visible ? new URL(url).pathname : null;
     const update = decoratedPath === null ? null : { identity, language, accent, composition, pathname: decoratedPath };
@@ -1216,14 +1225,16 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code}]).catch(() => {});
   };
   view.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
-    if (isMainFrame && chatVisible && isChatGPTOrigin(url) && new URL(url).pathname !== decoratedPath) applyIdentity();
+    if (isMainFrame && chatVisible && isChatGPTOrigin(url) && new URL(url).pathname !== decoratedPath) applyIdentity(true, url);
+  });
+  view.webContents.on("dom-ready", () => {
+    if (!view.webContents.isDestroyed() && isChatGPTOrigin(view.webContents.getURL())) {
+      void view.webContents.insertCSS(STYLE).catch(() => {});
+    }
   });
   view.webContents.on("did-finish-load", () => {
     if (view.webContents.isDestroyed() || loadState !== "loading" || !admitted(view.webContents.getURL())) return;
     setLoadState("ready");
-    if (isChatGPTOrigin(view.webContents.getURL())) {
-      void view.webContents.insertCSS(STYLE).catch(() => {});
-    }
   });
   view.webContents.on("did-start-navigation", ({ isMainFrame, isSameDocument }) => {
     if (isMainFrame && !isSameDocument) setLoadState("loading");
