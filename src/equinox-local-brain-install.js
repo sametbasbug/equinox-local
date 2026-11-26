@@ -187,6 +187,15 @@ async function cachedRelease(stateRoot) {
         throw invalid("Brain engine integrity check failed.");
     return data;
 }
+export async function brainEngineDiagnostics(stateRoot) {
+    const python = await findBrainPython().then(async (executable) => {
+        const { stdout } = await execFile(executable, ["-I", "-X", "utf8", "-c", "import sys; print('.'.join(map(str,sys.version_info[:3])))"], { windowsHide: true, timeout: 3000, maxBuffer: 256, env: pythonEnvironment() });
+        const version = stdout.trim();
+        return /^\d+\.\d+\.\d+$/u.test(version) ? version : null;
+    }).catch(() => null);
+    const archive = await cachedRelease(stateRoot).then(() => "verified").catch(error => error.code === "ENOENT" ? "not-prepared" : "invalid");
+    return { python, archive };
+}
 export async function prepareBrainEngine(stateRoot) {
     await findBrainPython();
     try {
@@ -220,12 +229,31 @@ if request['action'] == 'sync':
     from beyin_v3_sync import SyncEngine
     result = SyncEngine(request['vault'], request['state']).sync()
     print(json.dumps({'status':result.get('status', 'succeeded')}, ensure_ascii=False))
-elif request['action'] == 'search':
+elif request['action'] == 'lifecycle_sync':
+    from beyin_v3_preferences import read, claim_check
+    prefs = read(request['vault'])
+    if prefs['context_mode'] == 'off' or not prefs['auto_sync'] or not claim_check(request['state'],prefs,request['event']):
+        print(json.dumps({'status':'skipped'}))
+    else:
+        from beyin_v3_sync import SyncEngine
+        result = SyncEngine(request['vault'],request['state']).sync()
+        print(json.dumps({'status':result.get('status','succeeded')}))
+elif request['action'] in ('search','context'):
+    budget = request['budget']
+    context_mode = None
+    if request['action'] == 'context':
+        from beyin_v3_preferences import read
+        prefs = read(request['vault'])
+        context_mode = prefs['context_mode']
+        if context_mode == 'off':
+            print(json.dumps({'records':[],'citations':[],'abstained':True,'contextMode':'off','reason':'Manual profile disables contextual assistance; explicit brain_search remains available.'}))
+            sys.exit(0)
+        budget = min(budget,prefs['context_chars'])
     store = MemoryStore(request['state'], request['vault'], read_only=True)
-    result = store.retrieve(request['query'], project=request.get('project'), audience='internal', limit=request['limit'], budget_chars=request['budget'], explicit=True)
+    result = store.retrieve(request['query'], project=request.get('project'), audience='internal', limit=request['limit'], budget_chars=budget, explicit=True)
     # No unrestricted metadata or private/untrusted sources cross the MCP boundary.
     records = [{k:r[k] for k in fields if k in r} for r in result['records'] if remote(r)]
-    print(json.dumps({'records':records,'citations':[{'id':r['id'],'source':r['source']} for r in records],'abstained':not records,'truncated':result.get('truncated',False) or len(records)!=len(result['records']),'stale_count':result.get('stale_count',0)},ensure_ascii=False))
+    print(json.dumps({'records':records,'citations':[{'id':r['id'],'source':r['source']} for r in records],'abstained':not records,'truncated':result.get('truncated',False) or len(records)!=len(result['records']),'stale_count':result.get('stale_count',0),**({'contextMode':context_mode,'budget':budget} if context_mode is not None else {})},ensure_ascii=False))
 elif request['action'] == 'read':
     store = MemoryStore(request['state'], request['vault'], read_only=True)
     record = visible_exact(store, request['id'], request.get('project'))
@@ -254,6 +282,13 @@ elif request['action'] == 'create':
         metadata['project'] = request['project']
     result = engine.note_create(source, request['text'], metadata, idempotency_key=key)
     print(json.dumps({'status':result['status'],'id':record_id,'source':source,'sha256':result['sha256'],'secrets_redacted':result.get('secrets_redacted',0)},ensure_ascii=False))
+elif request['action'] == 'diagnostics':
+    store = MemoryStore(request['state'],request['vault'],read_only=True)
+    from beyin_v3_preferences import read
+    preferences = read(request['vault'])
+    with store._connect() as db:
+        healthy = db.execute('PRAGMA quick_check(1)').fetchone()[0] == 'ok'
+    print(json.dumps({'indexHealthy':healthy,'preferencesValid':True}))
 elif request['action'] in ('preferences','profile'):
     from beyin_v3_preferences import read, save, PROFILES
     prefs = save(request['vault'], {}, profile=request['profile']) if request['action'] == 'profile' else read(request['vault'])

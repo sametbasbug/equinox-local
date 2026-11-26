@@ -34,7 +34,7 @@ type ControlApiOptions={
   confirmTelegramPairing?:Callback|null;cancelTelegramPairing?:Callback|null;testTelegram?:Callback|null;
   disconnectTelegram?:Callback|null;getHttpProfiles?:Callback|null;setHttpProfileManagement?:Callback|null;
   upsertHttpProfile?:Callback|null;testHttpProfile?:Callback|null;deleteHttpProfile?:Callback|null;
-  getPlugins?:Callback|null;connectBrain?:Callback|null;installBrain?:Callback|null;disconnectBrain?:Callback|null;setBrainSearch?:Callback|null;setBrainWrite?:Callback|null;syncBrain?:Callback|null;brainPreferences?:Callback|null;
+  getPlugins?:Callback|null;connectBrain?:Callback|null;installBrain?:Callback|null;disconnectBrain?:Callback|null;setBrainSearch?:Callback|null;setBrainWrite?:Callback|null;setBrainLifecycle?:Callback|null;syncBrain?:Callback|null;brainPreferences?:Callback|null;brainDiagnostics?:Callback|null;
   recordInternalError?:Callback|null;
 };
 type MutableControlState={
@@ -345,7 +345,7 @@ export function createEquinoxLocalControlApi({
   testTelegram = null,
   disconnectTelegram = null,
   getHttpProfiles = null,
-  getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null, setBrainSearch = null, setBrainWrite = null, syncBrain = null, brainPreferences = null,
+  getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null, setBrainSearch = null, setBrainWrite = null, setBrainLifecycle = null, syncBrain = null, brainPreferences = null, brainDiagnostics = null,
   setHttpProfileManagement = null,
   upsertHttpProfile = null,
   testHttpProfile = null,
@@ -738,6 +738,15 @@ export function createEquinoxLocalControlApi({
         if(!setBrainWrite || !body || Object.keys(body).length!==1 || typeof body.enabled!=="boolean")throw badRequest("Invalid memory writing preference.");
         const plugins=await setBrainWrite(body.enabled); state.mutationCount+=1; send(200,{ok:true,plugins}); return;
       }
+      if (method === "POST" && pathname === "/api/v1/plugins/brain/lifecycle-access") {
+        authorizeMutation();const body=await readBody();
+        if(!setBrainLifecycle||!body||Object.keys(body).length!==1||typeof body.enabled!=="boolean")throw badRequest("Invalid native memory assistance preference.");
+        const plugins=await setBrainLifecycle(body.enabled);state.mutationCount+=1;send(200,{ok:true,plugins});return;
+      }
+      if (method === "POST" && pathname === "/api/v1/plugins/brain/diagnostics") {
+        authorizeMutation(); if(!brainDiagnostics)throw badRequest("Brain diagnostics are unavailable.");
+        const result=await brainDiagnostics(); send(200,{ok:true,...result}); return;
+      }
       if (method === "POST" && pathname === "/api/v1/plugins/brain/preferences") {
         authorizeMutation(); const body=await readBody();
         if(!brainPreferences || !body || typeof body!=="object" || Array.isArray(body) || Object.keys(body).some(k=>k!=="profile") || (body.profile!==undefined && !["normal","economical","manual"].includes(body.profile)))throw badRequest("Invalid Brain preference request.");
@@ -1025,7 +1034,7 @@ const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
     "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
     "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
     "/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install", "/api/v1/plugins/brain/disconnect",
-    "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access", "/api/v1/plugins/brain/preferences",
+    "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access", "/api/v1/plugins/brain/preferences", "/api/v1/plugins/brain/diagnostics", "/api/v1/plugins/brain/lifecycle-access",
   ]),
   PUT: new Set([
     "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",

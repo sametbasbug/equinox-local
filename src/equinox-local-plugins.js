@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { BRAIN_RELEASE, installBrainVault, prepareBrainEngine, runBrainMemory } from "./equinox-local-brain-install.js";
+import { BRAIN_RELEASE, installBrainVault, prepareBrainEngine, runBrainMemory, brainEngineDiagnostics } from "./equinox-local-brain-install.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 const MAX_SETTINGS_BYTES = 8192;
@@ -38,6 +38,7 @@ async function inspectVault(vault) {
 }
 export function createPluginCatalog(stateRoot) {
     const file = path.join(stateRoot, "plugins.json");
+    let lastLifecycle = null;
     async function read() {
         const security = await inspectPrivateStatePath(file, { type: "file", mode: "600", verifyWindowsAcl: verifyWindowsPrivateStateAcl });
         if (security.reason === "missing")
@@ -51,6 +52,8 @@ export function createPluginCatalog(stateRoot) {
         if (parsed.brain && (parsed.brain.searchEnabled !== undefined && typeof parsed.brain.searchEnabled !== "boolean" || parsed.brain.searchEnabled === true && !validPath(parsed.brain.indexState)))
             throw invalid("Plugin settings are invalid.");
         if (parsed.brain && (parsed.brain.writeEnabled !== undefined && typeof parsed.brain.writeEnabled !== "boolean" || parsed.brain.writeEnabled === true && !parsed.brain.searchEnabled))
+            throw invalid("Plugin settings are invalid.");
+        if (parsed.brain && (parsed.brain.lifecycleEnabled !== undefined && typeof parsed.brain.lifecycleEnabled !== "boolean" || parsed.brain.lifecycleEnabled === true && !parsed.brain.searchEnabled))
             throw invalid("Plugin settings are invalid.");
         return parsed.brain;
     }
@@ -71,7 +74,7 @@ export function createPluginCatalog(stateRoot) {
         const brain = await read();
         if (!brain)
             return { brain: null, offeredVersion: BRAIN_RELEASE.version };
-        const base = { vault: brain.vault, version: brain.version, searchEnabled: brain.searchEnabled === true, writeEnabled: brain.writeEnabled === true };
+        const base = { vault: brain.vault, version: brain.version, searchEnabled: brain.searchEnabled === true, writeEnabled: brain.writeEnabled === true, lifecycleEnabled: brain.lifecycleEnabled === true };
         try {
             const actual = await inspectVault(brain.vault);
             return { brain: { ...base, version: actual.version, available: true, searchCompatible: actual.version === BRAIN_RELEASE.version && (!brain.searchEnabled || actual.indexState === brain.indexState) }, offeredVersion: BRAIN_RELEASE.version };
@@ -138,6 +141,30 @@ export function createPluginCatalog(stateRoot) {
                 await engineConnection(brain);
             await save({ ...brain, writeEnabled: enabled });
             return status();
+        }, async setLifecycleEnabled(enabled) {
+            if (typeof enabled !== "boolean")
+                throw invalid("Choose whether native memory assistance is enabled.");
+            const brain = await read();
+            if (!brain?.searchEnabled)
+                throw invalid("Enable agent memory search first.");
+            if (enabled)
+                await engineConnection(brain);
+            await save({ ...brain, lifecycleEnabled: enabled });
+            lastLifecycle = null;
+            return status();
+        }, async lifecycleSync(event) {
+            const brain = await read();
+            if (!brain?.searchEnabled || !brain.lifecycleEnabled)
+                return { status: "disabled" };
+            try {
+                const result = await runBrainMemory(stateRoot, { action: "lifecycle_sync", ...await engineConnection(brain), event });
+                lastLifecycle = { status: ["succeeded", "degraded", "skipped"].includes(result.status) ? result.status : "attention", at: new Date().toISOString() };
+                return result;
+            }
+            catch (error) {
+                lastLifecycle = { status: "attention", at: new Date().toISOString() };
+                throw error;
+            }
         }, async sync() {
             const brain = await read();
             if (!brain?.searchEnabled)
@@ -147,7 +174,7 @@ export function createPluginCatalog(stateRoot) {
             if (!["succeeded", "degraded"].includes(result.status))
                 throw invalid("The Brain index could not be refreshed.");
             return { plugins: await status(), indexStatus: result.status };
-        }, async search(input) {
+        }, async search(input, context = false) {
             const brain = await read();
             if (!brain?.searchEnabled)
                 throw invalid("Equinox Brain memory search is disabled. The user can enable it in Control Center.");
@@ -157,7 +184,7 @@ export function createPluginCatalog(stateRoot) {
                 !Number.isInteger(limit) || limit < 1 || limit > 10 || !Number.isInteger(budget) || budget < 1000 || budget > 8000)
                 throw invalid("Invalid bounded memory search request.");
             const connection = await engineConnection(brain);
-            return runBrainMemory(stateRoot, { action: "search", ...connection, query, ...(project === undefined ? {} : { project }), limit, budget });
+            return runBrainMemory(stateRoot, { action: context ? "context" : "search", ...connection, query, ...(project === undefined ? {} : { project }), limit, budget });
         }, async readMemory(input) {
             const brain = await read();
             if (!brain?.searchEnabled)
@@ -174,6 +201,31 @@ export function createPluginCatalog(stateRoot) {
             if (typeof key !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/u.test(key) || typeof title !== "string" || !title.trim() || title.length > 160 || typeof text !== "string" || !text.trim() || text.length > 12000 || (project !== undefined && (typeof project !== "string" || !project.trim() || project.length > 160)))
                 throw invalid("Invalid memory note request.");
             return runBrainMemory(stateRoot, { action: "create", ...await engineConnection(brain), key, title, text, ...(project === undefined ? {} : { project }) });
+        }, async diagnostics() {
+            const brain = await read();
+            if (!brain)
+                throw invalid("Connect a memory vault first.");
+            const plugins = await status();
+            const engine = await brainEngineDiagnostics(stateRoot);
+            let binding = false, index = "not-checked", preferences = "not-checked";
+            let connection = null;
+            try {
+                connection = await engineConnection(brain);
+                binding = true;
+            }
+            catch { /* report unavailable or mismatched binding */ }
+            if (connection && engine.python && engine.archive === "verified") {
+                try {
+                    const result = await runBrainMemory(stateRoot, { action: "diagnostics", ...connection });
+                    index = result.indexHealthy ? "healthy" : "attention";
+                    preferences = result.preferencesValid ? "valid" : "attention";
+                }
+                catch {
+                    index = "attention";
+                    preferences = "attention";
+                }
+            }
+            return { plugins, diagnostics: { ...engine, binding, index, preferences, lastLifecycle: brain.lifecycleEnabled ? lastLifecycle : null, reviewedVersion: BRAIN_RELEASE.version, versionStatus: !plugins.brain?.available ? "unavailable" : plugins.brain.version === BRAIN_RELEASE.version ? "supported" : "unsupported" } };
         }, async preferences(profile) {
             const brain = await read();
             if (!brain)
@@ -205,5 +257,5 @@ export function createPluginCatalog(stateRoot) {
             if (action === "receipt" && key(input.key) && text(input.summary, 4000) && Array.isArray(input.refs) && input.refs.length >= 1 && input.refs.length <= 10 && input.refs.every(ref => text(ref, 200)) && new Set(input.refs).size === input.refs.length)
                 return runBrainMemory(stateRoot, { ...connection, action, key: input.key, summary: input.summary, refs: input.refs, ...scoped });
             throw invalid("Invalid bounded Brain workflow request.");
-        }, async disconnect() { await save(null); return status(); } };
+        }, async disconnect() { await save(null); lastLifecycle = null; return status(); } };
 }
