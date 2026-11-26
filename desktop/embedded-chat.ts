@@ -792,7 +792,10 @@ function decorateProviderIdentity(update: {
   const agentImage = identity.avatar && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/u.test(identity.avatar) ? url(identity.avatar) : "none";
   const messageSelector = '[data-chatgpt-search-unit-key$=":user"],[data-user-message-bubble="true"],[data-response-body],[data-message-author-role]';
   const greetingSelector = '[class*="Greeting-"]';
-  const mainSelector = 'main[data-app-shell-main-surface]';
+  // Provider conversation routes sometimes replace the app-shell main with
+  // an ordinary <main>. Keep route/identity guards in syncSurface instead of
+  // losing all avatars and message styling when that attribute is absent.
+  const mainSelector = 'main[data-app-shell-main-surface], main';
   const profileSelector = '#app-shell-sidebar';
   const marker = '[data-equinox-role],[data-equinox-greeting],[data-equinox-home]';
   const marks = new Set<Element>();
@@ -828,6 +831,11 @@ function decorateProviderIdentity(update: {
       mark(user, "user");
       return;
     }
+    if (evidence.matches('[data-user-message-bubble="true"]')) {
+      const group = evidence.closest('[class~="group/user-message"]');
+      mark(group ?? evidence, "user");
+      return;
+    }
     if (!evidence.matches('[data-response-body],[data-message-author-role="assistant"]')) return;
     const response = evidence.closest('[data-content-search-unit-key],[data-message-author-role="assistant"]') ??
       (evidence.matches("[data-response-body]") ? evidence.parentElement : null);
@@ -858,7 +866,12 @@ function decorateProviderIdentity(update: {
     const form = forms?.length === 1 ? forms[0] : null;
     const home = path === "/" && profile && form?.matches('[data-composer-placement="home"]')
       && !main?.querySelector('[data-homepage-takeover]');
-    const thread = /^(?:\/g\/[^/]+)?\/c\/[^/]+\/?$/u.test(path) && form && !form.matches('[data-composer-placement="home"]');
+    // The thread's composer can be absent, replaced, or duplicated while the
+    // provider hydrates. A genuine signed-in thread with real message evidence
+    // still deserves its original role/avatar layout.
+    const threadEvidence = !!main?.querySelector('[data-chatgpt-search-unit-key$=":user"],[data-user-message-bubble="true"],[data-response-body],[data-message-author-role]');
+    const thread = /^(?:\/g\/[^/]+)?\/c\/[^/]+\/?$/u.test(path)
+      && !!main && !!profile && (threadEvidence || !!form && !form.matches('[data-composer-placement="home"]'));
     if (home || thread) root.setAttribute("data-equinox-surface", home ? "home" : "thread");
     else root.removeAttribute("data-equinox-surface");
 
@@ -886,12 +899,17 @@ function decorateProviderIdentity(update: {
   function flush() {
     frame = 0;
     if (!root.isConnected || location.href !== href) {
-      world.__equinoxDecoration?.dispose();
+      // An old route's queued frame must never tear down the newer
+      // did-navigate-in-page decoration instance.
+      if (world.__equinoxDecoration?.generation === generation) world.__equinoxDecoration.dispose();
       return;
     }
     if (shellChanged) bindRoots();
     if (profileChanged) syncProfile();
-    if (homeChanged) syncSurface();
+    // Re-evaluate the active provider surface as message nodes and composers
+    // hydrate, not only when the home form changes. Otherwise a real thread
+    // keeps the raw ChatGPT styling and hides both speaker portraits.
+    syncSurface();
     if (root.getAttribute("data-equinox-surface") === "thread") {
       for (const branch of changed) syncBranch(branch);
     }
