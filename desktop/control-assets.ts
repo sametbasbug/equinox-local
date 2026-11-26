@@ -15,7 +15,7 @@ const CONTENT_SECURITY_POLICY = [
   "base-uri 'none'",
   "form-action 'none'",
 ].join("; ");
-const NAV_SECTIONS = new Set(["dashboard", "projects", "tasks", "browser", "chat", "permissions", "integrations", "activity"]);
+const NAV_SECTIONS = new Set(["dashboard", "projects", "tasks", "browser", "chat", "permissions", "integrations", "activity", "plugins", "brain"]);
 const ASSETS = new Map<string, readonly [string, string]>([
   ["/", ["equinox-control-center.html", "text/html; charset=utf-8"]],
   ["/assets/control-center.css", ["equinox-control-center.css", "text/css; charset=utf-8"]],

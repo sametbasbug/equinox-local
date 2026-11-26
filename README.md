@@ -64,6 +64,12 @@ After installing, open **Setup** to configure an OpenAI Secure MCP Tunnel and it
 
 Get [Equinox Browser from the Chrome Web Store](https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj). Consent and Browser Control are explicit per browser context. Chrome Web Store manages extension updates; **Equinox Local never sideloads or overwrites the extension**.
 
+## Optional plugins
+
+The native **Plugins** workspace offers curated integrations. **Equinox Brain**, powered by [Avenox Beyin](https://github.com/avenoxai/avenoxbeyin) (MIT), is optional: create a new vault or connect an existing V3 vault. Python 3.11+ is required for installation and memory access. The Brain settings section appears in Control Center after connection; disconnecting preserves the vault.
+
+Agent memory search is disabled by default. Enable it explicitly in Brain settings to prepare the verified local engine and index, then use `brain_search` through the integrations capability. Search currently supports upstream V3.17.0 and returns bounded, source-backed results excluding private and untrusted notes. Refresh the index manually as needed. Automatic context injection and agent memory writing are not yet implemented.
+
 ## Agent CLI
 
 The `eqlocal` command communicates with the **already-running** Equinox Local process over a private, authenticated local IPC bridge. It does not start a second AI agent or run a second web server. Managed macOS/Windows installations provision the CLI; macOS Factory/source-checkout runtimes provision a launcher for their existing local runtime too.

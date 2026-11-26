@@ -28,6 +28,9 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M10 9v11"/></svg>
           <span>Control Center</span>
         </button>
+        <button class="nav-item workspace-tab" type="button" data-section="plugins" aria-label="Plugins" title="Plugins">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3h6l3 3v6h-4a2 2 0 1 0 0 4h4v5h-6v-3a3 3 0 0 0-6 0v3H3v-6h3a3 3 0 0 0 0-6H3V3h5v3a2 2 0 1 0 4 0V3Z"/></svg><span>Plugins</span>
+        </button>
       </nav>
 
       <nav id="setup-nav" class="workspace-tabs setup-nav" aria-label="First-time setup" hidden>
@@ -88,6 +91,12 @@
         <span>Services</span>
         <kbd class="nav-hotkey" aria-hidden="true">7</kbd>
       </button>
+      <div id="plugin-navigation" class="plugin-navigation" hidden>
+        <p>Plugins</p>
+        <button class="nav-item" type="button" data-section="brain" aria-label="Equinox Brain" title="Equinox Brain">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 18V5a3 3 0 0 0-5.8-1A4 4 0 0 0 3 10a4 4 0 0 0 1 7 4 4 0 0 0 8 1Zm0 0V5a3 3 0 0 1 5.8-1A4 4 0 0 1 21 10a4 4 0 0 1-1 7 4 4 0 0 1-8 1ZM7 8h2m6 0h2M7 15h2m6 0h2"/></svg><span>Equinox Brain</span>
+        </button>
+      </div>
     </nav>
 
     <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-heading">
@@ -878,6 +887,40 @@
         </details>
       </section>
 
+      <section id="section-plugins" class="page-section" aria-labelledby="section-title" hidden>
+        <div class="plugin-catalog-intro"><span class="plugin-eyebrow">EQUINOX LOCAL</span><h2>Extend your workspace</h2><p>Optional integrations, curated for Equinox Local. Connect only what you need.</p></div>
+        <div class="plugin-catalog-grid">
+          <article class="plugin-card">
+            <div class="plugin-card-header">
+              <div class="plugin-mark" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M24 36V11a6 6 0 0 0-11.6-2A8 8 0 0 0 6 21a8 8 0 0 0 2 14 8 8 0 0 0 16 1Zm0 0V11a6 6 0 0 1 11.6-2A8 8 0 0 1 42 21a8 8 0 0 1-2 14 8 8 0 0 1-16 1ZM14 17h5m10 0h5M14 30h5m10 0h5"/><circle cx="14" cy="17" r="1.5"/><circle cx="34" cy="30" r="1.5"/></svg></div>
+              <div class="plugin-identity"><h3>Equinox Brain</h3><p>Powered by Avenox Beyin</p></div>
+              <span id="brain-catalog-status" class="badge neutral">Not connected</span>
+            </div>
+            <p class="plugin-description">Persistent memory, shared knowledge and continuity across your AI agents.</p>
+            <div class="plugin-meta"><span>MIT License</span><span id="brain-offered-version">—</span><span>Local-first</span><span>Markdown + SQLite</span></div>
+            <div class="plugin-card-footer">
+              <div class="plugin-availability" id="brain-install-note">Requires Python 3.11 or newer.</div>
+              <button id="brain-connect" class="button secondary" type="button" disabled>Connect existing</button>
+              <button id="brain-install" class="button primary" type="button" disabled>Install</button>
+              <button id="brain-settings" class="button primary" type="button" data-jump-section="brain" hidden>Settings</button>
+            </div>
+          </article>
+        </div>
+        <p id="plugin-catalog-error" class="plugin-inline-error" role="alert" hidden></p>
+        <button id="plugins-retry" class="button secondary" type="button" hidden>Retry</button>
+      </section>
+      <section id="section-brain" class="page-section" aria-labelledby="section-title" hidden>
+        <article class="panel-card brain-settings-card">
+          <div class="plugin-card-header"><div class="plugin-identity"><h3>Equinox Brain</h3><p>Powered by Avenox Beyin</p></div><span id="brain-settings-status" class="badge neutral">Checking</span></div>
+          <dl class="brain-settings-details"><div><dt>Memory vault</dt><dd id="brain-vault-path">—</dd></div><div><dt>Installed engine version</dt><dd id="brain-engine-version">—</dd></div></dl>
+          <div class="brain-access-panel"><div><h4>Agent memory search</h4><p>Allow ChatGPT through Equinox Local to receive public and internal memory matches. Private and untrusted notes are excluded. Enabling prepares the verified local engine and refreshes the index.</p></div><button id="brain-access" class="button secondary" type="button" disabled>Enable search</button></div>
+          <p id="brain-compatibility" class="panel-note" hidden>Agent memory search requires the supported engine version. Your existing vault is unchanged.</p>
+          <div class="brain-settings-actions"><button id="brain-sync" class="button secondary" type="button" disabled>Refresh index</button></div>
+          <p class="card-copy">Automatic context and memory writing are in development. Nothing is sent to ChatGPT unless an authorized memory tool is used.</p>
+          <div class="brain-settings-actions"><button class="button secondary" type="button" data-jump-section="plugins">Back to Plugins</button><button id="brain-disconnect" class="button secondary" type="button" disabled>Disconnect</button></div>
+          <p class="panel-note">Disconnecting preserves your vault and existing agent integrations.</p>
+        </article>
+      </section>
       <section id="section-integrations" class="page-section" aria-labelledby="section-title" hidden>
         <section class="service-group" aria-labelledby="local-service-heading">
           <h3 id="local-service-heading">Local capabilities</h3>

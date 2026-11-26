@@ -57,7 +57,7 @@ const UI_READ_PATHS = new Set([
     "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
     "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
     "/api/v1/integrations/telegram/pair", "/api/v1/integrations/http-profiles",
-    "/api/v1/files/import-settings",
+    "/api/v1/files/import-settings", "/api/v1/plugins",
 ]);
 const UI_WRITE_PATHS = {
     POST: new Set([
@@ -68,6 +68,8 @@ const UI_WRITE_PATHS = {
         "/api/v1/integrations/telegram/pair/confirm", "/api/v1/integrations/telegram/pair/cancel",
         "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
         "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
+        "/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install", "/api/v1/plugins/brain/disconnect",
+        "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync",
     ]),
     PUT: new Set([
         "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",

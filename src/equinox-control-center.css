@@ -730,3 +730,41 @@ body.chat-workspace-active { overflow: hidden; }
 .accent-custom input { width: 27px; height: 27px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; padding: 0; }
 .accent-custom input::-webkit-color-swatch-wrapper { padding: 2px; }
 .accent-custom input::-webkit-color-swatch { border: 1px solid var(--line-strong); border-radius: 5px; }
+
+/* Curated plugin catalog shares the native Control Center design system. */
+body.plugins-workspace-active .app-shell { grid-template-columns: minmax(0, 1fr); }
+body.plugins-workspace-active .main-panel > * { max-width: 1100px; }
+.plugin-navigation { display: grid; gap: 4px; border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.plugin-navigation > p { margin: 0 10px 5px; font-size: 11px; text-transform: uppercase; letter-spacing: .075em; font-weight: 650; color: var(--muted); }
+.plugin-catalog-intro { padding: 22px 0 24px; }
+.plugin-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .12em; color: var(--accent); }
+.plugin-catalog-intro h2 { font-size: clamp(26px, 4vw, 36px); letter-spacing: -.045em; margin: 8px 0; line-height: 1.18; }
+.plugin-catalog-intro p { margin: 0; line-height: 1.6; color: var(--muted); }
+.plugin-catalog-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; max-width: 790px; }
+.plugin-card { display: grid; gap: 20px; padding: clamp(18px, 3vw, 26px); border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius-lg); }
+.plugin-card-header { display: flex; align-items: center; gap: 14px; }
+.plugin-mark { width: 64px; height: 64px; flex: 0 0 64px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line)); border-radius: 17px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); }
+.plugin-mark svg { width: 39px; height: 39px; }
+.plugin-identity { flex: 1; min-width: 0; }
+.plugin-identity h3 { margin: 0 0 5px; font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
+.plugin-identity p { color: var(--muted); margin: 0; font-size: 12px; }
+.plugin-description { color: var(--text-2); line-height: 1.65; margin: 0; }
+.plugin-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: 12px; }
+.plugin-meta span + span::before { content: "·"; margin-right: 12px; }
+.plugin-card-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--line); padding-top: 17px; }
+.plugin-availability { flex: 1; min-width: 130px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.plugin-inline-error { color: var(--danger); overflow-wrap: anywhere; }
+.brain-settings-card { max-width: 820px; }
+.brain-settings-details { display: grid; gap: 0; margin-block: 22px; border: 1px solid var(--line); border-radius: 10px; }
+.brain-settings-details > div { display: grid; gap: 8px; padding: 14px; }
+.brain-settings-details > div + div { border-top: 1px solid var(--line); }
+.brain-settings-details dt { color: var(--muted); font-size: 12px; }
+.brain-settings-details dd { margin: 0; font-weight: 550; overflow-wrap: anywhere; }
+.brain-settings-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-block: 18px; }
+@media(max-width: 640px) { .plugin-navigation > p { display:none; } .plugin-card-header { flex-wrap: wrap; } }
+
+.brain-access-panel { display:flex; align-items:center; gap:18px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding-block:18px; }
+.brain-access-panel > div { flex:1; }
+.brain-access-panel h4 { margin:0 0 6px; font-size:14px; }
+.brain-access-panel p { margin:0; color:var(--muted); line-height:1.6; font-size:13px; }
+@media(max-width:640px){.brain-access-panel{flex-wrap:wrap}}

@@ -34,6 +34,7 @@ type ControlApiOptions={
   confirmTelegramPairing?:Callback|null;cancelTelegramPairing?:Callback|null;testTelegram?:Callback|null;
   disconnectTelegram?:Callback|null;getHttpProfiles?:Callback|null;setHttpProfileManagement?:Callback|null;
   upsertHttpProfile?:Callback|null;testHttpProfile?:Callback|null;deleteHttpProfile?:Callback|null;
+  getPlugins?:Callback|null;connectBrain?:Callback|null;installBrain?:Callback|null;disconnectBrain?:Callback|null;setBrainSearch?:Callback|null;syncBrain?:Callback|null;
   recordInternalError?:Callback|null;
 };
 type MutableControlState={
@@ -344,6 +345,7 @@ export function createEquinoxLocalControlApi({
   testTelegram = null,
   disconnectTelegram = null,
   getHttpProfiles = null,
+  getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null, setBrainSearch = null, syncBrain = null,
   setHttpProfileManagement = null,
   upsertHttpProfile = null,
   testHttpProfile = null,
@@ -713,6 +715,35 @@ export function createEquinoxLocalControlApi({
         return;
       }
 
+      if (method === "GET" && pathname === "/api/v1/plugins") {
+        if (!getPlugins) throw badRequest("Plugin catalog is unavailable.");
+        send(200, { ok: true, plugins: await getPlugins() }); return;
+      }
+      if (method === "POST" && ["/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install"].includes(pathname)) {
+        authorizeMutation();
+        const action = pathname.endsWith("/install") ? installBrain : connectBrain;
+        const body = await readBody();
+        if (!action || !body || typeof body !== "object" || Object.keys(body).length !== 1 || typeof body.vault !== "string") throw badRequest("Choose a vault folder.");
+        const plugins = await action(body.vault);
+        state.mutationCount += 1;
+        send(200, {ok:true, plugins}); return;
+      }
+      if (method === "POST" && pathname === "/api/v1/plugins/brain/search-access") {
+        authorizeMutation(); const body=await readBody();
+        if(!setBrainSearch || !body || Object.keys(body).length!==1 || typeof body.enabled!=="boolean")throw badRequest("Invalid memory search preference.");
+        const plugins=await setBrainSearch(body.enabled); state.mutationCount+=1; send(200,{ok:true,plugins}); return;
+      }
+      if (method === "POST" && pathname === "/api/v1/plugins/brain/sync") {
+        authorizeMutation(); if(!syncBrain)throw badRequest("Brain index refresh is unavailable.");
+        const result=await syncBrain(); state.mutationCount+=1; send(200,{ok:true,...result}); return;
+      }
+      if (method === "POST" && pathname === "/api/v1/plugins/brain/disconnect") {
+        authorizeMutation();
+        if (!disconnectBrain) throw badRequest("Plugin catalog is unavailable.");
+        const plugins = await disconnectBrain();
+        state.mutationCount += 1;
+        send(200, {ok:true, plugins}); return;
+      }
       if (method === "GET" && pathname === "/api/v1/integrations/http-profiles") {
         if (typeof getHttpProfiles !== "function") {
           const error:ControlError = new Error("Authenticated HTTP profiles are unavailable.");
@@ -972,7 +1003,7 @@ const UI_READ_PATHS = new Set([
   "/api/v1/config", "/api/v1/update", "/api/v1/turn-budget",
   "/api/v1/integrations/peekaboo", "/api/v1/integrations/telegram",
   "/api/v1/integrations/telegram/pair", "/api/v1/integrations/http-profiles",
-  "/api/v1/files/import-settings",
+  "/api/v1/files/import-settings", "/api/v1/plugins",
 ]);
 const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
   POST: new Set([
@@ -983,6 +1014,8 @@ const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
     "/api/v1/integrations/telegram/pair/confirm", "/api/v1/integrations/telegram/pair/cancel",
     "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
     "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
+    "/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install", "/api/v1/plugins/brain/disconnect",
+    "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync",
   ]),
   PUT: new Set([
     "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",

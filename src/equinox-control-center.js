@@ -141,6 +141,7 @@ const state = {
     language: initialLanguage(),
     theme: initialTheme(),
     activeSection: "dashboard",
+    plugins: null, pluginsLoaded: false, pluginsBusy: false, pluginsError: "",
     setupMode: false,
     lastRefreshedAt: null,
     refreshAllBusy: false,
@@ -324,6 +325,8 @@ const sections = {
         summary: "Manage the agent’s isolated browser and your personal Chrome separately.",
     },
     chat: { title: "Assistant" },
+    plugins: { title: "Plugins" },
+    brain: { title: "Equinox Brain", summary: "Manage your connected memory vault." },
     permissions: {
         title: "Safety & access",
         summary: "Review active work and decide what the agent can access.",
@@ -581,10 +584,14 @@ function switchSection(section, { remember = false } = {}) {
         return;
     if (!state.setupMode && section === "setup")
         return;
+    if (section === "brain" && state.pluginsLoaded && !state.plugins?.brain)
+        return;
     const changed = state.activeSection !== section;
     state.activeSection = section;
     const chatActive = section === "chat";
-    const localActive = !chatActive && section !== "setup";
+    const pluginsActive = section === "plugins";
+    const localActive = !chatActive && !pluginsActive && section !== "setup";
+    document.body.classList.toggle("plugins-workspace-active", pluginsActive);
     if (localActive)
         lastLocalSection = section;
     document.body.classList.toggle("chat-workspace-active", chatActive);
@@ -636,6 +643,8 @@ function switchSection(section, { remember = false } = {}) {
                 renderDoctor();
             else if (section === "permissions")
                 renderAgentControl();
+            else if (section === "plugins" || section === "brain")
+                void refreshPlugins();
         }
     }
 }
@@ -2885,6 +2894,147 @@ async function runTaskAction(action) {
         renderTasks();
     }
 }
+function renderPlugins() {
+    const brain = state.plugins?.brain;
+    const loaded = state.pluginsLoaded;
+    const busy = state.pluginsBusy;
+    $("plugin-navigation").hidden = !brain;
+    $("brain-connect").hidden = !!brain;
+    $("brain-connect").disabled = !loaded || busy || !!state.pluginsError;
+    $("brain-install").hidden = !!brain;
+    $("brain-install").disabled = !loaded || busy || !!state.pluginsError;
+    setText("brain-install", state.brainInstalling ? "Installing…" : "Install");
+    $("brain-offered-version").textContent = state.plugins?.offeredVersion ? `v${state.plugins.offeredVersion}` : "—";
+    $("brain-settings").hidden = !brain;
+    $("brain-disconnect").disabled = !brain || busy;
+    $("brain-access").disabled = !brain || busy || (!brain.searchEnabled && !brain.searchCompatible);
+    $("brain-sync").disabled = !brain?.searchEnabled || busy || !brain.searchCompatible;
+    $("brain-compatibility").hidden = !brain || brain.searchCompatible;
+    setText("brain-access", state.brainAccessBusy ? "Working…" : brain?.searchEnabled ? "Disable search" : "Enable search");
+    setText("brain-sync", state.brainSyncBusy ? "Refreshing…" : "Refresh index");
+    $("brain-install-note").hidden = !!brain;
+    $("plugin-catalog-error").hidden = !state.pluginsError;
+    $("plugin-catalog-error").textContent = state.pluginsError;
+    $("plugins-retry").hidden = !state.pluginsError;
+    $("plugins-retry").disabled = busy;
+    const label = state.pluginsError ? "Unavailable" : !loaded ? "Checking" : !brain ? "Not connected" : brain.available ? "Vault linked" : "Vault unavailable";
+    const tone = state.pluginsError || (brain && !brain.available) ? "warn" : "neutral";
+    setBadge("brain-catalog-status", label, tone);
+    setBadge("brain-settings-status", label, tone);
+    $("brain-vault-path").textContent = brain?.vault || "—";
+    $("brain-engine-version").textContent = brain?.version || "—";
+    if (loaded && !brain) {
+        if (lastLocalSection === "brain")
+            lastLocalSection = "dashboard";
+        if (state.activeSection === "brain")
+            switchSection("plugins", { remember: true });
+    }
+}
+async function refreshPlugins() {
+    if (state.pluginsBusy || state.setupMode)
+        return;
+    state.pluginsBusy = true;
+    renderPlugins();
+    try {
+        const result = await requestJson("/api/v1/plugins");
+        state.plugins = result.plugins;
+        state.pluginsLoaded = true;
+        state.pluginsError = "";
+    }
+    catch {
+        state.pluginsError = localizeUiText("Plugin settings could not be loaded.");
+    }
+    finally {
+        state.pluginsBusy = false;
+        renderPlugins();
+    }
+}
+async function connectBrain(install = false) {
+    if (state.pluginsBusy || !state.pluginsLoaded || state.plugins?.brain)
+        return;
+    state.pluginsBusy = true;
+    state.brainInstalling = install;
+    renderPlugins();
+    try {
+        const selected = await pickLocalFolder();
+        if (selected.cancelled || !selected.path)
+            return;
+        const result = await mutationJson(install ? "/api/v1/plugins/brain/install" : "/api/v1/plugins/brain/connect", "POST", { vault: selected.path });
+        state.plugins = result.plugins;
+        state.pluginsError = "";
+        renderPlugins();
+        switchSection("brain", { remember: true });
+        showToast("Vault linked");
+    }
+    catch (error) {
+        showError(error);
+    }
+    finally {
+        state.pluginsBusy = false;
+        state.brainInstalling = false;
+        renderPlugins();
+    }
+}
+async function changeBrainSearch() {
+    if (state.pluginsBusy || !state.plugins?.brain)
+        return;
+    state.pluginsBusy = true;
+    state.brainAccessBusy = true;
+    renderPlugins();
+    try {
+        const result = await mutationJson("/api/v1/plugins/brain/search-access", "POST", { enabled: !state.plugins.brain.searchEnabled });
+        state.plugins = result.plugins;
+        state.pluginsError = "";
+        showToast(state.plugins.brain.searchEnabled ? "Memory search enabled" : "Memory search disabled");
+    }
+    catch (error) {
+        showError(error);
+    }
+    finally {
+        state.pluginsBusy = false;
+        state.brainAccessBusy = false;
+        renderPlugins();
+    }
+}
+async function refreshBrainIndex() {
+    if (state.pluginsBusy || !state.plugins?.brain?.searchEnabled)
+        return;
+    state.pluginsBusy = true;
+    state.brainSyncBusy = true;
+    renderPlugins();
+    try {
+        const result = await mutationJson("/api/v1/plugins/brain/sync", "POST", {});
+        state.plugins = result.plugins;
+        showToast(result.indexStatus === "degraded" ? "Index refreshed with warnings" : "Index refreshed");
+    }
+    catch (error) {
+        showError(error);
+    }
+    finally {
+        state.pluginsBusy = false;
+        state.brainSyncBusy = false;
+        renderPlugins();
+    }
+}
+async function disconnectBrain() {
+    if (state.pluginsBusy || !state.plugins?.brain)
+        return;
+    state.pluginsBusy = true;
+    renderPlugins();
+    try {
+        const result = await mutationJson("/api/v1/plugins/brain/disconnect", "POST", {});
+        state.plugins = result.plugins;
+        state.pluginsError = "";
+        showToast("Vault disconnected");
+    }
+    catch (error) {
+        showError(error);
+    }
+    finally {
+        state.pluginsBusy = false;
+        renderPlugins();
+    }
+}
 function renderAll() {
     renderDashboard();
     renderOnboarding();
@@ -2899,6 +3049,7 @@ function renderAll() {
     renderActivity();
     renderAgentControl();
     renderRuntimeRestartControl();
+    renderPlugins();
 }
 function updateRestartState() {
     $("restart-banner").hidden = !state.restartRequired;
@@ -3010,6 +3161,7 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
             // actual workspace before update, desktop and optional service checks.
             renderAll();
             document.body.classList.remove("control-loading");
+            void refreshPlugins();
             state.lastRefreshedAt = new Date();
             renderLastRefreshed();
             // Let the browser paint the usable workspace before background work.
@@ -3057,6 +3209,8 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
         else
             renderAll();
         document.body.classList.remove("control-loading");
+        if (!initial)
+            void refreshPlugins();
         state.lastRefreshedAt = new Date();
         renderLastRefreshed();
     }
@@ -4590,6 +4744,12 @@ function bindEvents() {
     $("save-turn-budget-button").addEventListener("click", saveTurnBudgetSettings);
     $("restart-runtime-button").addEventListener("click", restartRuntimeFromControlCenter);
     $("refresh-button").addEventListener("click", () => { void refreshAll(); });
+    $("brain-connect").addEventListener("click", () => { void connectBrain(); });
+    $("brain-install").addEventListener("click", () => { void connectBrain(true); });
+    $("brain-disconnect").addEventListener("click", () => { void disconnectBrain(); });
+    $("brain-access").addEventListener("click", () => { void changeBrainSearch(); });
+    $("brain-sync").addEventListener("click", () => { void refreshBrainIndex(); });
+    $("plugins-retry").addEventListener("click", () => { void refreshPlugins(); });
     $("startup-retry").addEventListener("click", () => { void refreshAll({ initial: true }); });
     $("run-doctor-button").addEventListener("click", () => { void runFullDoctorChecks(); });
     $("onboarding-tunnel-form").addEventListener("submit", submitTunnelOnboarding);
