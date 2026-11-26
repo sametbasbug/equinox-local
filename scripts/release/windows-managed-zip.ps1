@@ -24,6 +24,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 
 public static class EquinoxManagedZip
@@ -35,6 +36,9 @@ public static class EquinoxManagedZip
         public bool IsDirectory;
     }
 
+    // The index is generated from the exact bytes written into the ZIP. It
+    // is authenticated by the existing production-signed archive SHA256.
+    private const string ContentIndex = "native-content-sha256.txt";
     private static readonly DateTimeOffset FixedTime = new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     public static void Create(string sourceDirectory, string destinationZip)
@@ -53,6 +57,7 @@ public static class EquinoxManagedZip
             if ((attributes & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("Managed ZIP source contains a reparse point: " + fullPath);
             string relative = fullPath.Substring(source.Length).TrimStart('\\', '/').Replace('\\', '/');
             if (String.IsNullOrWhiteSpace(relative) || relative.StartsWith("/", StringComparison.Ordinal)) throw new InvalidOperationException("Managed ZIP source contains an invalid relative path.");
+            if (String.Equals(relative, ContentIndex, StringComparison.OrdinalIgnoreCase) || relative.IndexOfAny(new[] {'\r', '\n', '\t'}) >= 0) throw new InvalidOperationException("Managed ZIP source contains a reserved or unindexable path.");
             string[] segments = relative.Split('/');
             if (segments.Any(segment => segment.Length == 0 || segment == "." || segment == "..")) throw new InvalidOperationException("Managed ZIP source contains an unsafe relative path.");
             items.Add(new Item { FullPath = fullPath, Relative = relative, IsDirectory = (attributes & FileAttributes.Directory) != 0 });
@@ -67,6 +72,8 @@ public static class EquinoxManagedZip
                 ZipArchiveEntry rootEntry = zip.CreateEntry("release/", CompressionLevel.NoCompression);
                 rootEntry.LastWriteTime = FixedTime;
                 rootEntry.ExternalAttributes = 0;
+                var index = new StringBuilder();
+                var buffer = new byte[1024 * 1024];
                 foreach (Item item in items)
                 {
                     string name = "release/" + item.Relative + (item.IsDirectory ? "/" : "");
@@ -76,10 +83,24 @@ public static class EquinoxManagedZip
                     if (item.IsDirectory) continue;
                     using (var input = new FileStream(item.FullPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan))
                     using (Stream output = entry.Open())
+                    using (var hash = SHA256.Create())
                     {
-                        input.CopyTo(output, 1024 * 1024);
+                        int count;
+                        while ((count = input.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            hash.TransformBlock(buffer, 0, count, buffer, 0);
+                            output.Write(buffer, 0, count);
+                        }
+                        hash.TransformFinalBlock(new byte[0], 0, 0);
+                        index.Append(BitConverter.ToString(hash.Hash).Replace("-", "").ToLowerInvariant()).Append('\t').Append(item.Relative).Append('\n');
                     }
                 }
+                byte[] indexBytes = new UTF8Encoding(false, true).GetBytes(index.ToString());
+                if (indexBytes.Length < 1 || indexBytes.Length > 16 * 1024 * 1024) throw new InvalidOperationException("Managed ZIP content index exceeds its bound.");
+                ZipArchiveEntry indexEntry = zip.CreateEntry("release/" + ContentIndex, CompressionLevel.Fastest);
+                indexEntry.LastWriteTime = FixedTime;
+                indexEntry.ExternalAttributes = 0;
+                using (Stream output = indexEntry.Open()) output.Write(indexBytes, 0, indexBytes.Length);
             }
         }
         catch

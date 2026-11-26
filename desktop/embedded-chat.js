@@ -73,7 +73,7 @@ function permittedExternalLink(value) {
 // semantic class names; no provider action is replaced or programmatically invoked.
 // The genuine Work landing can deliberately omit the Chat transcript/home
 // markers. Its recognized app shell and Composer mode still share our chrome.
-const WORKSPACE_ROOT = 'html:root:is([data-equinox-surface],[data-equinox-workspace]:where(:has([data-app-shell-frame] #app-shell-sidebar):has([aria-label="Composer mode"])))';
+const WORKSPACE_ROOT = 'html:root:is([data-equinox-sign-in-required],[data-equinox-surface],[data-equinox-workspace]:where(:has([data-app-shell-frame] #app-shell-sidebar):has([aria-label="Composer mode"])))';
 const STYLE = String.raw `
 ${WORKSPACE_ROOT} {
   --eq-canvas: #f8faff;
@@ -85,8 +85,8 @@ ${WORKSPACE_ROOT} {
   --eq-text: #181a29;
   --eq-secondary: #4d536a;
   --eq-muted: #61677b;
-  --eq-accent: oklch(from var(--eq-user-accent, #8b6cf0) clamp(.32, l, .48) calc(c * .85) h);
-  --eq-send: oklch(from var(--eq-user-accent, #8b6cf0) clamp(.32, l, .49) calc(c * .85) h);
+  --eq-accent: oklch(from var(--eq-sign-in-accent, var(--eq-user-accent, #8b6cf0)) clamp(.32, l, .48) calc(c * .85) h);
+  --eq-send: oklch(from var(--eq-sign-in-accent, var(--eq-user-accent, #8b6cf0)) clamp(.32, l, .49) calc(c * .85) h);
   --eq-active: color-mix(in srgb, var(--eq-accent) 10%, var(--eq-sidebar));
   --eq-bubble: color-mix(in srgb, var(--eq-accent) 7%, var(--eq-canvas));
   --eq-bubble-text: var(--eq-text);
@@ -125,7 +125,7 @@ ${WORKSPACE_ROOT} {
     --eq-text: #eeeff8;
     --eq-secondary: #bdc3d8;
     --eq-muted: #a1a9c1;
-    --eq-accent: oklch(from var(--eq-user-accent, #8b6cf0) clamp(.73, l, .84) calc(c * .8) h);
+    --eq-accent: oklch(from var(--eq-sign-in-accent, var(--eq-user-accent, #8b6cf0)) clamp(.73, l, .84) calc(c * .8) h);
     --eq-active: color-mix(in srgb, var(--eq-accent) 12%, var(--eq-sidebar));
     --eq-bubble: color-mix(in srgb, var(--eq-accent) 9%, var(--eq-paper));
     --eq-editor-shadow: 0 2px 7px #0b0c1455;
@@ -135,6 +135,102 @@ ${WORKSPACE_ROOT} {
 ${WORKSPACE_ROOT} body { background: var(--eq-canvas) !important; color: var(--eq-text); }
 ${WORKSPACE_ROOT} ::selection { background: color-mix(in srgb, var(--eq-accent) 25%, transparent); }
 ${WORKSPACE_ROOT} :focus-visible { outline-color: var(--eq-accent); }
+/* A positively identified guest composer is not an Equinox workspace.
+   Keep the provider's authentication document untouched; the only exposed
+   guest action is a real navigation to ChatGPT's sign-in flow. */
+html:root[data-equinox-sign-in-required] body > :not([data-equinox-sign-in]) { display: none !important; }
+html:root[data-equinox-sign-in-required] body {
+  margin: 0 !important;
+  padding: 0 !important;
+  min-height: 100vh;
+  overflow: auto !important;
+  background: var(--eq-canvas) !important;
+}
+[data-equinox-sign-in] {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 28px;
+  background: var(--eq-canvas);
+  color: var(--eq-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  box-sizing: border-box;
+  text-align: center;
+  isolation: isolate;
+}
+[data-equinox-sign-in] .eq-sign-in-card {
+  width: min(100%, 420px);
+  display: grid;
+  justify-items: center;
+  gap: 20px;
+  padding: 36px 30px;
+  box-sizing: border-box;
+}
+[data-equinox-sign-in] .eq-sign-in-mark {
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  color: var(--eq-accent);
+  background: var(--eq-active);
+  border: 1px solid var(--eq-border);
+  border-radius: 21px;
+  box-shadow: var(--eq-editor-shadow);
+}
+[data-equinox-sign-in] .eq-sign-in-mark svg { width: 40px; height: 40px; }
+[data-equinox-sign-in] .eq-sign-in-label {
+  color: var(--eq-accent);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .085em;
+  text-transform: uppercase;
+}
+[data-equinox-sign-in] .eq-sign-in-heading {
+  font: 650 clamp(27px, 4vw, 38px)/1.1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -.035em;
+  margin: -7px 0 0;
+  color: var(--eq-text);
+}
+[data-equinox-sign-in] .eq-sign-in-description {
+  color: var(--eq-secondary);
+  font-size: 15px;
+  line-height: 1.65;
+  margin: -8px 0 2px;
+  max-width: 350px;
+}
+[data-equinox-sign-in] .eq-sign-in-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 48px;
+  width: 100%;
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: var(--eq-send);
+  color: #fff !important;
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none !important;
+  box-sizing: border-box;
+  box-shadow: var(--eq-editor-shadow);
+}
+[data-equinox-sign-in] .eq-sign-in-action:hover { filter: brightness(1.09); }
+[data-equinox-sign-in] .eq-sign-in-action:focus-visible { outline: 2px solid var(--eq-accent); outline-offset: 4px; }
+[data-equinox-sign-in] .eq-sign-in-note {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--eq-muted);
+  margin: -5px 0 0;
+}
+@media (max-height: 430px) {
+  [data-equinox-sign-in] .eq-sign-in-card { gap: 13px; padding-block: 10px; }
+  [data-equinox-sign-in] .eq-sign-in-mark { width: 56px; height: 56px; }
+}
+
 /* Keep the real search, account, projects, history, and feature actions.
    The provider's own collapse and mobile layout still decide visibility. */
 ${WORKSPACE_ROOT} aside[data-app-shell-left-panel-appearance] {
@@ -858,6 +954,102 @@ html:root[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([
 }
 
 `;
+// The isolated world owns only the gate's presentation. No credentials,
+// account data, provider requests or app IPC are read or intercepted.
+function renderAssistantSignInGate(language, accent) {
+    const world = window;
+    world.__equinoxSignInGate?.dispose();
+    const root = document.documentElement;
+    const selector = 'form[data-mobile-composer][data-logged-out],form[data-chatgpt-composer][data-logged-out]';
+    let gate = null;
+    let queued = false;
+    const clear = () => {
+        root.removeAttribute("data-equinox-sign-in-required");
+        root.style.removeProperty("--eq-sign-in-accent");
+        gate?.remove();
+        gate = null;
+    };
+    const copy = language === "tr" ? {
+        label: "Equinox Assistant", title: "ChatGPT hesabınla giriş yap", description: "Assistant'ı ve Equinox Local bağlantını kullanmak için ChatGPT hesabına giriş yap.",
+        action: "ChatGPT ile giriş yap", note: "Giriş işlemi ChatGPT'nin kendi güvenli sayfasında gerçekleşir.",
+    } : {
+        label: "Equinox Assistant", title: "Sign in to ChatGPT", description: "Sign in to your ChatGPT account to use Assistant and your Equinox Local connection.",
+        action: "Continue to ChatGPT", note: "Sign-in takes place on ChatGPT's own secure page.",
+    };
+    function sync() {
+        queued = false;
+        if (!root.isConnected || !document.body)
+            return;
+        // Never infer logged-out state merely from a missing sidebar or a slow
+        // initial render. Auth routes and signed-in/Work surfaces stay genuine.
+        const guest = !/^\/auth(?:\/|$)/u.test(location.pathname) && Boolean(document.querySelector(selector));
+        if (!guest) {
+            clear();
+            return;
+        }
+        root.style.setProperty("--eq-sign-in-accent", accent);
+        if (gate?.isConnected)
+            return;
+        gate = document.createElement("main");
+        gate.setAttribute("data-equinox-sign-in", "");
+        gate.setAttribute("aria-labelledby", "eq-assistant-sign-in-heading");
+        const card = document.createElement("div");
+        card.className = "eq-sign-in-card";
+        const mark = document.createElement("div");
+        mark.className = "eq-sign-in-mark";
+        mark.setAttribute("aria-hidden", "true");
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 48 48");
+        svg.setAttribute("fill", "none");
+        const orbit = document.createElementNS(svg.namespaceURI, "ellipse");
+        for (const [key, value] of Object.entries({ cx: "24", cy: "24", rx: "20", ry: "9", transform: "rotate(-35 24 24)", stroke: "currentColor", "stroke-width": "2.2" }))
+            orbit.setAttribute(key, value);
+        const ring = document.createElementNS(svg.namespaceURI, "circle");
+        for (const [key, value] of Object.entries({ cx: "24", cy: "24", r: "10", stroke: "currentColor", "stroke-width": "2.2" }))
+            ring.setAttribute(key, value);
+        const satellite = document.createElementNS(svg.namespaceURI, "circle");
+        for (const [key, value] of Object.entries({ cx: "39", cy: "13", r: "3.4", fill: "currentColor" }))
+            satellite.setAttribute(key, value);
+        svg.append(ring, orbit, satellite);
+        mark.append(svg);
+        const label = document.createElement("div");
+        label.className = "eq-sign-in-label";
+        label.textContent = copy.label;
+        const heading = document.createElement("h1");
+        heading.id = "eq-assistant-sign-in-heading";
+        heading.className = "eq-sign-in-heading";
+        heading.textContent = copy.title;
+        const description = document.createElement("p");
+        description.className = "eq-sign-in-description";
+        description.textContent = copy.description;
+        const action = document.createElement("a");
+        action.className = "eq-sign-in-action";
+        action.href = "https://chatgpt.com/auth/login";
+        action.textContent = copy.action;
+        const note = document.createElement("p");
+        note.className = "eq-sign-in-note";
+        note.textContent = copy.note;
+        card.append(mark, label, heading, description, action, note);
+        gate.append(card);
+        document.body.append(gate);
+        root.setAttribute("data-equinox-sign-in-required", "");
+    }
+    const containsGuest = (node) => node instanceof Element && (node.matches(selector) || !!node.querySelector(selector));
+    const observer = new MutationObserver(records => {
+        if (queued)
+            return;
+        // Ignore ordinary transcript text/streaming updates. Only changes to
+        // the positively identified guest form or its host can change admission.
+        if (!(gate && !gate.isConnected) && !records.some(record => record.type === "attributes" ||
+            [...record.addedNodes, ...record.removedNodes].some(containsGuest)))
+            return;
+        queued = true;
+        queueMicrotask(sync);
+    });
+    observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-logged-out", "data-mobile-composer", "data-chatgpt-composer"] });
+    world.__equinoxSignInGate = { dispose: () => { observer.disconnect(); clear(); } };
+    sync();
+}
 function decorateProviderIdentity(update, generation) {
     const world = window;
     if (world.__equinoxDecoration && world.__equinoxDecoration.generation > generation)
@@ -1501,6 +1693,13 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
     let loadState = "loading";
     let decorationGeneration = 0;
     let decoratedPath = null;
+    let providerStyleReady = Promise.resolve();
+    const syncSignInGate = async () => {
+        if (view.webContents.isDestroyed() || !isChatGPTOrigin(view.webContents.getURL()))
+            return;
+        const code = "(" + renderAssistantSignInGate.toString() + ")(" + JSON.stringify(language) + "," + JSON.stringify(accent) + ")";
+        await view.webContents.executeJavaScriptInIsolatedWorld(1002, [{ code }]).catch(() => { });
+    };
     const applyIdentity = (visible = chatVisible, navigationURL) => {
         if (view.webContents.isDestroyed())
             return;
@@ -1543,24 +1742,33 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
     view.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
         if (isMainFrame)
             onBudget(null);
-        if (isMainFrame && chatVisible && isChatGPTOrigin(url) && new URL(url).pathname !== decoratedPath)
-            applyIdentity(true, url);
+        if (isMainFrame && isChatGPTOrigin(url)) {
+            void syncSignInGate();
+            if (chatVisible && new URL(url).pathname !== decoratedPath)
+                applyIdentity(true, url);
+        }
     });
     view.webContents.on("dom-ready", () => {
         if (!view.webContents.isDestroyed() && isChatGPTOrigin(view.webContents.getURL())) {
-            void view.webContents.insertCSS(STYLE).catch(() => { });
+            providerStyleReady = view.webContents.insertCSS(STYLE).then(syncSignInGate).catch(() => { });
         }
     });
     view.webContents.on("did-finish-load", () => {
         if (view.webContents.isDestroyed() || loadState !== "loading" || !admitted(view.webContents.getURL()))
             return;
-        setLoadState("ready");
+        const loaded = view.webContents.getURL();
+        void providerStyleReady.then(syncSignInGate).finally(() => {
+            if (!view.webContents.isDestroyed() && loadState === "loading" && view.webContents.getURL() === loaded)
+                setLoadState("ready");
+        });
     });
     view.webContents.on("did-start-navigation", ({ isMainFrame, isSameDocument }) => {
         if (isMainFrame)
             onBudget(null);
-        if (isMainFrame && !isSameDocument)
+        if (isMainFrame && !isSameDocument) {
+            providerStyleReady = Promise.resolve();
             setLoadState("loading");
+        }
     });
     view.webContents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) => {
         if (isMainFrame && errorCode !== -3)
@@ -1594,8 +1802,10 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
             attached = true;
         }
         view.setVisible(true);
-        if (!wasVisible)
+        if (!wasVisible) {
+            void syncSignInGate();
             applyIdentity();
+        }
     }
     function setLoadState(value) {
         if (loadState === value)
@@ -1705,12 +1915,16 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
         },
         setComposition(value) { composition = value; if (chatVisible)
             applyIdentity(); },
-        setLanguage(value) { language = value; if (chatVisible)
-            applyIdentity(); },
+        setLanguage(value) { language = value; if (chatVisible) {
+            void syncSignInGate();
+            applyIdentity();
+        } },
         setIdentity(value) { identity = value; if (chatVisible)
             applyIdentity(); },
-        setAccent(value) { accent = value; if (chatVisible)
-            applyIdentity(); },
+        setAccent(value) { accent = value; if (chatVisible) {
+            void syncSignInGate();
+            applyIdentity();
+        } },
         async requestMicrophone() {
             const granted = await askMicrophonePermission();
             if (granted && !view.webContents.isDestroyed())

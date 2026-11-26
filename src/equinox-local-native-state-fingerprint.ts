@@ -22,7 +22,8 @@ const DOMAIN = "equinox-local-native-state-v1\0";
 // At most four files are open concurrently; read each through a bounded
 // buffer without allocating a per-file ReadStream and async iterator.
 const FILE_BATCH = 4;
-const HASH_BUFFER_BYTES = 256 * 1024;
+const METADATA_BATCH = 16;
+const HASH_BUFFER_BYTES = 1024 * 1024;
 async function hashFile(filePath: string, expectedBytes: number, fsImpl: NativeTreeFs): Promise<string> {
   const digest = createHash("sha256");
   const handle = await fsImpl.open(filePath, "r");
@@ -51,6 +52,7 @@ export async function fingerprintEquinoxLocalNativeState(root: unknown, { fsImpl
   const rootStat = await fsImpl.lstat(root);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error("Native state fingerprint root must be a normal directory.");
   const rows: FingerprintRow[] = [];
+  const files: { absolute: string; relative: string; mode: number; bytes: number; row: number }[] = [];
   const stack: { absolute: string; relative: string }[] = [{ absolute: root, relative: "" }];
   let entries = 0;
   let bytes = 0;
@@ -62,8 +64,8 @@ export async function fingerprintEquinoxLocalNativeState(root: unknown, { fsImpl
     // Preserve the original deterministic traversal/order while overlapping
     // bounded filesystem operations. Never descend before lstat admission.
     children.reverse();
-    for (let index = 0; index < children.length; index += FILE_BATCH) {
-      const batch = children.slice(index, index + FILE_BATCH);
+    for (let index = 0; index < children.length; index += METADATA_BATCH) {
+      const batch = children.slice(index, index + METADATA_BATCH);
       entries += batch.length;
       if (entries > MAX_ENTRIES) throw new Error("Native state fingerprint contains too many entries.");
       const inspected = await Promise.all(batch.map(async child => {
@@ -79,21 +81,37 @@ export async function fingerprintEquinoxLocalNativeState(root: unknown, { fsImpl
           if (bytes > MAX_BYTES) throw new Error("Native state fingerprint exceeds the size limit.");
         }
       }
-      const batchRows = await Promise.allSettled(inspected.map(async ({ absolute, relative, stat }): Promise<FingerprintRow> => {
-        if (stat.isDirectory()) return Object.freeze({ type: "dir", relative, mode: stat.mode & 0o777 });
-        return Object.freeze({ type: "file", relative, mode: stat.mode & 0o777, bytes: stat.size,
-          sha256: await hashFile(absolute, stat.size, fsImpl) });
-      }));
-      // Settle all admitted reads before reporting a failure to the caller.
-      for (let i = 0; i < batchRows.length; i += 1) {
-        const result = batchRows[i]!;
-        if (result.status === "rejected") throw result.reason;
-        rows.push(result.value);
-        const item = inspected[i]!;
-        if (result.value.type === "dir") stack.push({ absolute: item.absolute, relative: item.relative });
+      // Record slots in precisely the previous traversal order, then hash
+      // the admitted files across directory boundaries. Tiny directories no
+      // longer force a complete worker barrier for each group of files.
+      for (const { absolute, relative, stat } of inspected) {
+        const mode = stat.mode & 0o777;
+        if (stat.isDirectory()) {
+          rows.push(Object.freeze({ type: "dir", relative, mode }));
+          stack.push({ absolute, relative });
+        } else {
+          files.push({ absolute, relative, mode, bytes: stat.size, row: rows.length });
+          rows.push(Object.freeze({ type: "file", relative, mode, bytes: stat.size, sha256: "" }));
+        }
       }
     }
   }
+  let cursor = 0;
+  let failed = false;
+  const workers = Array.from({ length: Math.min(FILE_BATCH, files.length) }, async () => {
+    try {
+      while (!failed && cursor < files.length) {
+        const item = files[cursor++]!;
+        const sha256 = await hashFile(item.absolute, item.bytes, fsImpl);
+        rows[item.row] = Object.freeze({ type: "file", relative: item.relative, mode: item.mode, bytes: item.bytes, sha256 });
+      }
+    } catch (error) {
+      failed = true;
+      throw error;
+    }
+  });
+  const results = await Promise.allSettled(workers);
+  for (const result of results) if (result.status === "rejected") throw result.reason;
   rows.sort((a, b) => a.relative.localeCompare(b.relative, "en"));
   const digest = createHash("sha256");
   digest.update(DOMAIN);
