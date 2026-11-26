@@ -2908,9 +2908,16 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
     const taskReadGeneration = state.taskReadGeneration;
     clearError();
     $("refresh-button").disabled = true;
+    if (initial) {
+        $("startup-progress").hidden = false;
+        $("startup-failed").hidden = true;
+    }
     try {
+        // Probe the authenticated runtime once before initial hydration. Do not
+        // fan out thirteen failed socket connections on every startup retry.
+        const initialHealth = initial ? await requestJson("/api/v1/health") : null;
         const [health, status, config, activity, tasks, update, onboarding, doctor, doctorRepairs, peekaboo, telegram, webFileTransfer, httpProfiles] = await Promise.all([
-            requestJson("/api/v1/health"),
+            initialHealth ?? requestJson("/api/v1/health"),
             requestJson("/api/v1/status"),
             requestJson("/api/v1/config"),
             requestJson("/api/v1/activity").catch(() => ({ events: [] })),
@@ -2969,6 +2976,10 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
         }
         else {
             showError(error);
+            if (initial) {
+                $("startup-progress").hidden = true;
+                $("startup-failed").hidden = false;
+            }
         }
     }
     finally {
@@ -2978,7 +2989,8 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
     }
 }
 function autoRefreshAllowed() {
-    return !document.hidden && !state.restartRequired && !state.restartBusy && !state.refreshAllBusy;
+    return !document.hidden && !document.body.classList.contains("control-loading")
+        && !state.restartRequired && !state.restartBusy && !state.refreshAllBusy;
 }
 function reconcileLiveTasks(nextTasks, readGeneration) {
     if (state.taskBusy || readGeneration !== state.taskReadGeneration || !Array.isArray(nextTasks))
@@ -4463,6 +4475,7 @@ function bindEvents() {
     $("save-turn-budget-button").addEventListener("click", saveTurnBudgetSettings);
     $("restart-runtime-button").addEventListener("click", restartRuntimeFromControlCenter);
     $("refresh-button").addEventListener("click", () => { void refreshAll(); });
+    $("startup-retry").addEventListener("click", () => { void refreshAll({ initial: true }); });
     $("run-doctor-button").addEventListener("click", () => { void runFullDoctorChecks(); });
     $("onboarding-tunnel-form").addEventListener("submit", submitTunnelOnboarding);
     $("copy-setup-test-prompt").addEventListener("click", () => void copySetupText($("setup-test-prompt").textContent.trim(), "Test prompt copied."));

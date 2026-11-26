@@ -75,6 +75,11 @@ internal static partial class Program
                 }
             }
         }
+        return BuildNativeFingerprint(rows, entries, totalBytes);
+    }
+
+    private static NativeFingerprintResult BuildNativeFingerprint(List<NativeFingerprintRow> rows, int entries, long totalBytes)
+    {
         rows.Sort((a, b) => CompareFingerprintNames(a.Relative, b.Relative));
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         void Add(string value) => digest.AppendData(Encoding.UTF8.GetBytes(value));

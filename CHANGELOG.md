@@ -1,3 +1,8 @@
+## [Unreleased]
+
+- Reduce Windows cold-start work by verifying the production-signed ZIP and deriving the native-store fingerprint from the same authenticated physical file scan. All archive, path, inventory, mode, digest and selector checks remain mandatory.
+- Show a clear startup status and retry action in Control Center, and avoid repeated parallel IPC requests before the local runtime is available.
+
 ## [7.1.1] - 2026-11-26
 
 ### Assistant workspace, continuity and companion fixes
