@@ -249,7 +249,7 @@ function validateTaskUpdateRequest(body) {
     }
     return body;
 }
-export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null, setBrainSearch = null, syncBrain = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
+export function createEquinoxLocalControlApi({ configManager, getStatus = async () => ({}), getTurnBudget = null, updateTurnBudget = null, getDoctorStatus = async () => ({}), getDoctorRepairs = null, applyDoctorRepair = null, getActivity = async () => [], getUpdateStatus = async () => ({}), getOnboardingStatus = async () => ({ available: false }), getTasks = null, getTask = null, updateTask = null, completeTask = null, cancelTask = null, deleteTask = null, cancelTaskContinuation = null, cancelTaskFreshResume = null, abandonTaskFreshResume = null, checkForUpdates = null, applyUpdate = null, configureTunnel = null, pauseAgent = null, resumeAgent = null, restartRuntime = null, scheduleUninstall = null, chooseFolder = null, updateBrowserSettings = null, openAgentBrowser = null, checkGitHub = null, getPeekabooStatus = null, getTelegramStatus = null, getWebImportSettings = null, updateWebImportDownloads = null, updateTelegramRemoteControl = null, updateTelegramDownloads = null, configureTelegram = null, startTelegramPairing = null, pollTelegramPairing = null, confirmTelegramPairing = null, cancelTelegramPairing = null, testTelegram = null, disconnectTelegram = null, getHttpProfiles = null, getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null, setBrainSearch = null, setBrainWrite = null, syncBrain = null, setHttpProfileManagement = null, upsertHttpProfile = null, testHttpProfile = null, deleteHttpProfile = null, recordInternalError = null, } = {}) {
     if (!configManager?.snapshot || !configManager?.replacePersisted) {
         throw new Error("Control Center API için configManager gerekli.");
     }
@@ -654,6 +654,16 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 send(200, { ok: true, plugins });
                 return;
             }
+            if (method === "POST" && pathname === "/api/v1/plugins/brain/write-access") {
+                authorizeMutation();
+                const body = await readBody();
+                if (!setBrainWrite || !body || Object.keys(body).length !== 1 || typeof body.enabled !== "boolean")
+                    throw badRequest("Invalid memory writing preference.");
+                const plugins = await setBrainWrite(body.enabled);
+                state.mutationCount += 1;
+                send(200, { ok: true, plugins });
+                return;
+            }
             if (method === "POST" && pathname === "/api/v1/plugins/brain/sync") {
                 authorizeMutation();
                 if (!syncBrain)
@@ -936,7 +946,7 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
             "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
             "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
             "/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install", "/api/v1/plugins/brain/disconnect",
-            "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync",
+            "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access",
         ]),
         PUT: new Set([
             "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",

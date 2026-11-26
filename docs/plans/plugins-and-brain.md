@@ -29,7 +29,14 @@ Maintainer-approved direction (2026-11-27). This is the implementation plan, not
 
 - Phase 1: implemented the native catalog, top-level navigation, persistent connection state, and connected-only Brain settings navigation.
 - Phase 2: implemented existing V3 vault connection, new empty-folder installation from a pinned V3.17.0 release, Python discovery, and data-preserving disconnection. Upgrade workflow remains open.
-- Phase 3: implemented opt-in, source-backed read-only `brain_search` and manual local index refresh. Direct note reading/writing, receipts and task operations remain open. Retrieval compatibility is currently limited to V3.17.0; connecting other valid V3 vaults does not execute their code.
+- Phase 3: implemented opt-in, source-backed read-only `brain_search` and manual local index refresh. Exact record reading and new-note creation are implemented; edits to existing notes, receipts and task operations remain open. Retrieval compatibility is currently limited to V3.17.0; connecting other valid V3 vaults does not execute their code.
 - Phase 4: basic status, version, location, opt-in and refresh settings implemented. Richer upstream preferences, diagnostics, open-folder and version-update workflows remain open.
 - Phase 5: automatic lifecycle integration and controlled memory import remain open.
-- Disposable local backend exercises succeeded on macOS and Windows (including Python 3.15 discovery, install, search privacy filtering, disconnect and reconnect). Static checks, generated runtime/desktop parity and typecheck passed. Installed native UI and live MCP integration still require verification; no existing personal vault has been changed.
+- Disposable local backend exercises succeeded on macOS and Windows (including Python 3.15 discovery, install, search privacy filtering, disconnect and reconnect). Static checks, generated runtime/desktop parity and typecheck passed. Factory installed native catalog and live MCP capability discovery/disabled-access rejection verified. Connected settings and enabled live MCP execution remain unverified; no existing personal vault has been changed.
+
+### Next checkpoint: scoped note tools
+
+- Added `brain_read` (exact record ID, source hash/revision, same upstream privacy gates) and `brain_create` (new internal note only, explicit separate write permission, stable idempotency, source attribution, upstream secret screening without changing vault preferences). Search revocation also revokes writing.
+- Manual disposable backend verification passed on macOS and Windows for exact reads, note creation, repeated identical requests, and permission revocation. macOS additionally verified hidden private/untrusted records, conflicting retries, and refusal of synthetic secret-bearing content. All scratch vaults and indexes were removed.
+- Factory catalog verified visually and first candidate native builds/CodeQL passed. Native folder picker opened but macOS AX sheet targeting prevented end-to-end connection; still verify connected settings and enabled live MCP with a disposable vault.
+- Next: finish narrowly scoped updates/receipts/tasks, preferences, diagnostics, open-folder and upgrade lifecycle; then investigate automatic context.
