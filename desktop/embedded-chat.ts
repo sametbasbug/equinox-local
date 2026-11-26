@@ -1,4 +1,5 @@
 import { createNativeChatContinuity } from "./native-chat-continuity.js";
+import { decorateNativeToolActivity } from "./native-tool-activity.js";
 import { WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import type { BrowserWindow, Rectangle } from "electron";
 import path from "node:path";
@@ -734,7 +735,35 @@ html:root[data-equinox-surface="thread"] [data-talvt-turn-state]:has([data-equin
   transform: none !important;
   translate: none !important;
 }
-/* Clear, quiet reading line for the real per-tool MCP App card. */
+/* Native activity timeline: replace a verified original invocation's
+   presentation, never the provider's real tool result or surrounding prose.
+   Unknown or legacy frames retain their original interactive fallback. */
+[data-equinox-native-run] > :is([data-mcp-app-portal-target],[class~="group/activity-header"]) { display:none !important; }
+.eq-run-host { font: 13px/1.5 system-ui,sans-serif; color:var(--eq-secondary); min-width:0; }
+.eq-run-group { display:flex; align-items:center; gap:8px; border:0; background:transparent; color:var(--eq-secondary); font:inherit; text-align:start; padding:3px 0; cursor:pointer; }
+.eq-run-group::before { content:"⌘"; font-size:14px; }
+.eq-run-group::after { content:"›"; margin-inline-start:2px; }
+.eq-run-group[aria-expanded="true"]::after { transform:rotate(90deg); }
+.eq-run-row { border:0; background:transparent; min-width:0; }
+.eq-run-row[hidden] {display:none !important;}
+[data-equinox-native-run][data-equinox-run-collapsed], [data-equinox-run-collapsed]:has(> [data-equinox-native-run]:only-child) {display:none !important;}
+.eq-run-nested > .eq-run-row:not([hidden]) {margin-inline-start:7px; border-inline-start:1px solid var(--eq-border); padding-inline-start:9px;}
+.eq-run-row > summary { display:flex; align-items:center; gap:8px; min-width:0; min-height:28px; padding:3px 5px; border-radius:5px; cursor:pointer; list-style:none; }
+.eq-run-row > summary::-webkit-details-marker {display:none;}
+.eq-run-row > summary:hover {background:var(--eq-active);color:var(--eq-text);}
+.eq-run-row > summary::after {content:"›"; margin-inline-start:2px; }
+.eq-run-row[open] > summary::after {transform:rotate(90deg);}
+.eq-run-row[open] > summary {color:var(--eq-text);}
+.eq-run-icon { flex:0 0 16px; text-align:center; font:600 12px ui-monospace,monospace; }
+.eq-run-label {flex:1; min-width:0; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;}
+.eq-run-status {font-size:11px;white-space:nowrap;}
+.eq-run-status[data-kind="failed"],.eq-run-status[data-kind="cancelled"] {color:light-dark(#a83a46,#ef9da7);}
+.eq-run-detail {margin:4px 0 8px 24px; padding:8px 10px; background:color-mix(in srgb,var(--eq-sidebar) 70%,var(--eq-paper)); border:1px solid var(--eq-border); border-radius:7px; min-width:0; max-width:100%;}
+.eq-run-detail-label,.eq-run-footer {font-size:11px;color:var(--eq-secondary);}
+.eq-run-detail pre {font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;max-height:320px; margin:7px 0; color:var(--eq-text);}
+.eq-run-footer {text-align:end; margin-top:6px;}
+.eq-run-group:focus-visible,.eq-run-row > summary:focus-visible {outline:2px solid var(--eq-accent);outline-offset:1px;}
+/* Clear, quiet reading line for the real per-tool MCP App fallback. */
 html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] iframe {
   max-width: 100%;
   border-radius: 8px;
@@ -1375,7 +1404,9 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     if (!isChatGPTOrigin(url)) return;
     decoratedPath = visible ? new URL(url).pathname : null;
     const update = decoratedPath === null ? null : { identity, language, accent, composition, pathname: decoratedPath };
-    const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(update) + "," + (++decorationGeneration) + ")";
+    const revision = ++decorationGeneration;
+    const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(update) + "," + revision + ");"
+      + "(" + decorateNativeToolActivity.toString() + ")(" + JSON.stringify(update && {pathname:update.pathname,language:update.language}) + "," + revision + ")";
     void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code}]).catch(() => {});
   };
   view.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {

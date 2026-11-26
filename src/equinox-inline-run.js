@@ -31,6 +31,33 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
 (function(){
  const $=id=>document.getElementById(id);
  let input=null,result=null,initialized=false,lastHeight=0,hostTheme=null,locale=null;
+ // The native desktop owns the timeline. This resource still provides the
+ // host-delivered, invocation-scoped data and ordinary Web fallback.
+ let nativeNonce=null;
+ const bounded=(v,n)=>typeof v==="string"?v.slice(0,n):"";
+ function publishNative(){
+   if(!nativeNonce||!input||typeof input.operation!=="string")return;
+   const op=input.operation, terminal=op==="terminal_exec";
+   const txt=contentText(result), p=decoded(txt);
+   const done=Boolean(result&&("isError" in result||Array.isArray(result.content)||result.structuredContent!=null||typeof result.text==="string"));
+   const exit=Number.isInteger(p?.exitCode)?p.exitCode:null;
+   const failed=Boolean(result?.isError||p?.ok===false||p?.timedOut===true||(exit!==null&&exit!==0));
+   const background=p?.promoted===true&&p?.completed===false;
+   const args=terminal?input.arguments:null;
+   const limit=24000;
+   parent.postMessage({type:"equinox-native-run/v1",nonce:nativeNonce,data:{
+     operation:bounded(op,160),command:bounded(args?.command,12000),
+     state:result?.cancelled===true?"cancelled":!done?"running":failed?"failed":background?"background":exit===0?"success":"complete",
+     exitCode:exit,durationMs:Number.isFinite(p?.durationMs)?p.durationMs:null,
+     stdout:terminal?bounded(p?.stdout,limit):"",stderr:terminal?bounded(p?.stderr,limit):"",
+     result:done&&(!terminal||!p)?bounded(txt,limit):"",
+     error:terminal?bounded(p?.spawnError,limit):"",
+     truncated:Boolean(p?.stdoutTruncated||p?.stderrTruncated||p?.combinedOutputTruncated||
+       (typeof args?.command==="string"&&args.command.length>12000)||
+       (typeof p?.stdout==="string"&&p.stdout.length>limit)||(typeof p?.stderr==="string"&&p.stderr.length>limit)||
+       ((!terminal||!p)&&txt.length>limit))
+   }},"https://chatgpt.com");
+ }
  const send=(method,params)=>parent.postMessage({jsonrpc:"2.0",method,params},"*");
  function lang(){return (locale||document.documentElement.lang||navigator.language||"en").toLowerCase().startsWith("tr")}
  const tr=(en,turkish)=>lang()?turkish:en;
@@ -109,6 +136,7 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
    }
    if(!hasResult&&!$("body").childNodes.length){const e=document.createElement("div");e.className="empty";e.textContent=tr("Waiting for the tool result…","Araç sonucu bekleniyor…");$("body").append(e)}
    size();
+   publishNative();
  }
  function legacy(){
    const o=window.openai;if(!o)return;
@@ -120,7 +148,12 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
  }
  window.addEventListener("message",event=>{
    if(event.source!==parent)return;
-   const m=event.data;if(!m||m.jsonrpc!=="2.0")return;
+   const m=event.data;
+   if(event.origin==="https://chatgpt.com"&&m?.type==="equinox-native-run/request-v1"&&
+      typeof m.nonce==="string"&&/^[a-f0-9-]{36}$/.test(m.nonce)){
+     nativeNonce=m.nonce;publishNative();return;
+   }
+   if(!m||m.jsonrpc!=="2.0")return;
    if(m.id===1&&m.result){context(m.result.hostContext);initialized=true;send("ui/notifications/initialized",{});render();return}
    if(m.method==="ui/notifications/tool-input"){input=m.params?.arguments||null;render()}
    if(m.method==="ui/notifications/tool-result"){const value=m.params?.result||m.params;result=value&&typeof value==="object"?value:null;render()}
