@@ -65,8 +65,11 @@ function permittedExternalLink(value: string): string | null {
 
 // Appearance only. These selectors use observed provider layout attributes and
 // semantic class names; no provider action is replaced or programmatically invoked.
+// The genuine Work landing can deliberately omit the Chat transcript/home
+// markers. Its recognized app shell and Composer mode still share our chrome.
+const WORKSPACE_ROOT = 'html:root:is([data-equinox-surface],[data-equinox-workspace]:where(:has([data-app-shell-frame] #app-shell-sidebar):has([aria-label="Composer mode"])))';
 const STYLE = String.raw`
-html:root[data-equinox-surface] {
+${WORKSPACE_ROOT} {
   --eq-canvas: #f8faff;
   --eq-sidebar: #f1f4fa;
   --eq-chrome: var(--eq-canvas);
@@ -106,7 +109,7 @@ html:root[data-equinox-surface] {
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  html:root[data-equinox-surface] {
+  ${WORKSPACE_ROOT} {
     --eq-canvas: #161822;
     --eq-sidebar: #1b1d29;
     --eq-chrome: #161822;
@@ -123,48 +126,48 @@ html:root[data-equinox-surface] {
     color-scheme: dark;
   }
 }
-html:root[data-equinox-surface] body { background: var(--eq-canvas) !important; color: var(--eq-text); }
-html:root[data-equinox-surface] ::selection { background: color-mix(in srgb, var(--eq-accent) 25%, transparent); }
-html:root[data-equinox-surface] :focus-visible { outline-color: var(--eq-accent); }
+${WORKSPACE_ROOT} body { background: var(--eq-canvas) !important; color: var(--eq-text); }
+${WORKSPACE_ROOT} ::selection { background: color-mix(in srgb, var(--eq-accent) 25%, transparent); }
+${WORKSPACE_ROOT} :focus-visible { outline-color: var(--eq-accent); }
 /* Keep the real search, account, projects, history, and feature actions.
    The provider's own collapse and mobile layout still decide visibility. */
-html:root[data-equinox-surface] aside[data-app-shell-left-panel-appearance] {
+${WORKSPACE_ROOT} aside[data-app-shell-left-panel-appearance] {
   background: var(--eq-sidebar) !important;
   border-inline-end: 0 !important;
 }
-html:root[data-equinox-surface] #app-shell-sidebar,
-html:root[data-equinox-surface] #app-shell-sidebar > .bg-surface { background: var(--eq-sidebar) !important; }
+${WORKSPACE_ROOT} #app-shell-sidebar,
+${WORKSPACE_ROOT} #app-shell-sidebar > .bg-surface { background: var(--eq-sidebar) !important; }
 @media (min-width: 769px) {
-  html:root[data-equinox-surface] [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] {
+  ${WORKSPACE_ROOT} [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] {
     --app-shell-left-panel-width: var(--eq-sidebar-width) !important;
   }
-  html:root[data-equinox-surface] [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] aside[data-app-shell-left-panel-appearance] > div:first-child {
+  ${WORKSPACE_ROOT} [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] aside[data-app-shell-left-panel-appearance] > div:first-child {
     width: var(--eq-sidebar-width) !important;
     min-width: var(--eq-sidebar-width) !important;
     max-width: 100% !important;
   }
 }
-html:root[data-equinox-surface] #app-shell-sidebar :is(button,a)[aria-current="page"],
-html:root[data-equinox-surface] #app-shell-sidebar :is(button,a)[data-selected] {
+${WORKSPACE_ROOT} #app-shell-sidebar :is(button,a)[aria-current="page"],
+${WORKSPACE_ROOT} #app-shell-sidebar :is(button,a)[data-selected] {
   background-color: var(--eq-active) !important;
 }
-html:root[data-equinox-surface] #app-shell-sidebar :is(button,a) { border-radius: 7px; }
+${WORKSPACE_ROOT} #app-shell-sidebar :is(button,a) { border-radius: 7px; }
 /* Accounts with the provider's feature rail get the same single Equinox rail
    beside a conversation sidebar. Reflow the genuine feature buttons and the
    account controls inside the expanded sidebar. Collapsed/mobile layouts and
    any unrecognized provider structure keep the original provider layout. */
 @media (min-width: 769px) {
-  html:root[data-equinox-surface] [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) {
+  ${WORKSPACE_ROOT} [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) {
     --app-shell-left-panel-width: var(--eq-sidebar-width) !important;
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div:has(> nav[data-app-navigation-rail]):has(> .sidebar-navigation) {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div:has(> nav[data-app-navigation-rail]):has(> .sidebar-navigation) {
     position: relative;
     flex-direction: column !important;
     padding-bottom: 42px;
     min-height: 0;
     background: var(--eq-sidebar);
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > nav[data-app-navigation-rail] {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > nav[data-app-navigation-rail] {
     flex: 0 0 auto !important;
     width: 100% !important;
     min-width: 0;
@@ -172,7 +175,7 @@ html:root[data-equinox-surface] #app-shell-sidebar :is(button,a) { border-radius
     padding: 5px 10px !important;
     border-bottom: 0;
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] {
     flex: 0 0 auto !important;
     flex-direction: row !important;
     flex-wrap: wrap;
@@ -185,26 +188,26 @@ html:root[data-equinox-surface] #app-shell-sidebar :is(button,a) { border-radius
     mask-image: none !important;
     padding: 0 !important;
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div:not([data-appearance]) { width: auto !important; }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > [data-appearance="plain"] {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div:not([data-appearance]) { width: auto !important; }
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > [data-appearance="plain"] {
     flex-direction: row !important;
     flex-wrap: wrap;
     gap: 3px !important;
     width: auto !important;
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] button {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] button {
     width: 30px !important;
     height: 32px !important;
     flex: 0 0 30px !important;
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div.border-t {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div.border-t {
     width: 1px !important;
     height: 18px;
     margin: 0 1px !important;
     border-top: 0;
     border-inline-start: 1px solid var(--eq-border);
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child {
     position: absolute !important;
     inset-inline: 0;
     bottom: 0;
@@ -215,23 +218,23 @@ html:root[data-equinox-surface] #app-shell-sidebar :is(button,a) { border-radius
     background: var(--eq-sidebar);
     z-index: 2;
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div {
     flex-direction: row !important;
     justify-content: space-between;
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div > div { width: auto !important; }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > .sidebar-navigation {
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div > div { width: auto !important; }
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > .sidebar-navigation {
     border-radius: 0 !important;
     background: var(--eq-sidebar) !important;
   }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child { width: var(--eq-sidebar-width) !important; min-width: var(--eq-sidebar-width) !important; max-width: 100% !important; }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
-  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child > div:has(> #app-shell-sidebar) { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child { width: var(--eq-sidebar-width) !important; min-width: var(--eq-sidebar-width) !important; max-width: 100% !important; }
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  ${WORKSPACE_ROOT} :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child > div:has(> #app-shell-sidebar) { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
 }
 /* Task-oriented workspace, not a second renderer of the provider conversation.
    The actual conversation tree, menus, streaming and message actions stay intact.
    The native application header above this view owns the Equinox branding. */
-html:root[data-equinox-surface] main[data-app-shell-main-surface] {
+${WORKSPACE_ROOT} [data-app-shell-main-surface] {
   --thread-content-max-width: 48rem !important;
   --thread-content-compact-max-width: 48rem !important;
   --thread-content-expanded-max-width: 52rem !important;
@@ -240,13 +243,13 @@ html:root[data-equinox-surface] main[data-app-shell-main-surface] {
   --app-shell-main-content-border-width: 0px !important;
   background: var(--eq-canvas) !important;
 }
-html:root[data-equinox-surface] [data-app-shell-titlebar] {
+${WORKSPACE_ROOT} [data-app-shell-titlebar] {
   background: var(--eq-chrome);
   border-block-end: 0 !important;
 }
 /* The genuine home mode control belongs to the main reader, not its center
    or the conversation sidebar. Keep the provider's own checked states. */
-html:root[data-equinox-surface="home"] [aria-label="Composer mode"] {
+${WORKSPACE_ROOT} [aria-label="Composer mode"] {
   position: fixed !important;
   inset-inline-start: max(58px, calc(var(--app-shell-left-panel-width, 0px) + 16px)) !important;
   inset-inline-end: auto !important;
@@ -259,7 +262,7 @@ html:root[data-equinox-surface="home"] [aria-label="Composer mode"] {
   pointer-events: auto;
   z-index: 31;
 }
-html:root[data-equinox-surface="home"] [aria-label="Composer mode"] :is(button,[role="checkbox"],[role="radio"]) {
+${WORKSPACE_ROOT} [aria-label="Composer mode"] :is(button,[role="checkbox"],[role="radio"]) {
   width: auto !important;
   min-width: 0 !important;
   min-height: 28px !important;
@@ -268,53 +271,53 @@ html:root[data-equinox-surface="home"] [aria-label="Composer mode"] :is(button,[
   font-size: 13px !important;
   flex: 0 0 auto !important;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation {
   --height-token-row: 30px;
   --height-token-nav-row: 30px;
   background: var(--eq-sidebar) !important;
   font-size: 14px;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation nav {
   padding-inline: 10px;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation a[href="/"] > span {
   position: relative;
   font-size: 0 !important;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span > span:has(> svg):not(:has(button,a,input)) {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation a[href="/"] > span > span:has(> svg):not(:has(button,a,input)) {
   position: absolute !important;
   width: 1px !important;
   height: 1px !important;
   overflow: hidden !important;
   clip-path: inset(50%) !important;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
   content: "Conversations";
   font-size: 14px;
   letter-spacing: -.02em;
   font-weight: 670;
 }
-html:root[data-equinox-surface]:lang(tr) #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
+${WORKSPACE_ROOT}:lang(tr) #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
   content: "Sohbetler";
 }
 /* The provider uses outer interactive rows plus nested title links.
    Apply typography at the same level for conversations and projects;
    never add padding to a nested conversation link. */
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation :is(.sidebar-item,[data-thread-title-trigger],[data-thread-title],a[href*="/c/"],a[href*="/g/"]) {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation :is(.sidebar-item,[data-thread-title-trigger],[data-thread-title],a[href*="/c/"],a[href*="/g/"]) {
   font-size: 14px !important;
   line-height: 20px !important;
   letter-spacing: normal;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation :is(.sidebar-item,[data-thread-title-trigger],a[href*="/g/"]) :is([class~="text-base"],[class~="text-sm"],[data-marquee-content]) {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation :is(.sidebar-item,[data-thread-title-trigger],a[href*="/g/"]) :is([class~="text-base"],[class~="text-sm"],[data-marquee-content]) {
   font-size: inherit !important;
   line-height: inherit;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation [data-thread-title-trigger] a[href*="/c/"] {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation [data-thread-title-trigger] a[href*="/c/"] {
   padding-inline: 0 !important;
   min-height: 0;
   align-items: center;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation [data-sidebar-archive-chatgpt-id] {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation [data-sidebar-archive-chatgpt-id] {
   min-height: 32px;
 }
 html:root[data-equinox-surface] :is([data-markdown-text-style="assistant-message"],[data-virtualized-turn-content] .markdown) {
@@ -571,13 +574,15 @@ html:root[data-equinox-surface="home"][data-equinox-home-style="type"] [data-equ
   html:root[data-equinox-surface="home"] [data-equinox-greeting]::after { font-size: clamp(25px, 3.5vw, 42px); }
 }
 /* The existing turn wrappers carry the original provider messages and activity. */
+html:root[data-equinox-surface="thread"] {
+  --eq-avatar-size: 42px;
+  --eq-author-offset: 56px;
+}
 html:root[data-equinox-surface="thread"] [data-equinox-role] {
   position: relative;
   box-sizing: border-box;
   min-width: 0;
-  --eq-avatar-size: 42px;
-  --eq-author-offset: 56px;
-  margin-block: 12px 20px;
+  margin-block: 4px 8px;
   padding-block-start: 32px !important;
   width: 100%;
   max-width: 100%;
@@ -720,25 +725,33 @@ html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-m
   overflow: hidden;
 }
 
+/* The provider puts assistant actions beside the response block, not inside
+   it. Align that genuine row with the response card and preserve its controls. */
+html:root[data-equinox-surface="thread"] [data-talvt-turn-state]:has([data-equinox-role="assistant"]) > .turn-action-controls {
+  margin-inline-start: var(--eq-author-offset) !important;
+  margin-block-start: 4px !important;
+  transform: none !important;
+  translate: none !important;
+}
 /* Clear, quiet reading line for the real per-tool MCP App card. */
 html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] iframe {
   max-width: 100%;
   border-radius: 8px;
 }
-html:root[data-equinox-surface] #app-shell-sidebar :is(a,button):hover {
+${WORKSPACE_ROOT} #app-shell-sidebar :is(a,button):hover {
   background-color: color-mix(in srgb, var(--eq-accent) 7%, var(--eq-sidebar));
 }
-html:root[data-equinox-surface] #app-shell-sidebar :is(a,button)[aria-current="page"] {
+${WORKSPACE_ROOT} #app-shell-sidebar :is(a,button)[aria-current="page"] {
   color: var(--eq-text) !important;
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation [role="heading"] {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation [role="heading"] {
   margin-block: 12px 4px;
   font-size: 11px;
   font-weight: 650;
   letter-spacing: .02em;
   color: var(--eq-secondary);
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav :is(a,button):focus-visible {
+${WORKSPACE_ROOT} #app-shell-sidebar .sidebar-navigation nav :is(a,button):focus-visible {
   outline: 2px solid var(--eq-accent);
   outline-offset: -1px;
 }
@@ -746,7 +759,7 @@ html:root[data-equinox-surface] form[data-chatgpt-composer]:focus-within [class*
   border-color: color-mix(in srgb, var(--eq-accent) 58%, var(--eq-border)) !important;
 }
 @media (max-width: 700px) {
-  html:root[data-equinox-surface="thread"] [data-equinox-role] { --eq-avatar-size: 36px; --eq-author-offset: 47px; }
+  html:root[data-equinox-surface="thread"] { --eq-avatar-size: 36px; --eq-author-offset: 47px; }
 }
 /* Home suggestions remain real, selectable provider controls. Compact
    only the ordinary small button lists below the composer; never restyle
@@ -828,10 +841,20 @@ function decorateProviderIdentity(update: {
   world.__equinoxDecoration?.dispose();
   const decoration = { generation, pathname: update?.pathname, dispose: () => {} };
   world.__equinoxDecoration = decoration;
-  if (!update || (!homeRoute && !threadRoute)) return;
+  if (!update) return;
+  // Theme the verified provider shell independently of speaker/greeting
+  // decoration, including Work's genuine alternate landing page.
+  root.setAttribute("data-equinox-workspace", "");
+  root.style.setProperty("--eq-user-accent", update.accent);
+  const clearWorkspace = () => {
+    root.removeAttribute("data-equinox-workspace");
+    root.style.removeProperty("--eq-user-accent");
+  };
+  decoration.dispose = clearWorkspace;
+  if (!homeRoute && !threadRoute) return;
 
   const options = update;
-  const { identity, language, accent, composition, pathname } = options;
+  const { identity, language, composition, pathname } = options;
   const agent = identity.name.trim();
   const human = language === "tr" ? "Sen" : "You";
   const agentInitial = Array.from(agent || "E")[0]?.toLocaleUpperCase(language) ?? "E";
@@ -1143,7 +1166,6 @@ function decorateProviderIdentity(update: {
     }
   }
 
-  root.style.setProperty("--eq-user-accent", accent);
   root.style.setProperty("--eq-agent-avatar", agentImage);
   root.setAttribute("data-equinox-agent-photo", String(agentImage !== "none"));
   root.setAttribute("data-equinox-home-style", composition);
@@ -1153,7 +1175,8 @@ function decorateProviderIdentity(update: {
     for (const timer of homeRetries) window.clearTimeout(timer);
     for (const element of marks) clearMark(element);
     for (const name of ["surface", "home-style", "agent-photo", "human-photo"]) root.removeAttribute("data-equinox-" + name);
-    for (const name of ["user-accent", "agent-avatar", "human-avatar"]) root.style.removeProperty("--eq-" + name);
+    clearWorkspace();
+    for (const name of ["agent-avatar", "human-avatar"]) root.style.removeProperty("--eq-" + name);
   };
   flush();
   if (homeRoute && !greeting) {
