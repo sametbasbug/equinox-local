@@ -946,11 +946,13 @@
             <div><dt>Vault binding</dt><dd id="brain-diag-binding">—</dd></div>
             <div><dt>Local index</dt><dd id="brain-diag-index">—</dd></div>
             <div><dt>Shared preferences</dt><dd id="brain-diag-preferences">—</dd></div>
-            <div><dt>Last automatic refresh</dt><dd id="brain-diag-lifecycle">—</dd></div>
+            <div><dt>Last Assistant refresh</dt><dd id="brain-diag-lifecycle">—</dd></div>
+            <div><dt>Last Your Browser refresh</dt><dd id="brain-diag-browser-lifecycle">—</dd></div>
           </dl>
           <p class="panel-note">For a different upstream version, use its official upgrade instructions, then reconnect. Equinox Local never silently upgrades a shared vault.</p>
           <div class="brain-access-panel"><div><h4>Native Assistant index refresh</h4><p>Prepare the local index when a new generation is observed in Assistant, respecting the shared profile. No prompt or transcript is collected and no memory is inserted automatically.</p></div><button id="brain-lifecycle" class="button secondary" type="button" disabled>Enable automatic refresh</button></div>
-          <p class="card-copy">Use brain_context to request profile-aware memory context. ChatGPT does not expose a native system hook; context delivery still requires a memory tool invocation.</p>
+          <div class="brain-access-panel"><div><h4>Your Browser index refresh</h4><p>Use Equinox Browser's existing ChatGPT turn observer in Your Browser to prepare the local index. Respects pinned conversations and the shared profile; never observes Agent Browser as a fallback or inserts memory automatically.</p></div><button id="brain-browser-lifecycle" class="button secondary" type="button" disabled>Enable automatic refresh</button></div>
+          <p class="card-copy">Use brain_context to request profile-aware memory context, or review and insert selected sources in Assistant. ChatGPT does not expose a native system hook.</p>
           <div class="brain-settings-actions"><button class="button secondary" type="button" data-jump-section="plugins">Back to Plugins</button><button id="brain-open-vault" class="button secondary" type="button">Open vault</button><button id="brain-disconnect" class="button secondary" type="button" disabled>Disconnect</button></div>
           <p class="panel-note">Disconnecting preserves your vault and existing agent integrations.</p>
         </article>

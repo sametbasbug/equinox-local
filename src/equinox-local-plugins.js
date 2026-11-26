@@ -38,7 +38,7 @@ async function inspectVault(vault) {
 }
 export function createPluginCatalog(stateRoot) {
     const file = path.join(stateRoot, "plugins.json");
-    let lastLifecycle = null;
+    const lastLifecycle = { native: null, user: null };
     async function read() {
         const security = await inspectPrivateStatePath(file, { type: "file", mode: "600", verifyWindowsAcl: verifyWindowsPrivateStateAcl });
         if (security.reason === "missing")
@@ -53,7 +53,7 @@ export function createPluginCatalog(stateRoot) {
             throw invalid("Plugin settings are invalid.");
         if (parsed.brain && (parsed.brain.writeEnabled !== undefined && typeof parsed.brain.writeEnabled !== "boolean" || parsed.brain.writeEnabled === true && !parsed.brain.searchEnabled))
             throw invalid("Plugin settings are invalid.");
-        if (parsed.brain && (parsed.brain.lifecycleEnabled !== undefined && typeof parsed.brain.lifecycleEnabled !== "boolean" || parsed.brain.lifecycleEnabled === true && !parsed.brain.searchEnabled))
+        if (parsed.brain && [parsed.brain.lifecycleEnabled, parsed.brain.browserLifecycleEnabled].some(value => value !== undefined && (typeof value !== "boolean" || value === true && !parsed.brain.searchEnabled)))
             throw invalid("Plugin settings are invalid.");
         return parsed.brain;
     }
@@ -74,7 +74,7 @@ export function createPluginCatalog(stateRoot) {
         const brain = await read();
         if (!brain)
             return { brain: null, offeredVersion: BRAIN_RELEASE.version };
-        const base = { vault: brain.vault, version: brain.version, searchEnabled: brain.searchEnabled === true, writeEnabled: brain.writeEnabled === true, lifecycleEnabled: brain.lifecycleEnabled === true };
+        const base = { vault: brain.vault, version: brain.version, searchEnabled: brain.searchEnabled === true, writeEnabled: brain.writeEnabled === true, lifecycleEnabled: brain.lifecycleEnabled === true, browserLifecycleEnabled: brain.browserLifecycleEnabled === true };
         try {
             const actual = await inspectVault(brain.vault);
             return { brain: { ...base, version: actual.version, available: true, searchCompatible: actual.version === BRAIN_RELEASE.version && (!brain.searchEnabled || actual.indexState === brain.indexState) }, offeredVersion: BRAIN_RELEASE.version };
@@ -121,6 +121,8 @@ export function createPluginCatalog(stateRoot) {
                 throw invalid("Connect a memory vault first.");
             if (!enabled) {
                 await save({ vault: brain.vault, version: brain.version, searchEnabled: false });
+                lastLifecycle.native = null;
+                lastLifecycle.user = null;
                 return status();
             }
             const connection = await engineConnection(brain);
@@ -141,28 +143,31 @@ export function createPluginCatalog(stateRoot) {
                 await engineConnection(brain);
             await save({ ...brain, writeEnabled: enabled });
             return status();
-        }, async setLifecycleEnabled(enabled) {
-            if (typeof enabled !== "boolean")
-                throw invalid("Choose whether native memory assistance is enabled.");
+        }, async setLifecycleEnabled(enabled, scope = "native") {
+            if (typeof enabled !== "boolean" || !["native", "user"].includes(scope))
+                throw invalid("Choose whether memory refresh is enabled.");
             const brain = await read();
             if (!brain?.searchEnabled)
                 throw invalid("Enable agent memory search first.");
             if (enabled)
                 await engineConnection(brain);
-            await save({ ...brain, lifecycleEnabled: enabled });
-            lastLifecycle = null;
+            const key = scope === "native" ? "lifecycleEnabled" : "browserLifecycleEnabled";
+            await save({ ...brain, [key]: enabled });
+            lastLifecycle[scope] = null;
             return status();
-        }, async lifecycleSync(event) {
+        }, async lifecycleSync(event, scope = "native") {
+            if (!["native", "user"].includes(scope))
+                throw invalid("Invalid memory refresh scope.");
             const brain = await read();
-            if (!brain?.searchEnabled || !brain.lifecycleEnabled)
+            if (!brain?.searchEnabled || !(scope === "native" ? brain.lifecycleEnabled : brain.browserLifecycleEnabled))
                 return { status: "disabled" };
             try {
                 const result = await runBrainMemory(stateRoot, { action: "lifecycle_sync", ...await engineConnection(brain), event });
-                lastLifecycle = { status: ["succeeded", "degraded", "skipped"].includes(result.status) ? result.status : "attention", at: new Date().toISOString() };
+                lastLifecycle[scope] = { status: ["succeeded", "degraded", "skipped"].includes(result.status) ? result.status : "attention", at: new Date().toISOString() };
                 return result;
             }
             catch (error) {
-                lastLifecycle = { status: "attention", at: new Date().toISOString() };
+                lastLifecycle[scope] = { status: "attention", at: new Date().toISOString() };
                 throw error;
             }
         }, async sync() {
@@ -225,7 +230,7 @@ export function createPluginCatalog(stateRoot) {
                     preferences = "attention";
                 }
             }
-            return { plugins, diagnostics: { ...engine, binding, index, preferences, lastLifecycle: brain.lifecycleEnabled ? lastLifecycle : null, reviewedVersion: BRAIN_RELEASE.version, versionStatus: !plugins.brain?.available ? "unavailable" : plugins.brain.version === BRAIN_RELEASE.version ? "supported" : "unsupported" } };
+            return { plugins, diagnostics: { ...engine, binding, index, preferences, lastLifecycle: brain.lifecycleEnabled ? lastLifecycle.native : null, lastBrowserLifecycle: brain.browserLifecycleEnabled ? lastLifecycle.user : null, reviewedVersion: BRAIN_RELEASE.version, versionStatus: !plugins.brain?.available ? "unavailable" : plugins.brain.version === BRAIN_RELEASE.version ? "supported" : "unsupported" } };
         }, async preferences(profile) {
             const brain = await read();
             if (!brain)
@@ -257,5 +262,5 @@ export function createPluginCatalog(stateRoot) {
             if (action === "receipt" && key(input.key) && text(input.summary, 4000) && Array.isArray(input.refs) && input.refs.length >= 1 && input.refs.length <= 10 && input.refs.every(ref => text(ref, 200)) && new Set(input.refs).size === input.refs.length)
                 return runBrainMemory(stateRoot, { ...connection, action, key: input.key, summary: input.summary, refs: input.refs, ...scoped });
             throw invalid("Invalid bounded Brain workflow request.");
-        }, async disconnect() { await save(null); lastLifecycle = null; return status(); } };
+        }, async disconnect() { await save(null); lastLifecycle.native = null; lastLifecycle.user = null; return status(); } };
 }
