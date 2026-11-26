@@ -17,6 +17,7 @@ const NAVIGATION_SHORTCUTS = Object.freeze({
 });
 const SUPPORTED_THEMES = new Set(["system", "light", "dark"]);
 const systemThemeMedia = window.matchMedia("(prefers-color-scheme: dark)");
+const compactTaskMedia = window.matchMedia("(max-width: 1000px)");
 const EQUINOX_BROWSER_STORE_URL = "https://chromewebstore.google.com/detail/equinox-browser/npdneefcobilfkjlihghjgjnknenhfoj";
 function isAbsoluteLocalFolderPath(value) {
     if (typeof value !== "string" || !value || value.length > 1024)
@@ -176,6 +177,7 @@ const state = {
     httpProfileBusy: false,
     httpProfileTestResults: {},
     browserDraft: null,
+    browserDraftBaseline: null,
     browserSettingsTarget: "user",
     browserSettingsDirty: false,
     browserSettingsBusy: false,
@@ -211,9 +213,9 @@ const DYNAMIC_TEXT_IDS = new Set([
     "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "section-summary", "last-refreshed",
     "chat-identity-feedback", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
     "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
-    "runtime-health-badge", "overview-title", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
+    "runtime-health-badge", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
     "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
-    "default-project", "health-summary-title", "health-summary-badge", "health-summary-copy", "health-event-count",
+    "default-project", "health-event-count",
     "health-evaluated-at", "doctor-title", "doctor-badge", "doctor-copy", "doctor-list", "doctor-summary",
     "doctor-checked-at", "doctor-fix-title", "doctor-fix-summary", "doctor-fix-copy", "doctor-repair-list", "doctor-repair-result", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
     "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries",
@@ -222,6 +224,7 @@ const DYNAMIC_TEXT_IDS = new Set([
     "save-config-button", "agent-browser-page-badge", "agent-browser-page-version", "agent-browser-connected-at",
     "agent-browser-control-state", "open-agent-browser-button", "agent-browser-note", "browser-page-badge", "browser-page-version", "browser-connected-at",
     "browser-control-state", "apply-browser-settings", "browser-settings-note", "permissions-list", "agent-access-badge",
+    "draft-dialog-copy", "draft-dialog-save", "task-draft-note", "chat-provider-status",
     "agent-control-badge", "agent-control-copy", "active-terminal-count", "active-process-count", "active-work-count",
     "turn-budget-badge", "turn-budget-copy", "turn-budget-elapsed", "turn-budget-remaining", "turn-budget-stage", "turn-budget-fallback-reset", "auto-continue-max-hops", "save-turn-budget-button",
     "local-execution-badge", "save-agent-access-button", "uninstall-badge",
@@ -254,6 +257,7 @@ function captureStaticTranslatables() {
 function applyStaticLanguage() {
     document.documentElement.lang = state.language;
     document.title = localizeUiText("Equinox Local Control Center");
+    renderChatLoadState();
     for (const entry of staticTextEntries) {
         const leading = entry.source.match(/^\s*/u)?.[0] || "";
         const trailing = entry.source.match(/\s*$/u)?.[0] || "";
@@ -318,7 +322,7 @@ const sections = {
         title: "Browser",
         summary: "Manage the agent’s isolated browser and your personal Chrome separately.",
     },
-    chat: { title: "Chat" },
+    chat: { title: "Assistant" },
     permissions: {
         title: "Safety & access",
         summary: "Review active work and decide what the agent can access.",
@@ -416,6 +420,17 @@ function clearError() {
     $("error-banner").hidden = true;
     setText("error-message", "");
 }
+function chooseDraftAction(message, saveLabel, canSave) {
+    const dialog = $("draft-dialog");
+    if (dialog.open)
+        return Promise.resolve("stay");
+    setText("draft-dialog-copy", message);
+    setText("draft-dialog-save", saveLabel);
+    $("draft-dialog-save").hidden = !canSave;
+    dialog.returnValue = "stay";
+    dialog.showModal();
+    return new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue), { once: true }));
+}
 function showToast(message) {
     const toast = $("toast");
     toast.textContent = localizeUiText(message);
@@ -474,7 +489,17 @@ function setConfigEditingEnabled(enabled) {
 }
 // Keep the native view aligned with this document's actual host rectangle.
 // Local modal dialogs must never be covered by the remote child view.
-let lastEmbeddedLayout = "";
+let lastEmbeddedLayout = "null";
+let chatStatusRevision = 0;
+let chatLoadState = "loading";
+function renderChatLoadState(value = chatLoadState) {
+    chatLoadState = value;
+    $("chat-provider-fallback").hidden = value === "ready";
+    $("chat-provider-retry").hidden = value !== "offline" && value !== "failed";
+    setText("chat-provider-status", value === "offline"
+        ? "The computer appears to be offline. Check your network connection and try again."
+        : value === "failed" ? "ChatGPT could not be opened." : "Loading ChatGPT…");
+}
 function syncEmbeddedChatLayout() {
     const bridge = window.equinoxShell?.setEmbeddedChatBounds;
     if (!bridge)
@@ -487,13 +512,29 @@ function syncEmbeddedChatLayout() {
     if (key === lastEmbeddedLayout)
         return;
     lastEmbeddedLayout = key;
-    void bridge(bounds).catch(() => {
-        if (lastEmbeddedLayout === key)
-            lastEmbeddedLayout = "";
-        setText("chat-provider-status", "ChatGPT could not be opened.");
+    const revision = chatStatusRevision;
+    void bridge(bounds).then(value => {
+        if (value && lastEmbeddedLayout === key && revision === chatStatusRevision)
+            renderChatLoadState(value);
+    }).catch(() => {
+        if (lastEmbeddedLayout !== key)
+            return;
+        lastEmbeddedLayout = "";
+        if (bounds)
+            renderChatLoadState("failed");
     });
 }
 function bindEmbeddedChatLayout() {
+    const unsubscribeStatus = window.equinoxShell?.onEmbeddedChatStatus(value => {
+        chatStatusRevision += 1;
+        renderChatLoadState(value);
+    });
+    $("chat-provider-retry").addEventListener("click", () => {
+        if (lastEmbeddedLayout)
+            void window.equinoxShell?.retryEmbeddedChat().catch(() => renderChatLoadState("failed"));
+        else
+            syncEmbeddedChatLayout();
+    });
     const observer = new ResizeObserver(syncEmbeddedChatLayout);
     observer.observe($("chat-provider-host"));
     observer.observe($("main-content"));
@@ -506,7 +547,7 @@ function bindEmbeddedChatLayout() {
     window.addEventListener("pagehide", () => {
         observer.disconnect();
         visibility.disconnect();
-        void window.equinoxShell?.setEmbeddedChatBounds(null).catch(() => { });
+        unsubscribeStatus?.();
     }, { once: true });
 }
 let lastLocalSection = "dashboard";
@@ -590,24 +631,16 @@ function renderDashboard() {
     const peekaboo = status.peekaboo || {};
     const controlCenter = state.health?.controlCenter || {};
     const configStatus = status.config || {};
-    setBadge("runtime-health-badge", runtimeHealth === "UNKNOWN" ? "Health unavailable" : runtimeHealth, runtimeTone);
-    if (runtimeHealth === "HEALTHY") {
-        setText("overview-title", "Your computer is ready");
-        setText("overview-copy", "Local tools are ready. Work with your agent in Chat or in your browser; its connected tools run here on your computer.");
-    }
-    else if (runtimeHealth === "UNKNOWN") {
-        setText("overview-title", "Status is still loading");
-        setText("overview-copy", "The local API is reachable, but the runtime summary is not complete yet.");
-    }
-    else {
-        setText("overview-title", "Some parts need your attention");
-        setText("overview-copy", "Review the highlighted status below before starting important agent work.");
-    }
     const paused = status.agentControl?.paused === true || status.agentControl?.state === "PAUSED";
-    if (paused) {
-        setText("overview-title", "Your agent is paused");
-        setText("overview-copy", "Local stays connected for read-only status. Resume when you are ready; stopped work will not restart on its own.");
-    }
+    const runtimeIssue = Boolean(state.status) && runtimeHealth !== "HEALTHY";
+    setBadge("runtime-health-badge", runtimeHealth === "UNKNOWN" ? "Health unavailable" : runtimeHealth, runtimeTone);
+    $("overview-attention").hidden = !paused && !runtimeIssue;
+    $("overview-safety").hidden = !paused;
+    $("overview-runtime-diagnostics").hidden = !runtimeIssue;
+    setText("overview-copy", paused
+        ? "Local stays connected for read-only status. Resume when you are ready; stopped work will not restart on its own."
+        : runtimeHealth === "UNKNOWN" ? "The runtime has not reported its health yet."
+            : "Review the recent runtime events or run a full check.");
     const onboarding = state.onboarding;
     const connection = status.chatgptConnection || null;
     const connectionAvailable = connection?.available === true || (!connection && onboarding?.available === true);
@@ -625,7 +658,7 @@ function renderDashboard() {
                 ? (connection?.mode === "source" ? "MCP runtime connected" : "ChatGPT connected")
                 : "ChatGPT not connected";
     setBadge("chatgpt-connection-badge", connectionLabel, !connectionAvailable ? "neutral" : connectionNeedsAttention ? "warn" : connectionConnected ? "good" : "neutral");
-    setBadge("health-summary-badge", runtimeHealth === "UNKNOWN" ? "Unknown" : runtimeHealth, runtimeTone);
+    $("overview-connection-diagnostics").hidden = !connectionAvailable || (connectionConnected && !connectionNeedsAttention);
     setText("runtime-uptime", formatUptime(status.server?.uptimeSeconds));
     const channel = state.update || {};
     const onMain = (["source", "managed-source"].includes(channel.installationKind) || (channel.installationKind === "managed-main" && channel.main?.mode === "signed-native")) && channel.main?.checkSupported === true;
@@ -672,19 +705,6 @@ function renderDashboard() {
     setText("project-count", String(configStatus.projectCount ?? Object.keys(state.config?.projects || {}).length));
     setText("folder-count", String(Object.keys(state.config?.fileRoots || {}).length));
     setText("default-project", state.config?.defaultProject || configStatus.defaultProject || "—");
-    if (runtimeHealth === "HEALTHY") {
-        setText("health-summary-title", "Everything looks healthy");
-        setText("health-summary-copy", "The bounded runtime health window has no unresolved warnings that need your attention.");
-    }
-    else if (runtimeHealth === "UNKNOWN") {
-        setText("health-summary-title", "Runtime health is unavailable");
-        setText("health-summary-copy", "The management API is reachable, but no runtime health summary was returned.");
-    }
-    else {
-        const count = Number(healthSummary.reasonCount || 0);
-        setText("health-summary-title", `${count || "Some"} item${count === 1 ? "" : "s"} may need attention`);
-        setText("health-summary-copy", "Open the diagnostics tools for detail. The Control Center summary intentionally avoids exposing raw runtime logs.");
-    }
     setText("health-event-count", `${healthSummary.recentEventCount ?? 0} recent events`);
     setText("health-evaluated-at", healthSummary.evaluatedAt ? `Evaluated ${formatDate(healthSummary.evaluatedAt)}` : "Not evaluated yet");
 }
@@ -2021,13 +2041,15 @@ function browserContextStatus(target) {
 }
 function browserSettingsFromStatus(target = state.browserSettingsTarget) {
     const browser = browserContextStatus(target);
-    if (typeof browser.controlEnabled !== "boolean" ||
+    if (typeof browser.settingsConnectionId !== "string" ||
+        typeof browser.controlEnabled !== "boolean" ||
         typeof browser.agentCursorEnabled !== "boolean" ||
         typeof browser.agentCursorName !== "string") {
         return null;
     }
     return {
         context: target,
+        expectedConnectionId: browser.settingsConnectionId,
         enabled: browser.controlEnabled,
         agentCursorEnabled: browser.agentCursorEnabled,
         agentCursorName: browser.agentCursorName,
@@ -2088,7 +2110,8 @@ function renderBrowserPage() {
     const baseline = browserSettingsFromStatus(state.browserSettingsTarget);
     if (!state.browserSettingsDirty)
         state.browserDraft = baseline ? { ...baseline } : null;
-    const available = Boolean(selected.ready && baseline && state.browserDraft);
+    const sameConnection = baseline && state.browserDraft?.expectedConnectionId === baseline.expectedConnectionId;
+    const available = Boolean(selected.ready && sameConnection);
     const disabled = !available || state.browserSettingsBusy;
     const targetSelect = $("browser-settings-target");
     const controlToggle = $("browser-control-toggle");
@@ -2099,11 +2122,12 @@ function renderBrowserPage() {
     targetSelect.disabled = state.browserSettingsBusy;
     controlToggle.disabled = disabled || selectedView.consentRequired;
     cursorToggle.disabled = disabled;
-    nameInput.disabled = disabled;
+    nameInput.readOnly = disabled;
     if (state.browserDraft) {
         controlToggle.checked = state.browserDraft.enabled;
         cursorToggle.checked = state.browserDraft.agentCursorEnabled;
-        nameInput.value = state.browserDraft.agentCursorName;
+        if (nameInput.value !== state.browserDraft.agentCursorName)
+            nameInput.value = state.browserDraft.agentCursorName;
     }
     else {
         controlToggle.checked = false;
@@ -2111,16 +2135,22 @@ function renderBrowserPage() {
         nameInput.value = "";
     }
     applyButton.disabled = disabled || !state.browserSettingsDirty;
-    applyButton.textContent = localizeUiText(state.browserSettingsBusy ? "Applying…" : "Apply browser settings");
-    setText("browser-settings-note", selectedView.consentRequired
-        ? "Open the Equinox Browser popup in the selected profile, review the data-use disclosure, and enable browser control there."
-        : available
-            ? "Settings apply immediately through Native Messaging and do not require an Equinox Local restart."
-            : state.browserSettingsTarget === "agent"
-                ? (manager.setupComplete
-                    ? "Open Agent Browser to manage settings for the already configured isolated profile."
-                    : "Open Agent Browser and install Equinox Browser in that isolated profile to manage its settings.")
-                : "Connect Equinox Browser in Your Browser to manage its settings from Control Center.");
+    applyButton.textContent = localizeUiText(state.browserSettingsBusy ? "Applying…"
+        : state.browserSettingsTarget === "agent" ? "Apply to Agent Browser" : "Apply to Your Browser");
+    $("discard-browser-draft").hidden = !state.browserSettingsDirty;
+    $("discard-browser-draft").disabled = state.browserSettingsBusy;
+    setText("browser-settings-note", state.browserSettingsDirty && !available
+        ? (baseline ? "The browser connection changed. Your draft is held here and cannot be applied to the new connection."
+            : "The browser disconnected. Your draft is still here.")
+        : selectedView.consentRequired
+            ? "Open the Equinox Browser popup in the selected profile, review the data-use disclosure, and enable browser control there."
+            : available
+                ? "Settings apply immediately through Native Messaging and do not require an Equinox Local restart."
+                : state.browserSettingsTarget === "agent"
+                    ? (manager.setupComplete
+                        ? "Open Agent Browser to manage settings for the already configured isolated profile."
+                        : "Open Agent Browser and install Equinox Browser in that isolated profile to manage its settings.")
+                    : "Connect Equinox Browser in Your Browser to manage its settings from Control Center.");
 }
 function activityTone(event) {
     if (event?.severity === "critical" || event?.severity === "error")
@@ -2283,7 +2313,8 @@ function renderRuntimeRestartControl() {
     if (!button)
         return;
     button.disabled = state.restartBusy || state.turnBudgetBusy || !state.status?.server?.pid;
-    button.textContent = localizeUiText(state.restartBusy ? "Restarting…" : "Restart");
+    button.textContent = localizeUiText(state.restartBusy ? "Restarting…"
+        : state.turnBudgetDirty ? "Save Turn Budget and restart" : "Restart runtime");
 }
 function taskStatusPresentation(status) {
     if (status === "active")
@@ -2395,96 +2426,114 @@ function replaceTaskInState(task) {
     state.taskDraft = clone(task);
     state.taskDraftDirty = false;
 }
+function currentTaskRecord() {
+    return state.tasks.find((task) => task.taskId === state.selectedTaskId);
+}
+function showTaskDetail(open) {
+    $("tasks-workspace").classList.toggle("shows-task-detail", open);
+    if (!compactTaskMedia.matches || state.activeSection !== "tasks")
+        return;
+    if (open)
+        $("task-detail-title").focus();
+    else {
+        const list = $("task-list");
+        (list.querySelector('[aria-pressed="true"]') ?? list.querySelector("button"))?.focus();
+    }
+}
+let taskListKey = "";
 function renderTasks() {
     const list = $("task-list");
     if (!list)
         return;
-    const focused = document.activeElement;
-    const focusedTaskId = focused instanceof HTMLButtonElement && list.contains(focused) ? focused.dataset.taskId : undefined;
-    const scrollTop = list.scrollTop;
-    const hasTasks = state.tasks.length > 0;
-    list.replaceChildren();
+    const hasTasks = state.tasks.length > 0 || state.taskDraftDirty;
     $("tasks-workspace").classList.toggle("is-empty", !hasTasks);
     setText("task-count-label", `${state.tasks.length} tasks`);
-    if (!hasTasks) {
-        state.selectedTaskId = null;
-        state.taskDraft = null;
-        state.taskDraftDirty = false;
-    }
-    else if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
-        state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0].taskId;
-        state.taskDraft = clone(state.tasks.find((task) => task.taskId === state.selectedTaskId));
-        state.taskDraftDirty = false;
-    }
-    for (const task of state.tasks) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = `task-list-item${task.taskId === state.selectedTaskId ? " is-selected" : ""}`;
-        button.dataset.taskId = task.taskId;
-        button.setAttribute("aria-disabled", String(state.taskBusy));
-        button.setAttribute("aria-pressed", task.taskId === state.selectedTaskId ? "true" : "false");
-        const title = document.createElement("span");
-        title.className = "task-list-title";
-        title.textContent = task.title;
-        button.append(title);
-        const taskId = document.createElement("code");
-        taskId.className = "task-list-id";
-        taskId.textContent = task.taskId;
-        button.append(taskId);
-        const meta = document.createElement("span");
-        meta.className = "task-list-meta";
-        const status = taskStatusPresentation(task.status);
-        const statusBadge = document.createElement("span");
-        statusBadge.className = `badge ${status.tone}`;
-        statusBadge.textContent = localizeUiText(status.label);
-        meta.append(statusBadge, document.createTextNode(`R${task.checkpointRevision} · ${formatDate(task.updatedAt)}`));
-        button.append(meta);
-        const continuation = continuationPresentation(task.continuation);
-        const continuationLine = document.createElement("span");
-        continuationLine.className = "task-list-continuation";
-        const continuationBadge = document.createElement("span");
-        continuationBadge.className = `badge ${continuation.tone}`;
-        continuationBadge.textContent = localizeUiText(continuation.label);
-        continuationLine.append(continuationBadge);
-        if (task.continuation?.target)
-            continuationLine.append(document.createTextNode(taskTargetLabel(task.continuation)));
-        button.append(continuationLine);
-        const recovery = freshResumeRecoveryPresentation(task.freshResume);
-        if (recovery) {
-            const recoveryLine = document.createElement("span");
-            recoveryLine.className = "task-list-recovery";
-            const recoveryBadge = document.createElement("span");
-            recoveryBadge.className = `badge ${recovery.tone}`;
-            recoveryBadge.textContent = localizeUiText(recovery.label);
-            recoveryLine.append(recoveryBadge, document.createTextNode(localizeUiText(recovery.title)));
-            button.append(recoveryLine);
+    const nextListKey = JSON.stringify([state.language, state.selectedTaskId, state.taskBusy,
+        state.tasks.map((task) => [
+            task.taskId, task.title, task.status, task.checkpointRevision, task.updatedAt,
+            continuationPresentation(task.continuation).label, taskTargetLabel(task.continuation),
+            freshResumeRecoveryPresentation(task.freshResume)?.title,
+        ]),
+    ]);
+    if (nextListKey !== taskListKey) {
+        taskListKey = nextListKey;
+        const focused = document.activeElement;
+        const focusedTaskId = focused instanceof HTMLButtonElement && list.contains(focused) ? focused.dataset.taskId : undefined;
+        const scrollTop = list.scrollTop;
+        list.replaceChildren();
+        for (const task of state.tasks) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `task-list-item${task.taskId === state.selectedTaskId ? " is-selected" : ""}`;
+            button.dataset.taskId = task.taskId;
+            button.setAttribute("aria-disabled", String(state.taskBusy));
+            button.setAttribute("aria-pressed", task.taskId === state.selectedTaskId ? "true" : "false");
+            const title = document.createElement("span");
+            title.className = "task-list-title";
+            title.textContent = task.title;
+            button.append(title);
+            const taskId = document.createElement("code");
+            taskId.className = "task-list-id";
+            taskId.textContent = task.taskId;
+            button.append(taskId);
+            const meta = document.createElement("span");
+            meta.className = "task-list-meta";
+            const status = taskStatusPresentation(task.status);
+            const statusBadge = document.createElement("span");
+            statusBadge.className = `badge ${status.tone}`;
+            statusBadge.textContent = localizeUiText(status.label);
+            meta.append(statusBadge, document.createTextNode(`R${task.checkpointRevision} · ${formatDate(task.updatedAt)}`));
+            button.append(meta);
+            const continuation = continuationPresentation(task.continuation);
+            const continuationLine = document.createElement("span");
+            continuationLine.className = "task-list-continuation";
+            const continuationBadge = document.createElement("span");
+            continuationBadge.className = `badge ${continuation.tone}`;
+            continuationBadge.textContent = localizeUiText(continuation.label);
+            continuationLine.append(continuationBadge);
+            if (task.continuation?.target)
+                continuationLine.append(document.createTextNode(taskTargetLabel(task.continuation)));
+            button.append(continuationLine);
+            const recovery = freshResumeRecoveryPresentation(task.freshResume);
+            if (recovery) {
+                const recoveryLine = document.createElement("span");
+                recoveryLine.className = "task-list-recovery";
+                const recoveryBadge = document.createElement("span");
+                recoveryBadge.className = `badge ${recovery.tone}`;
+                recoveryBadge.textContent = localizeUiText(recovery.label);
+                recoveryLine.append(recoveryBadge, document.createTextNode(localizeUiText(recovery.title)));
+                button.append(recoveryLine);
+            }
+            list.append(button);
+            if (task.taskId === focusedTaskId)
+                button.focus({ preventScroll: true });
         }
-        list.append(button);
-        if (task.taskId === focusedTaskId)
-            button.focus({ preventScroll: true });
+        list.scrollTop = scrollTop;
     }
-    list.scrollTop = scrollTop;
     const task = state.taskDraft?.taskId === state.selectedTaskId ? state.taskDraft : null;
     $("task-detail-empty").hidden = Boolean(task);
     $("task-form").hidden = !task;
     if (!task)
         return;
-    const status = taskStatusPresentation(task.status);
-    const continuation = continuationPresentation(task.continuation);
-    const recovery = freshResumeRecoveryPresentation(task.freshResume);
+    const current = currentTaskRecord();
+    const status = taskStatusPresentation(current?.status ?? task.status);
+    const continuation = continuationPresentation(current?.continuation ?? task.continuation);
+    const recovery = freshResumeRecoveryPresentation(current ? current.freshResume : task.freshResume);
     setText("task-detail-title", task.title);
     setBadge("task-status-badge", status.label, status.tone);
     setText("task-detail-id", task.taskId);
     setText("task-detail-meta", `Checkpoint ${task.checkpointRevision} · Updated ${formatDate(task.updatedAt)}`);
     setText("task-continuation-state", continuation.label);
-    setText("task-continuation-target", taskTargetLabel(task.continuation));
+    setText("task-continuation-target", taskTargetLabel(current?.continuation ?? task.continuation));
+    $("task-draft-note").hidden = Boolean(current) || !state.taskDraftDirty;
+    setText("task-draft-note", "This task is no longer in the list. You can copy your draft or switch to another task.");
     const recoveryPanel = $("task-recovery-panel");
     recoveryPanel.hidden = !recovery;
     if (recovery) {
         setBadge("task-recovery-badge", recovery.label, recovery.tone);
         setText("task-recovery-title", recovery.title);
         setText("task-recovery-message", recovery.message);
-        const reasonCode = String(task.freshResume?.reason || "");
+        const reasonCode = String((current ? current.freshResume : task.freshResume)?.reason || "");
         const code = $("task-recovery-code");
         code.hidden = !reasonCode;
         code.textContent = reasonCode ? `Reason: ${reasonCode}` : "";
@@ -2495,22 +2544,22 @@ function renderTasks() {
         $("task-cancel-fresh-resume-button").hidden = true;
         $("task-abandon-fresh-resume-button").hidden = true;
     }
-    if (!state.taskDraftDirty) {
+    if (!state.taskDraftDirty && !state.taskBusy) {
         $("task-title-input").value = task.title || "";
         $("task-objective-input").value = task.objective || "";
         $("task-completed-input").value = (task.completed || []).join("\n");
         $("task-next-input").value = (task.next || []).join("\n");
         $("task-references-input").value = formatTaskReferences(task.references);
     }
-    const editable = task.status === "active" && !state.taskBusy && !recovery?.blocking;
+    const editable = current?.status === "active" && !state.taskBusy && !recovery?.blocking;
     for (const id of ["task-title-input", "task-objective-input", "task-completed-input", "task-next-input", "task-references-input"])
-        $(id).disabled = !editable;
+        $(id).readOnly = !editable;
     $("task-save-button").disabled = !editable;
-    $("task-complete-button").disabled = !editable;
-    $("task-cancel-button").disabled = !editable;
+    $("task-complete-button").disabled = !editable || state.taskDraftDirty;
+    $("task-cancel-button").disabled = !editable || state.taskDraftDirty;
     const deletable = task.status === "completed" || task.status === "cancelled";
     $("task-delete-button").hidden = !deletable;
-    $("task-delete-button").disabled = state.taskBusy || !deletable;
+    $("task-delete-button").disabled = state.taskBusy || state.taskDraftDirty || !deletable;
     $("task-cancel-continuation-button").disabled = !editable || task.continuation?.status !== "armed";
     $("task-cancel-fresh-resume-button").disabled = state.taskBusy || task.status !== "active" || task.freshResume?.status !== "prepared";
     $("task-abandon-fresh-resume-button").disabled = state.taskBusy || task.status !== "active" || task.freshResume?.status !== "ambiguous";
@@ -2519,12 +2568,26 @@ function renderTasks() {
 async function selectTask(taskId) {
     if (state.taskBusy || !/^task-[a-z0-9-]{6,80}$/u.test(String(taskId || "")))
         return;
+    if (state.selectedTaskId === taskId) {
+        showTaskDetail(true);
+        return;
+    }
+    if (state.taskDraftDirty) {
+        const choice = await chooseDraftAction("Save edits to this task before opening another task?", "Save and switch", !$("task-save-button").disabled);
+        if (state.taskBusy || choice === "stay")
+            return;
+        if (choice === "save" && !await saveSelectedTask())
+            return;
+    }
     state.taskBusy = true;
-    state.taskDraftDirty = false;
+    let loaded = false;
     renderTasks();
     try {
         const result = await requestJson(`/api/v1/tasks/${encodeURIComponent(taskId)}`);
+        if (result.task?.taskId !== taskId)
+            throw new Error("The selected task could not be loaded.");
         replaceTaskInState(result.task);
+        loaded = true;
         clearError();
     }
     catch (error) {
@@ -2533,20 +2596,23 @@ async function selectTask(taskId) {
     finally {
         state.taskBusy = false;
         renderTasks();
+        if (loaded)
+            showTaskDetail(true);
     }
 }
 async function saveSelectedTask(event) {
-    event.preventDefault();
+    event?.preventDefault();
     const task = state.taskDraft;
-    if (!task || task.status !== "active" || state.taskBusy)
-        return;
+    const current = currentTaskRecord();
+    if (!task || current?.status !== "active" || state.taskBusy || freshResumeRecoveryPresentation(current.freshResume)?.blocking)
+        return false;
     let references;
     try {
         references = parseTaskReferences($("task-references-input").value);
     }
     catch (error) {
         showError(error);
-        return;
+        return false;
     }
     const payload = {
         expectedRevision: task.checkpointRevision,
@@ -2563,9 +2629,11 @@ async function saveSelectedTask(event) {
         replaceTaskInState(result.task);
         showToast("Task changes saved.");
         clearError();
+        return true;
     }
     catch (error) {
         showError(error);
+        return false;
     }
     finally {
         state.taskBusy = false;
@@ -2574,7 +2642,7 @@ async function saveSelectedTask(event) {
 }
 async function deleteSelectedTask() {
     const task = state.taskDraft;
-    if (!task || task.status === "active" || state.taskBusy)
+    if (!task || task.status === "active" || state.taskBusy || state.taskDraftDirty)
         return;
     if (!window.confirm(localizeUiText("Delete this task permanently? This cannot be undone.")))
         return;
@@ -2604,6 +2672,8 @@ async function runTaskAction(action) {
     const task = state.taskDraft;
     if (!task || task.status !== "active" || state.taskBusy)
         return;
+    if (state.taskDraftDirty && (action === "complete" || action === "cancel"))
+        return;
     if (action === "complete" && !window.confirm(localizeUiText("Mark this task complete?")))
         return;
     if (action === "cancel" && !window.confirm(localizeUiText("Cancel this task?")))
@@ -2625,7 +2695,12 @@ async function runTaskAction(action) {
     renderTasks();
     try {
         const result = await mutationJson(`/api/v1/tasks/${encodeURIComponent(task.taskId)}/${paths[action]}`, "POST", {});
-        replaceTaskInState(result.task);
+        if (state.taskDraftDirty) {
+            state.tasks = state.tasks.map((item) => item.taskId === task.taskId ? result.task : item);
+        }
+        else {
+            replaceTaskInState(result.task);
+        }
         showToast(messages[action]);
         clearError();
     }
@@ -2701,7 +2776,7 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
             requestJson("/api/v1/status"),
             requestJson("/api/v1/config"),
             requestJson("/api/v1/activity").catch(() => ({ events: [] })),
-            requestJson("/api/v1/tasks").catch(() => ({ tasks: [] })),
+            requestJson("/api/v1/tasks").catch(() => null),
             requestJson("/api/v1/update"),
             requestJson("/api/v1/onboarding"),
             initial ? Promise.resolve({ doctor: null }) : requestJson("/api/v1/doctor").catch(() => ({ doctor: null })),
@@ -2725,14 +2800,7 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
         state.config = clone(config.config);
         state.revision = config.revision;
         state.activity = Array.isArray(activity.events) ? activity.events : [];
-        state.tasks = Array.isArray(tasks.tasks) ? tasks.tasks : [];
-        if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
-            state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
-            state.taskDraftDirty = false;
-        }
-        if (!state.taskDraftDirty) {
-            state.taskDraft = state.selectedTaskId ? clone(state.tasks.find((task) => task.taskId === state.selectedTaskId)) : null;
-        }
+        reconcileLiveTasks(tasks?.tasks);
         state.update = update.update || null;
         state.onboarding = onboarding.onboarding || null;
         state.doctor = doctor.doctor || null;
@@ -2775,14 +2843,15 @@ function autoRefreshAllowed() {
     return !document.hidden && !state.restartRequired && !state.restartBusy && !state.refreshAllBusy;
 }
 function reconcileLiveTasks(nextTasks) {
-    state.tasks = Array.isArray(nextTasks) ? clone(nextTasks) : [];
-    if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
+    if (state.taskBusy || !Array.isArray(nextTasks))
+        return;
+    state.tasks = clone(nextTasks);
+    if (state.taskDraftDirty)
+        return;
+    if (!currentTaskRecord()) {
         state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
-        state.taskDraftDirty = false;
     }
-    if (!state.taskDraftDirty && !state.taskBusy) {
-        state.taskDraft = state.selectedTaskId ? clone(state.tasks.find((task) => task.taskId === state.selectedTaskId)) : null;
-    }
+    state.taskDraft = state.selectedTaskId ? clone(currentTaskRecord()) : null;
 }
 async function refreshLiveState() {
     if (!autoRefreshAllowed() || state.autoRefreshLiveBusy || state.onboardingBusy)
@@ -3054,28 +3123,46 @@ async function chooseFolderForDialog() {
         button.textContent = localizeUiText("Choose folder…");
     }
 }
-function selectBrowserSettingsTarget(value) {
-    if (state.browserSettingsBusy || !["agent", "user"].includes(value))
-        return;
-    state.browserSettingsTarget = value;
+function clearBrowserDraft() {
     state.browserDraft = null;
+    state.browserDraftBaseline = null;
     state.browserSettingsDirty = false;
+}
+async function selectBrowserSettingsTarget(value) {
+    $("browser-settings-target").value = state.browserSettingsTarget;
+    if (state.browserSettingsBusy || value === state.browserSettingsTarget || !["agent", "user"].includes(value))
+        return;
+    if (state.browserSettingsDirty) {
+        const choice = await chooseDraftAction(state.browserSettingsTarget === "agent"
+            ? "Apply changes to Agent Browser before switching? Browser automation changes take effect in that profile immediately."
+            : "Apply changes to Your Browser before switching? Browser automation changes take effect in that profile immediately.", "Apply and switch", !$("apply-browser-settings").disabled);
+        if (state.browserSettingsBusy || choice === "stay")
+            return;
+        if (choice === "save" && !await saveBrowserSettings())
+            return;
+    }
+    state.browserSettingsTarget = value;
+    clearBrowserDraft();
     renderBrowserPage();
 }
 function updateBrowserDraftFromInputs() {
     const baseline = browserSettingsFromStatus(state.browserSettingsTarget);
-    if (!baseline || state.browserSettingsBusy)
+    if (!baseline || state.browserSettingsBusy || state.browserDraft?.expectedConnectionId !== baseline.expectedConnectionId)
         return;
+    state.browserDraftBaseline ??= baseline;
+    const original = state.browserDraftBaseline;
     state.browserDraft = {
-        context: state.browserSettingsTarget,
+        ...original,
         enabled: $("browser-control-toggle").checked,
         agentCursorEnabled: $("browser-cursor-toggle").checked,
         agentCursorName: $("browser-agent-name").value.slice(0, 32),
     };
     state.browserSettingsDirty =
-        state.browserDraft.enabled !== baseline.enabled ||
-            state.browserDraft.agentCursorEnabled !== baseline.agentCursorEnabled ||
-            state.browserDraft.agentCursorName !== baseline.agentCursorName;
+        state.browserDraft.enabled !== original.enabled ||
+            state.browserDraft.agentCursorEnabled !== original.agentCursorEnabled ||
+            state.browserDraft.agentCursorName !== original.agentCursorName;
+    if (!state.browserSettingsDirty)
+        state.browserDraftBaseline = null;
     renderBrowserPage();
 }
 async function openAgentBrowserFromControlCenter() {
@@ -3106,43 +3193,47 @@ async function openAgentBrowserFromControlCenter() {
     }
 }
 async function saveBrowserSettings() {
-    if (!state.browserDraft || !state.browserSettingsDirty || state.browserSettingsBusy)
-        return;
+    const draft = state.browserDraft;
+    const original = state.browserDraftBaseline;
+    const baseline = browserSettingsFromStatus(state.browserSettingsTarget);
+    if (!draft || !original || !state.browserSettingsDirty || state.browserSettingsBusy ||
+        !baseline || draft.context !== baseline.context || draft.expectedConnectionId !== baseline.expectedConnectionId)
+        return false;
+    const { context: target, expectedConnectionId } = draft;
+    const changes = {
+        context: target, expectedConnectionId,
+        ...(draft.enabled !== original.enabled ? { enabled: draft.enabled } : {}),
+        ...(draft.agentCursorEnabled !== original.agentCursorEnabled ? { agentCursorEnabled: draft.agentCursorEnabled } : {}),
+        ...(draft.agentCursorName !== original.agentCursorName ? { agentCursorName: draft.agentCursorName } : {}),
+    };
     clearError();
     state.browserSettingsBusy = true;
     renderBrowserPage();
     try {
-        const target = state.browserDraft.context;
-        const result = await mutationJson("/api/v1/browser/settings", "PUT", state.browserDraft);
+        const result = await mutationJson("/api/v1/browser/settings", "PUT", changes);
         const settings = result.settings || {};
         const browser = state.status?.browser || {};
         const previousContext = browser.contexts?.[target] || {};
-        const updatedContext = {
-            ...previousContext,
-            ready: true,
-            controlEnabled: typeof settings.enabled === "boolean" ? settings.enabled : state.browserDraft.enabled,
-            agentCursorEnabled: typeof settings.agentCursorEnabled === "boolean" ? settings.agentCursorEnabled : state.browserDraft.agentCursorEnabled,
-            agentCursorName: typeof settings.agentCursorName === "string" ? settings.agentCursorName : state.browserDraft.agentCursorName,
-        };
-        state.status.browser = {
-            ...browser,
-            contexts: {
-                ...(browser.contexts || {}),
-                [target]: updatedContext,
-            },
-        };
-        if (target === "user") {
+        if (previousContext.settingsConnectionId === expectedConnectionId) {
+            const updatedContext = {
+                ...previousContext,
+                controlEnabled: typeof settings.enabled === "boolean" ? settings.enabled : changes.enabled ?? previousContext.controlEnabled,
+                agentCursorEnabled: typeof settings.agentCursorEnabled === "boolean" ? settings.agentCursorEnabled : changes.agentCursorEnabled ?? previousContext.agentCursorEnabled,
+                agentCursorName: typeof settings.agentCursorName === "string" ? settings.agentCursorName : changes.agentCursorName ?? previousContext.agentCursorName,
+            };
             state.status.browser = {
-                ...state.status.browser,
-                controlEnabled: updatedContext.controlEnabled,
-                agentCursorEnabled: updatedContext.agentCursorEnabled,
-                agentCursorName: updatedContext.agentCursorName,
-                nativeHostConnected: Boolean(settings.nativeHostConnected ?? browser.nativeHostConnected),
-                localConnected: Boolean(settings.localConnected ?? browser.localConnected),
+                ...browser,
+                contexts: { ...browser.contexts, [target]: updatedContext },
+                ...(target === "user" ? {
+                    controlEnabled: updatedContext.controlEnabled,
+                    agentCursorEnabled: updatedContext.agentCursorEnabled,
+                    agentCursorName: updatedContext.agentCursorName,
+                    nativeHostConnected: Boolean(settings.nativeHostConnected ?? browser.nativeHostConnected),
+                    localConnected: Boolean(settings.localConnected ?? browser.localConnected),
+                } : {}),
             };
         }
-        state.browserDraft = browserSettingsFromStatus(target);
-        state.browserSettingsDirty = false;
+        clearBrowserDraft();
         if (state.health?.controlCenter)
             state.health.controlCenter.mutationCount += 1;
         renderDashboard();
@@ -3150,9 +3241,11 @@ async function saveBrowserSettings() {
         renderIntegrations();
         renderActivity();
         showToast("Browser settings updated.");
+        return true;
     }
     catch (error) {
         showError(error);
+        return false;
     }
     finally {
         state.browserSettingsBusy = false;
@@ -3871,13 +3964,7 @@ async function toggleAgentControl() {
         if (activity?.events)
             state.activity = activity.events;
         const tasks = await requestJson("/api/v1/tasks").catch(() => null);
-        if (tasks?.tasks) {
-            state.tasks = tasks.tasks;
-            if (!state.selectedTaskId || !state.tasks.some((task) => task.taskId === state.selectedTaskId)) {
-                state.selectedTaskId = state.tasks.find((task) => task.status === "active")?.taskId || state.tasks[0]?.taskId || null;
-            }
-            state.taskDraft = state.selectedTaskId ? clone(state.tasks.find((task) => task.taskId === state.selectedTaskId)) : null;
-        }
+        reconcileLiveTasks(tasks?.tasks);
     }
     catch (error) {
         showError(error);
@@ -3939,10 +4026,10 @@ async function restartRuntimeFromControlCenter() {
     if (state.restartBusy || state.turnBudgetBusy)
         return;
     clearError();
-    if (state.turnBudgetDirty) {
-        const saved = await saveTurnBudgetSettings();
-        if (!saved)
-            return;
+    const saveBudget = state.turnBudgetDirty;
+    if (saveBudget && !await saveTurnBudgetSettings()) {
+        showToast("Turn Budget could not be saved. The runtime was not restarted.");
+        return;
     }
     stopRuntimeRestartPolling();
     state.restartBusy = true;
@@ -3963,6 +4050,8 @@ async function restartRuntimeFromControlCenter() {
         state.restartBusy = false;
         renderRuntimeRestartControl();
         $("refresh-button").disabled = state.restartRequired;
+        if (saveBudget)
+            showToast("Turn Budget was saved. Equinox Local could not restart.");
         showError(error);
     }
 }
@@ -4053,6 +4142,12 @@ function bindEvents() {
     });
     $("language-select").addEventListener("change", (event) => setLanguage(event.target.value));
     bindEmbeddedChatLayout();
+    for (const id of ["overview-runtime-diagnostics", "overview-connection-diagnostics"]) {
+        $(id).addEventListener("click", (event) => {
+            event.preventDefault();
+            $("doctor-title").focus();
+        });
+    }
     const settingsDialog = $("settings-dialog");
     function renderChatIdentity(identity) {
         $("chat-agent-name").value = identity.name;
@@ -4133,21 +4228,25 @@ function bindEvents() {
         state.turnBudgetDraft = { ...(state.turnBudgetDraft || { cutoffMinutes: 22, fallbackResetMinutes: 2 }), enabled: event.target.checked };
         state.turnBudgetDirty = true;
         renderTurnBudget();
+        renderRuntimeRestartControl();
     });
     $("turn-budget-cutoff").addEventListener("input", (event) => {
         state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, fallbackResetMinutes: 2 }), cutoffMinutes: Number(event.target.value) };
         state.turnBudgetDirty = true;
         renderTurnBudget();
+        renderRuntimeRestartControl();
     });
     $("turn-budget-fallback-reset").addEventListener("input", (event) => {
         state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22 }), fallbackResetMinutes: Number(event.target.value) };
         state.turnBudgetDirty = true;
         $("save-turn-budget-button").disabled = state.turnBudgetBusy;
+        renderRuntimeRestartControl();
     });
     $("auto-continue-max-hops").addEventListener("input", (event) => {
         state.turnBudgetDraft = { ...(state.turnBudgetDraft || { enabled: true, cutoffMinutes: 22, fallbackResetMinutes: 2 }), autoContinueMaxHops: Number(event.target.value) };
         state.turnBudgetDirty = true;
         $("save-turn-budget-button").disabled = state.turnBudgetBusy;
+        renderRuntimeRestartControl();
     });
     $("save-turn-budget-button").addEventListener("click", saveTurnBudgetSettings);
     $("restart-runtime-button").addEventListener("click", restartRuntimeFromControlCenter);
@@ -4195,9 +4294,22 @@ function bindEvents() {
         if (button)
             void selectTask(button.dataset.taskId);
     });
+    $("task-list-back").addEventListener("click", () => showTaskDetail(false));
+    compactTaskMedia.addEventListener("change", () => {
+        if (!compactTaskMedia.matches || state.activeSection !== "tasks")
+            return;
+        const workspace = $("tasks-workspace");
+        if (workspace.querySelector(".task-detail-pane")?.contains(document.activeElement) || state.taskDraftDirty) {
+            workspace.classList.add("shows-task-detail");
+        }
+    });
     $("task-form").addEventListener("submit", saveSelectedTask);
     for (const id of ["task-title-input", "task-objective-input", "task-completed-input", "task-next-input", "task-references-input"]) {
-        $(id).addEventListener("input", () => { state.taskDraftDirty = true; });
+        $(id).addEventListener("input", () => {
+            state.taskDraftDirty = true;
+            $("task-complete-button").disabled = true;
+            $("task-cancel-button").disabled = true;
+        });
     }
     $("task-cancel-continuation-button").addEventListener("click", () => void runTaskAction("continuation"));
     $("task-cancel-fresh-resume-button").addEventListener("click", () => void runTaskAction("fresh-cancel"));
@@ -4211,6 +4323,13 @@ function bindEvents() {
     $("browser-cursor-toggle").addEventListener("change", updateBrowserDraftFromInputs);
     $("browser-agent-name").addEventListener("input", updateBrowserDraftFromInputs);
     $("apply-browser-settings").addEventListener("click", saveBrowserSettings);
+    $("discard-browser-draft").addEventListener("click", () => {
+        if (state.browserSettingsBusy)
+            return;
+        clearBrowserDraft();
+        renderBrowserPage();
+        $("browser-settings-target").focus();
+    });
     $("default-project-select").addEventListener("change", (event) => {
         state.config.defaultProject = event.target.value;
         markDirty();

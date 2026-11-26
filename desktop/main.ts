@@ -787,8 +787,15 @@ ipcMain.handle("equinox-shell:embedded-chat-layout", (event, value: unknown) => 
   const right = Math.min(width, Math.round((Number(rect.x) + Number(rect.width)) * scale));
   const bottom = Math.min(height, Math.round((Number(rect.y) + Number(rect.height)) * scale));
   if (right <= x || bottom <= y) { embeddedChat?.setBounds(null); return; }
-  embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en", chatIdentity(), chatAccent);
-  embeddedChat.setBounds({ x, y, width: right - x, height: bottom - y });
+  const host = window.webContents;
+  const composition = development && process.env.EQUINOX_LOCAL_ASSISTANT_PREVIEW === "type" ? "type" : "portrait";
+  embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en", chatIdentity(), chatAccent, composition, value => {
+    if (!host.isDestroyed() && isControlDocument(host.getURL())) host.send("equinox-shell:embedded-chat-status", value);
+  });
+  return embeddedChat.setBounds({ x, y, width: right - x, height: bottom - y });
+});
+ipcMain.handle("equinox-shell:embedded-chat-retry", (event) => {
+  if (trustedSender(event) && !quitting) embeddedChat?.retry();
 });
 ipcMain.handle("equinox-shell:embedded-chat-microphone", async (event) => {
   if (!trustedSender(event) || quitting || !embeddedChat) return false;

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -508,6 +509,7 @@ export function createEquinoxBrowserBridge({ bridgeEndpoint = null, socketPath =
                 state.instanceId = normalizeInstanceId(message.instanceId);
                 const reportedContext = message.browserContext ?? "unassigned";
                 const assignedContext = assignContext(state, reportedContext);
+                state.id = randomUUID();
                 state.extensionInfo = {
                     extensionId: message.extensionId,
                     extensionVersion: message.extensionVersion ?? null,
@@ -653,6 +655,7 @@ export function createEquinoxBrowserBridge({ bridgeEndpoint = null, socketPath =
         }
         const state = {
             socket,
+            id: null,
             lineChunks: [],
             lineBytes: 0,
             partialLineTimer: null,
@@ -836,8 +839,17 @@ export function createEquinoxBrowserBridge({ bridgeEndpoint = null, socketPath =
         }
         assertContextAvailable(normalized);
     }
-    async function call(method, args = {}, { timeoutMs = callTimeoutMs, context = DEFAULT_EQUINOX_BROWSER_CONTEXT, } = {}) {
+    async function call(method, args = {}, { timeoutMs = callTimeoutMs, context = DEFAULT_EQUINOX_BROWSER_CONTEXT, expectedConnectionId, } = {}) {
         const normalized = normalizeBrowserContext(context);
+        if (expectedConnectionId !== undefined) {
+            const state = contexts.get(normalized);
+            if (!state || state.id !== expectedConnectionId || !contextIsReady(normalized)) {
+                const error = new Error("Browser connection changed. Review settings before applying changes.");
+                error.statusCode = 409;
+                throw error;
+            }
+            return await callOnState(state, method, args, { timeoutMs });
+        }
         if (!contextIsReady(normalized)) {
             await waitUntilReady(Math.min(timeoutMs, 8_000), { context: normalized });
         }
@@ -873,6 +885,7 @@ export function createEquinoxBrowserBridge({ bridgeEndpoint = null, socketPath =
         expectContext,
         cancelExpectedContext,
         readyFor: contextIsReady,
+        settingsConnectionId: (context) => contextIsReady(context) ? contexts.get(context)?.id ?? null : null,
         get ready() {
             return contextIsReady(DEFAULT_EQUINOX_BROWSER_CONTEXT);
         },

@@ -20,7 +20,8 @@ summary{display:grid;grid-template-columns:22px minmax(0,1fr) auto 14px;align-it
 summary::-webkit-details-marker{display:none}summary:hover{background:var(--code)}
 summary:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
 .icon{display:grid;place-items:center;width:22px;height:22px;color:var(--fg);border-radius:6px;background:var(--code);font:600 13px ui-monospace,monospace}
-.title{min-width:0}.eyebrow{font-size:10px;color:var(--muted);margin-bottom:3px;font-weight:670;letter-spacing:.075em}.command{font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.title{min-width:0}.eyebrow,.command{display:block}.eyebrow{font-size:10px;color:var(--muted);margin-bottom:3px;font-weight:670;letter-spacing:.075em}.command{font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+details:not([open]) .command{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .status{white-space:nowrap;font-size:11px;color:var(--pending);padding-top:3px}.status[data-kind=ok]{color:var(--ok)}.status[data-kind=bad]{color:var(--bad)}.status[data-kind=neutral]{color:var(--muted)}
 .arrow{color:var(--muted);font-size:16px;line-height:22px;text-align:center}details[open] .arrow{transform:rotate(90deg)}
 .body{border-top:1px solid var(--line);padding:10px 12px;display:grid;gap:9px}.field{display:grid;gap:4px}.field-label{font-size:11px;color:var(--muted);font-weight:600}
@@ -28,7 +29,7 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
 .facts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--muted)}.facts strong{color:var(--fg);font-weight:600}.empty{color:var(--muted);font-size:12px;padding:5px 0}
 @media(max-width:360px){summary{grid-template-columns:20px minmax(0,1fr) 13px;gap:6px}.status{grid-column:2;grid-row:2;padding:0}.arrow{grid-column:3;grid-row:1}}
 </style></head><body>
-<details id="run"><summary><span class="icon" aria-hidden="true">›_</span><span class="title"><div class="eyebrow" id="operation">Equinox Local</div><div class="command" id="command">Waiting for tool input…</div></span><span class="status" id="status" role="status">Running</span><span class="arrow" aria-hidden="true">›</span></summary><div class="body" id="body"></div></details>
+<details id="run"><summary><span class="icon" aria-hidden="true">›_</span><span class="title"><span class="eyebrow" id="operation">Equinox Local</span><span class="command" id="command">Waiting for tool input…</span></span><span class="status" id="status" role="status"></span><span class="arrow" aria-hidden="true">›</span></summary><div class="body" id="body"></div></details>
 <script>
 (function(){
  const $=id=>document.getElementById(id);
@@ -74,16 +75,22 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
  function fact(box,label,value){if(value===undefined||value===null||value==="")return;const el=document.createElement("span");const strong=document.createElement("strong");strong.textContent=String(value);el.append(document.createTextNode(label+" "),strong);box.append(el)}
  function render(){
    const op=typeof input?.operation==="string"?input.operation:"";
-   const args=input?.arguments&&typeof input.arguments==="object"?input.arguments:{};
    const terminal=op==="terminal_exec";
+   // Only display the request fields used by this terminal view. Generic
+   // gateway arguments can contain credentials or unrelated document input.
+   const rawArgs=input?.arguments;
+   const args=terminal&&rawArgs&&typeof rawArgs==="object"
+     ? Object.fromEntries(["command","project","cwd","shell"].flatMap(key=>typeof rawArgs[key]==="string"?[[key,rawArgs[key]]]:[]))
+     : {};
    const txt=contentText(result);
    const payload=decoded(txt);
-   const hasResult=result!==null;
-   const failed=Boolean(result?.isError||payload?.ok===false||(Number.isInteger(payload?.exitCode)&&payload.exitCode!==0));
+   const hasResult=Boolean(result&&("isError" in result||Array.isArray(result.content)||result.structuredContent!=null||typeof result.text==="string"));
+   const cancelled=result?.cancelled===true;
+   const failed=Boolean(result?.isError||payload?.ok===false||payload?.timedOut===true||(Number.isInteger(payload?.exitCode)&&payload.exitCode!==0));
    const background=payload?.promoted===true&&payload?.completed===false;
    $("operation").textContent="EQUINOX LOCAL · "+(terminal?tr("Terminal","Terminal"):op?op.replace(/_/g," "):tr("Tool call","Araç çağrısı"));
    $("command").textContent=terminal&&typeof args.command==="string"?args.command:op||tr("Waiting for tool input…","Araç girdisi bekleniyor…");
-   $("status").textContent=!hasResult?tr("Running","Çalışıyor"):Number.isInteger(payload?.exitCode)?tr("Exit","Çıkış")+" "+payload.exitCode:background?tr("Background","Arka planda"):failed?tr("Failed","Başarısız"):tr("Completed","Tamamlandı");
+   $("status").textContent=cancelled?tr("Cancelled","İptal edildi"):!hasResult?tr("Awaiting result","Sonuç bekleniyor"):Number.isInteger(payload?.exitCode)?tr("Exit","Çıkış")+" "+payload.exitCode:failed?tr("Failed","Başarısız"):background?tr("Background","Arka planda"):tr("Completed","Tamamlandı");
    $("status").dataset.kind=!hasResult?"pending":failed?"bad":background?"neutral":"ok";
    $("body").replaceChildren();
    if(terminal){
@@ -101,7 +108,6 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
        if(payload.stdoutTruncated||payload.stderrTruncated||payload.combinedOutputTruncated){const e=document.createElement("div");e.className="empty";e.textContent=tr("Local returned a truncated result.","Local çıktıyı kısalttı.");$("body").append(e)}
      }else if(hasResult)field(tr("Result","Sonuç"),txt||result?.structuredContent);
    }else{
-     if(Object.keys(args).length)field(tr("Arguments","Argümanlar"),args);
      if(hasResult)field(tr("Result","Sonuç"),txt||result?.structuredContent);
    }
    if(!hasResult&&!$("body").childNodes.length){const e=document.createElement("div");e.className="empty";e.textContent=tr("Waiting for the tool result…","Araç sonucu bekleniyor…");$("body").append(e)}
@@ -120,9 +126,9 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
    const m=event.data;if(!m||m.jsonrpc!=="2.0")return;
    if(m.id===1&&m.result){context(m.result.hostContext);initialized=true;send("ui/notifications/initialized",{});render();return}
    if(m.method==="ui/notifications/tool-input"){input=m.params?.arguments||null;render()}
-   if(m.method==="ui/notifications/tool-result"){result=m.params?.result||m.params||{};render()}
+   if(m.method==="ui/notifications/tool-result"){const value=m.params?.result||m.params;result=value&&typeof value==="object"?value:null;render()}
    if(m.method==="ui/notifications/host-context-changed"){context(m.params);render()}
-   if(m.method==="ui/notifications/tool-cancelled"){result={isError:true,content:[{type:"text",text:tr("Tool call cancelled.","Araç çağrısı iptal edildi.")}]};render()}
+   if(m.method==="ui/notifications/tool-cancelled"){result={isError:true,cancelled:true,content:[{type:"text",text:tr("Tool call cancelled.","Araç çağrısı iptal edildi.")}]};render()}
    if(m.method==="ping"&&m.id!==undefined)parent.postMessage({jsonrpc:"2.0",id:m.id,result:{}},"*");
    if(m.method==="ui/resource-teardown"&&m.id!==undefined)parent.postMessage({jsonrpc:"2.0",id:m.id,result:{}},"*");
  });
