@@ -105,7 +105,7 @@ function routeIdentity(value) {
     }
 }
 /** Bound to a single owned WebContents, with one outstanding exchange. */
-export function createNativeChatContinuity(win, contents, isVisible) {
+export function createNativeChatContinuity(win, contents, isVisible, onBudget = () => { }) {
     const instanceId = "native-" + randomUUID();
     let stopped = false;
     let timer = null;
@@ -143,7 +143,8 @@ export function createNativeChatContinuity(win, contents, isVisible) {
             generation = null;
             return null;
         }
-        const key = state.userEpoch || state.assistantTurnKey;
+        const turnKey = state.userEpoch || state.assistantTurnKey;
+        const key = turnKey ? JSON.stringify([route.conversationId, turnKey]) : null;
         if (!state.generationActive || !key)
             generation = null;
         else if (generation?.key !== key)
@@ -237,6 +238,12 @@ export function createNativeChatContinuity(win, contents, isVisible) {
                 return;
             const result = await exchangeNativeChat({ instanceId, viewVisible: aliveVisible(), state, ...(reply ? { reply } : {}) });
             reply = undefined;
+            if (!stopped) {
+                const remaining = result.budgetRemainingMs;
+                onBudget(usable() && state?.generationActive && state.canonicalUrl === routeIdentity(contents.getURL())?.canonicalUrl
+                    && typeof remaining === "number" && Number.isFinite(remaining) && remaining >= 0 && remaining <= 120 * 60_000
+                    && !result.request ? remaining : null);
+            }
             if (!stopped && result.request) {
                 const request = result.request;
                 try {
@@ -247,7 +254,9 @@ export function createNativeChatContinuity(win, contents, isVisible) {
                 }
             }
         }
-        catch { /* Runtime unavailable or exchange lost; never repeat a claimed operation. */ }
+        catch {
+            onBudget(null); /* Runtime unavailable or exchange lost; never repeat a claimed operation. */
+        }
         finally {
             if (!stopped)
                 timer = setTimeout(() => { void tick(); }, reply ? 0 : aliveVisible() ? 650 : 1_000);
@@ -255,5 +264,5 @@ export function createNativeChatContinuity(win, contents, isVisible) {
     }
     void tick();
     return { dispose() { stopped = true; if (timer)
-            clearTimeout(timer); } };
+            clearTimeout(timer); onBudget(null); } };
 }

@@ -1193,7 +1193,7 @@ function decorateProviderIdentity(update: {
 }
 
 export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "tr" = "en", initialIdentity: ChatIdentity = {name:"",avatar:null}, initialAccent = "#8B6CF0", composition: HomeComposition = "portrait",
-  onLoadState: (value: EmbeddedChatLoadState) => void = () => {}) {
+  onLoadState: (value: EmbeddedChatLoadState) => void = () => {}, onBudget: (remainingMs: number | null) => void = () => {}) {
   let language = initialLanguage;
   const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
   // Electron's default UA adds a non-browser product token to the actual
@@ -1313,7 +1313,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
   view.setVisible(false);
   let chatVisible = false;
   let attached = false;
-  const continuity = createNativeChatContinuity(win, view.webContents, () => chatVisible);
+  const continuity = createNativeChatContinuity(win, view.webContents, () => chatVisible, onBudget);
   const syncViewBackground = () => {
     if (!view.webContents.isDestroyed()) view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#161822" : "#f8faff");
   };
@@ -1378,6 +1378,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code}]).catch(() => {});
   };
   view.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+    if (isMainFrame) onBudget(null);
     if (isMainFrame && chatVisible && isChatGPTOrigin(url) && new URL(url).pathname !== decoratedPath) applyIdentity(true, url);
   });
   view.webContents.on("dom-ready", () => {
@@ -1390,6 +1391,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     setLoadState("ready");
   });
   view.webContents.on("did-start-navigation", ({ isMainFrame, isSameDocument }) => {
+    if (isMainFrame) onBudget(null);
     if (isMainFrame && !isSameDocument) setLoadState("loading");
   });
   view.webContents.on("did-fail-load", (_event, errorCode, _description, _url, isMainFrame) => {
@@ -1402,6 +1404,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     const wasVisible = chatVisible;
     chatVisible = Boolean(bounds && loadState === "ready" && win.isVisible() && !win.isMinimized());
     if (!chatVisible) {
+      onBudget(null);
       const wasFocused = view.webContents.isFocused();
       view.setVisible(false);
       if (attached) {

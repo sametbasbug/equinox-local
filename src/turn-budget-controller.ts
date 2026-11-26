@@ -31,12 +31,16 @@ type TurnIdentityInput = {
   browserContext?: unknown;
   conversationId?: unknown;
   title?: unknown;
+  nativeInstanceId?: unknown;
+  nativeTabId?: unknown;
+  nativeMatchEligible?: unknown;
 };
 type ActiveIdentity = {
   key: string;
   browserContext: string;
   generationStartedAtMs: number | null;
   title: string;
+  nativeProof: string | null;
 };
 type IdentityProbe =
   | Readonly<{status: "unknown"}>
@@ -168,9 +172,22 @@ function appendNotice(result: unknown, notice: string) {
   return next;
 }
 
+// The native display uses the full observed pair, instance and generation start.
+// Never expose this key via public status or derive it from a title.
+function exactNativeKey(value: TurnIdentityInput, timestamp: number): string | null {
+  const { nativeInstanceId, nativeTabId, conversationId, userEpoch, assistantTurnKey, generationStartedAtMs } = value;
+  const id = (v: unknown) => typeof v === "string" && v.length > 0 && v.length <= 200;
+  if (value.browserContext !== "native" || typeof nativeInstanceId !== "string" || !/^native-[a-f0-9-]{36}$/u.test(nativeInstanceId)
+    || !Number.isSafeInteger(nativeTabId) || Number(nativeTabId) < 1 || !id(conversationId) || !id(userEpoch) || !id(assistantTurnKey)
+    || !Number.isSafeInteger(generationStartedAtMs) || Number(generationStartedAtMs) <= 0 || Number(generationStartedAtMs) > timestamp
+    || timestamp - Number(generationStartedAtMs) > 2 * 60 * 60_000) return null;
+  return "native:" + JSON.stringify([nativeInstanceId, nativeTabId, conversationId, userEpoch, assistantTurnKey, generationStartedAtMs]);
+}
+
 export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSettingsPath(), fsImpl = fs, now = () => Date.now(), resolveTurnIdentity = async () => null }: TurnBudgetControllerOptions = {}) {
   let settings = normalizeSettings();
   let active: ActiveBudget | null = null;
+  let nativeProof: {budgetKey: string; exactKey: string; observedAt: number} | null = null;
 
   async function initialize() { settings = await readSettingsFile(settingsPath, fsImpl); return snapshot(); }
   async function updateSettings(next: unknown) {
@@ -181,7 +198,7 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
     await fsImpl.writeFile(settingsPath, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
     await fsImpl.chmod(settingsPath, 0o600).catch(() => {});
     settings = normalized;
-    if (!settings.enabled) active = null;
+    if (!settings.enabled) { active = null; nativeProof = null; }
     return snapshot();
   }
   function expireStaleFallback(timestamp = now()) {
@@ -216,10 +233,12 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
       const context = (result.browserContext || "unknown") as string;
       const conversationId = (result.conversationId || "unknown") as string;
       const turnKey = userEpoch ? `user:${userEpoch}` : `assistant:${assistantTurnKey}`;
+      const nativeKey = exactNativeKey(result, time);
       return Object.freeze({
         status: "active",
         identity: Object.freeze({
           key: `${context}:${conversationId}:${turnKey}`,
+          nativeProof: result.nativeMatchEligible === true ? nativeKey : null,
           browserContext: context,
           generationStartedAtMs,
           title: typeof result.title === "string" ? result.title.slice(0, 160) : "ChatGPT",
@@ -229,6 +248,19 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
       return Object.freeze({ status: "unknown" });
     }
   }
+  async function resolveWithProof(): Promise<IdentityProbe> {
+    const probe = await resolveIdentitySafe();
+    nativeProof = probe.status === "active" && probe.identity.nativeProof
+      ? {budgetKey: probe.identity.key, exactKey: probe.identity.nativeProof, observedAt: now()} : null;
+    return probe;
+  }
+  function nativeRemainingMs(observation: TurnIdentityInput): number | null {
+    const timestamp = now();
+    if (!settings.enabled || active?.source !== "browser" || active.browserContext !== "native"
+      || !nativeProof || timestamp - nativeProof.observedAt > 5_000
+      || nativeProof.budgetKey !== active.key || exactNativeKey(observation, timestamp) !== nativeProof.exactKey) return null;
+    return Math.max(0, settings.cutoffMinutes * 60_000 - Math.max(0, timestamp - active.startedAtMs));
+  }
   function generationStart(identity: ActiveIdentity | null, timestamp: number) {
     return identity?.generationStartedAtMs ?? timestamp;
   }
@@ -237,7 +269,7 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
     const timestamp = now();
     if (!settings.enabled) { active = null; return Object.freeze({ input, firstNotice: false, waitClamped: false }); }
     expireStaleFallback(timestamp);
-    const probe = await resolveIdentitySafe();
+    const probe = await resolveWithProof();
     // A newly pinned idle conversation must revoke the stale browser timer
     // immediately, including on tool invocations between background polls.
     if (probe.status === "idle" && probe.pinned) {
@@ -288,7 +320,7 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
     if (!settings.enabled) return snapshot();
     const timestamp = now();
     expireStaleFallback(timestamp);
-    const probe = await resolveIdentitySafe();
+    const probe = await resolveWithProof();
     if (probe.status === "idle" && probe.pinned) {
       active = null;
       return snapshot();
@@ -320,7 +352,7 @@ export function createTurnBudgetController({ settingsPath = defaultTurnBudgetSet
     const cutoffMs = settings.cutoffMinutes * 60_000;
     return Object.freeze({ ...base, active: Object.freeze({ source: active.source, browserContext: active.browserContext, title: active.title, startedAt: new Date(active.startedAtMs).toISOString(), elapsedMs, remainingMs: Math.max(0, cutoffMs - elapsedMs), stage: stageForElapsed(elapsedMs, settings.cutoffMinutes) }) });
   }
-  return Object.freeze({ initialize, updateSettings, prepareInvocation, decorateResult, refreshSnapshot, snapshot });
+  return Object.freeze({ initialize, updateSettings, prepareInvocation, decorateResult, refreshSnapshot, snapshot, nativeRemainingMs });
 }
 
 export const __test = Object.freeze({ normalizeSettings, stageForElapsed, clampWaitMs, appendNotice });

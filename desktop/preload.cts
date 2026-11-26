@@ -58,6 +58,14 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
       ipcRenderer.on("equinox-shell:embedded-chat-status", listener);
       return () => ipcRenderer.removeListener("equinox-shell:embedded-chat-status", listener);
     },
+    onNativeTurnBudget: (callback: unknown) => {
+      if (typeof callback !== "function") return () => {};
+      const listener = (_event: unknown, value: unknown) => {
+        if (value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 120 * 60_000)) callback(value);
+      };
+      ipcRenderer.on("equinox-shell:native-turn-budget", listener);
+      return () => ipcRenderer.removeListener("equinox-shell:native-turn-budget", listener);
+    },
     requestEmbeddedChatMicrophone: () => ipcRenderer.invoke("equinox-shell:embedded-chat-microphone"),
     setLanguage: (language: unknown) => {
       if (language === "en" || language === "tr") {

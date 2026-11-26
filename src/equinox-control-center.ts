@@ -15,7 +15,7 @@ type ChatLoadState = "loading" | "ready" | "offline" | "failed";
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -227,7 +227,7 @@ function localizeUiText(value: UiRemoteData) {
 
 const DYNAMIC_TEXT_IDS = new Set([
   "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "section-summary", "last-refreshed",
-  "chat-identity-feedback", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
+  "chat-identity-feedback", "native-turn-budget", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
   "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
   "runtime-health-badge", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
   "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
@@ -514,9 +514,22 @@ function setConfigEditingEnabled(enabled: UiRemoteData) {
 let lastEmbeddedLayout = "null";
 let chatStatusRevision = 0;
 let chatLoadState: ChatLoadState = "loading";
+let nativeBudgetExpiry: ReturnType<typeof setTimeout> | undefined;
+function renderNativeTurnBudget(remainingMs: number | null) {
+  clearTimeout(nativeBudgetExpiry);
+  const label = $("native-turn-budget");
+  if (remainingMs === null || state.activeSection !== "chat" || lastEmbeddedLayout === "null" || chatLoadState !== "ready") {
+    label.hidden = true; label.textContent = ""; return;
+  }
+  const minutes = Math.ceil(remainingMs / 60_000);
+  label.textContent = state.language === "tr" ? `${minutes} dk kaldı` : `${minutes} min left`;
+  label.hidden = false;
+  nativeBudgetExpiry = setTimeout(() => renderNativeTurnBudget(null), 2_500);
+}
 
 function renderChatLoadState(value = chatLoadState) {
   chatLoadState = value;
+  if (value !== "ready") renderNativeTurnBudget(null);
   $("chat-provider-fallback").hidden = value === "ready";
   $("chat-provider-retry").hidden = value !== "offline" && value !== "failed";
   setText("chat-provider-status", value === "offline"
@@ -531,6 +544,7 @@ function syncEmbeddedChatLayout() {
   const r = host.getBoundingClientRect();
   const bounds = visible && r.width > 0 && r.height > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
   const key = JSON.stringify(bounds);
+  if (!bounds) renderNativeTurnBudget(null);
   if (key === lastEmbeddedLayout) return;
   lastEmbeddedLayout = key;
   const revision = chatStatusRevision;
@@ -547,6 +561,7 @@ function bindEmbeddedChatLayout() {
     chatStatusRevision += 1;
     renderChatLoadState(value);
   });
+  const unsubscribeBudget = window.equinoxShell?.onNativeTurnBudget(renderNativeTurnBudget);
   $("chat-provider-retry").addEventListener("click", () => {
     if (lastEmbeddedLayout) void window.equinoxShell?.retryEmbeddedChat().catch(() => renderChatLoadState("failed"));
     else syncEmbeddedChatLayout();
@@ -560,7 +575,7 @@ function bindEmbeddedChatLayout() {
   window.addEventListener("resize", syncEmbeddedChatLayout);
   window.addEventListener("scroll", syncEmbeddedChatLayout, { passive: true });
   window.addEventListener("pagehide", () => {
-    observer.disconnect(); visibility.disconnect(); unsubscribeStatus?.();
+    observer.disconnect(); visibility.disconnect(); unsubscribeStatus?.(); unsubscribeBudget?.(); renderNativeTurnBudget(null);
   }, { once: true });
 }
 

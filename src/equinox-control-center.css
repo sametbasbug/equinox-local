@@ -618,6 +618,8 @@ body.setup-mode .app-shell { height: auto; min-height: 100dvh; align-items: star
 .nav-item:focus-visible, .rail-button:focus-visible { outline-offset: 1px; }
 .rail-button, .rail-bottom #agent-control-button { position: relative; width: 34px; height: 34px; min-width: 34px; min-height: 34px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; box-shadow: none; cursor: pointer; }
 .rail-bottom { display: flex; align-items: center; gap: 4px; margin: 0; justify-self: end; }
+.native-turn-budget { font-size: 11px; font-weight: 550; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; padding-inline: 5px; }
+.native-turn-budget[hidden] { display: none; }
 .rail-bottom #agent-control-button { margin: 0; width: auto; min-width: 34px; padding-inline: 9px; display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; white-space: nowrap; color: var(--danger); }
 .rail-bottom #agent-control-button:hover { background: var(--workspace-hover); }
 .rail-bottom #agent-control-button::before { width: 10px; height: 10px; margin: 0; border-radius: 2px; }

@@ -212,7 +212,7 @@ function localizeUiText(value) {
 }
 const DYNAMIC_TEXT_IDS = new Set([
     "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "section-summary", "last-refreshed",
-    "chat-identity-feedback", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
+    "chat-identity-feedback", "native-turn-budget", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
     "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
     "runtime-health-badge", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
     "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
@@ -493,8 +493,24 @@ function setConfigEditingEnabled(enabled) {
 let lastEmbeddedLayout = "null";
 let chatStatusRevision = 0;
 let chatLoadState = "loading";
+let nativeBudgetExpiry;
+function renderNativeTurnBudget(remainingMs) {
+    clearTimeout(nativeBudgetExpiry);
+    const label = $("native-turn-budget");
+    if (remainingMs === null || state.activeSection !== "chat" || lastEmbeddedLayout === "null" || chatLoadState !== "ready") {
+        label.hidden = true;
+        label.textContent = "";
+        return;
+    }
+    const minutes = Math.ceil(remainingMs / 60_000);
+    label.textContent = state.language === "tr" ? `${minutes} dk kaldı` : `${minutes} min left`;
+    label.hidden = false;
+    nativeBudgetExpiry = setTimeout(() => renderNativeTurnBudget(null), 2_500);
+}
 function renderChatLoadState(value = chatLoadState) {
     chatLoadState = value;
+    if (value !== "ready")
+        renderNativeTurnBudget(null);
     $("chat-provider-fallback").hidden = value === "ready";
     $("chat-provider-retry").hidden = value !== "offline" && value !== "failed";
     setText("chat-provider-status", value === "offline"
@@ -510,6 +526,8 @@ function syncEmbeddedChatLayout() {
     const r = host.getBoundingClientRect();
     const bounds = visible && r.width > 0 && r.height > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
     const key = JSON.stringify(bounds);
+    if (!bounds)
+        renderNativeTurnBudget(null);
     if (key === lastEmbeddedLayout)
         return;
     lastEmbeddedLayout = key;
@@ -530,6 +548,7 @@ function bindEmbeddedChatLayout() {
         chatStatusRevision += 1;
         renderChatLoadState(value);
     });
+    const unsubscribeBudget = window.equinoxShell?.onNativeTurnBudget(renderNativeTurnBudget);
     $("chat-provider-retry").addEventListener("click", () => {
         if (lastEmbeddedLayout)
             void window.equinoxShell?.retryEmbeddedChat().catch(() => renderChatLoadState("failed"));
@@ -549,6 +568,8 @@ function bindEmbeddedChatLayout() {
         observer.disconnect();
         visibility.disconnect();
         unsubscribeStatus?.();
+        unsubscribeBudget?.();
+        renderNativeTurnBudget(null);
     }, { once: true });
 }
 let lastLocalSection = "dashboard";

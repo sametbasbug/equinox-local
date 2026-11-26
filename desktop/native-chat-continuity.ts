@@ -102,7 +102,7 @@ function routeIdentity(value: string): {canonicalUrl: string; conversationId: st
 }
 
 /** Bound to a single owned WebContents, with one outstanding exchange. */
-export function createNativeChatContinuity(win: BrowserWindow, contents: WebContents, isVisible: () => boolean) {
+export function createNativeChatContinuity(win: BrowserWindow, contents: WebContents, isVisible: () => boolean, onBudget: (remainingMs: number | null) => void = () => {}) {
   const instanceId = "native-" + randomUUID();
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -127,7 +127,8 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
     const route = inspectable() ? routeIdentity(contents.getURL()) : null;
     const state = route ? await probe() : null;
     if (!route || !state || state.conversationId !== route.conversationId || state.canonicalUrl !== route.canonicalUrl) {generation = null; return null;}
-    const key = state.userEpoch || state.assistantTurnKey;
+    const turnKey = state.userEpoch || state.assistantTurnKey;
+    const key = turnKey ? JSON.stringify([route.conversationId, turnKey]) : null;
     if (!state.generationActive || !key) generation = null;
     else if (generation?.key !== key) generation = {key, at: Date.now()};
     return {tabId: contents.id, conversationId: route.conversationId, canonicalUrl: route.canonicalUrl, title: state.title || "ChatGPT",
@@ -197,13 +198,19 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
       if (stopped) return;
       const result = await exchangeNativeChat({instanceId, viewVisible: aliveVisible(), state, ...(reply ? {reply} : {})});
       reply = undefined;
+      if (!stopped) {
+        const remaining = result.budgetRemainingMs;
+        onBudget(usable() && state?.generationActive && state.canonicalUrl === routeIdentity(contents.getURL())?.canonicalUrl
+          && typeof remaining === "number" && Number.isFinite(remaining) && remaining >= 0 && remaining <= 120 * 60_000
+          && !result.request ? remaining : null);
+      }
       if (!stopped && result.request) {
         const request = result.request as Request;
         try {reply = await deliver(request);} catch {reply = {id: request.id, confirmed: false};}
       }
-    } catch { /* Runtime unavailable or exchange lost; never repeat a claimed operation. */ }
+    } catch { onBudget(null); /* Runtime unavailable or exchange lost; never repeat a claimed operation. */ }
     finally { if (!stopped) timer = setTimeout(() => { void tick(); }, reply ? 0 : aliveVisible() ? 650 : 1_000); }
   }
   void tick();
-  return {dispose() {stopped = true; if (timer) clearTimeout(timer);}};
+  return {dispose() {stopped = true; if (timer) clearTimeout(timer); onBudget(null);}};
 }

@@ -791,6 +791,8 @@ ipcMain.handle("equinox-shell:embedded-chat-layout", (event, value: unknown) => 
   const composition = development && process.env.EQUINOX_LOCAL_ASSISTANT_PREVIEW === "type" ? "type" : "portrait";
   embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en", chatIdentity(), chatAccent, composition, value => {
     if (!host.isDestroyed() && isControlDocument(host.getURL())) host.send("equinox-shell:embedded-chat-status", value);
+  }, remainingMs => {
+    if (!host.isDestroyed() && isControlDocument(host.getURL())) host.send("equinox-shell:native-turn-budget", remainingMs);
   });
   return embeddedChat.setBounds({ x, y, width: right - x, height: bottom - y });
 });

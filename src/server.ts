@@ -2169,6 +2169,7 @@ async function resolveTurnBudgetIdentity() {
   const candidates = [];
   const explicitPins: Array<{ browserContext: string; resolved: RuntimeBoundary }> = [];
   const idleContexts = [];
+  let browserProbeUncertain = false;
   for (const browserContext of ["agent", "user"]) {
     if (!snapshot?.contexts?.[browserContext]?.ready) continue;
     try {
@@ -2185,8 +2186,9 @@ async function resolveTurnBudgetIdentity() {
         candidates.push({ browserContext, target });
       } else if (resolved?.status === "idle") {
         idleContexts.push(browserContext);
-      }
+      } else { browserProbeUncertain = true; }
     } catch {
+      browserProbeUncertain = true;
       // Turn Budget keeps its last safe state when Browser probing is temporarily unavailable.
     }
   }
@@ -2212,7 +2214,8 @@ async function resolveTurnBudgetIdentity() {
     // conversation's timer or fall back to another browser profile.
     return { status: "idle", pinned: true, idleContexts: ["agent", "user"] };
   }
-  const native = nativeChatChannel.current()?.state;
+  const nativeView = nativeChatChannel.current();
+  const native = nativeView?.state;
   if (native?.generationActive && (native.userEpoch || native.assistantTurnKey)) candidates.push({browserContext: "native", target: native});
   else if (native || nativeChatChannel.status().viewVisible) idleContexts.push("native");
   const selected = candidates.length === 1 ? candidates[0] : null;
@@ -2228,6 +2231,10 @@ async function resolveTurnBudgetIdentity() {
     assistantTurnKey: selected.target.assistantTurnKey,
     generationStartedAtMs: selected.target.generationStartedAtMs ?? null,
     title: selected.target.title ?? "ChatGPT",
+    ...(selected.browserContext === "native" && nativeView ? {
+      nativeInstanceId: nativeView.instanceId, nativeTabId: nativeView.state.tabId,
+      nativeMatchEligible: nativeView.viewVisible && !browserProbeUncertain,
+    } : {}),
   };
 }
 
@@ -3605,7 +3612,17 @@ const cliBridge = createEquinoxLocalCliBridge({
   },
   tasks: taskCapsuleStore,
   control: equinoxLocalControlApi,
-  nativeChatExchange: nativeChatChannel.exchange,
+  nativeChatExchange: (input: unknown) => {
+    const exchange = nativeChatChannel.exchange(input);
+    const view = nativeChatChannel.current();
+    // Private authenticated exchange only; the general status and remote
+    // provider never receive the conversation/turn identity or budget value.
+    const budgetRemainingMs = view?.viewVisible && view.state.generationActive
+      ? turnBudgetController.nativeRemainingMs({
+        ...view.state, browserContext: "native", nativeInstanceId: view.instanceId, nativeTabId: view.state.tabId,
+      }) : null;
+    return {...exchange, budgetRemainingMs};
+  },
   chat: telegramChatBridgeController,
   assertMutationAllowed: (name: string) => agentControl.assertMutationAllowed(name),
 });
