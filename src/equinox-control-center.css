@@ -657,6 +657,7 @@ body:is(.chat-workspace-active, .setup-mode) .app-shell { grid-template-columns:
 /* The actual provider owns the chat host and per-turn MCP tool cards.
    No separate global run history panel or second navigation column. */
 body.chat-workspace-active { overflow: hidden; }
+.chat-workspace-active .workspace-navigation { border-bottom: 0; }
 .chat-workspace-active .app-shell { height: 100dvh; min-height: 0; grid-template-rows: var(--navigation-height) minmax(0, 1fr); }
 .chat-workspace-active .main-panel { max-width: none; min-height: 0; height: 100%; padding: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--workspace-chrome); }
 .chat-workspace-active .topbar { display: none; }
