@@ -12,6 +12,7 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
       return language === "tr" ? "tr" : language === "en" ? "en" : null;
     },
     pickFolder: () => ipcRenderer.invoke("equinox-shell:pick-folder"),
+    openBrainVault: () => ipcRenderer.invoke("equinox-shell:open-brain-vault"),
     copyText: (value: unknown) => ipcRenderer.invoke("equinox-shell:copy-text", value),
     returnToTask:(taskId:unknown,checkpointRevision:unknown)=>ipcRenderer.invoke("equinox-shell:task-return",{taskId,checkpointRevision}),
     getCommandHistory: () => ipcRenderer.invoke("equinox-shell:command-history-status"),

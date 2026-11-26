@@ -127,5 +127,30 @@ export function createPluginCatalog(stateRoot: string) {
     const {key,title,text,project}=input;
     if(typeof key!=="string" || !/^[a-zA-Z0-9_-]{8,100}$/u.test(key) || typeof title!=="string" || !title.trim() || title.length>160 || typeof text!=="string" || !text.trim() || text.length>12000 || (project!==undefined && (typeof project!=="string" || !project.trim() || project.length>160)))throw invalid("Invalid memory note request.");
     return runBrainMemory(stateRoot,{action:"create",...await engineConnection(brain),key,title,text,...(project===undefined?{}:{project})});
+  }, async preferences(profile?:unknown) {
+    const brain=await read(); if(!brain)throw invalid("Connect a memory vault first.");
+    if(profile!==undefined && (typeof profile!=="string" || !["normal","economical","manual"].includes(profile)))throw invalid("Choose a supported memory profile.");
+    const connection=await engineConnection(brain);
+    // Explicit desktop action only. Preparing this engine does not authorize MCP access.
+    await prepareBrainEngine(stateRoot);
+    const preferences=await runBrainMemory(stateRoot,{...connection,action:profile===undefined?"preferences":"profile",...(typeof profile==="string"?{profile}:{})});
+    return {plugins:await status(),preferences};
+  }, async workflow(input:Record<string,unknown>) {
+    const brain=await read(); if(!brain?.searchEnabled || !brain.writeEnabled)throw invalid("Equinox Brain memory writing is disabled.");
+    const {action,project}=input;
+    const text=(value:unknown,max:number):value is string=>typeof value==="string" && !!value.trim() && value.length<=max;
+    const key=(value:unknown):value is string=>typeof value==="string" && /^[a-zA-Z0-9_-]{8,100}$/u.test(value);
+    const scoped=project===undefined?{}:{project};
+    if(project!==undefined && !text(project,160))throw invalid("Invalid project scope.");
+    const connection=await engineConnection(brain);
+    if(action==="edit" && text(input.id,200) && typeof input.sha256==="string" && /^[a-f0-9]{64}$/u.test(input.sha256) && text(input.old,8000) && typeof input.new==="string" && input.new.length<=8000)
+      return runBrainMemory(stateRoot,{...connection,action,id:input.id,sha256:input.sha256,old:input.old,new:input.new,...scoped} as Parameters<typeof runBrainMemory>[1]);
+    if(action==="task_create" && key(input.key) && text(input.title,160) && text(input.text,12000) && text(input.owner,160) && (input.nextAction===undefined || text(input.nextAction,1000)))
+      return runBrainMemory(stateRoot,{...connection,action,key:input.key,title:input.title,text:input.text,owner:input.owner,...(input.nextAction===undefined?{}:{nextAction:input.nextAction}),...scoped} as Parameters<typeof runBrainMemory>[1]);
+    if(action==="task_update" && text(input.id,200) && Number.isSafeInteger(input.revision) && Number(input.revision)>0 && typeof input.status==="string" && ["inbox","active","waiting","blocked","done","cancelled"].includes(input.status) && (input.nextAction===undefined || (typeof input.nextAction==="string" && input.nextAction.length<=1000)))
+      return runBrainMemory(stateRoot,{...connection,action,id:input.id,revision:input.revision,status:input.status,...(input.nextAction===undefined?{}:{nextAction:input.nextAction}),...scoped} as Parameters<typeof runBrainMemory>[1]);
+    if(action==="receipt" && key(input.key) && text(input.summary,4000) && Array.isArray(input.refs) && input.refs.length>=1 && input.refs.length<=10 && input.refs.every(ref=>text(ref,200)) && new Set(input.refs).size===input.refs.length)
+      return runBrainMemory(stateRoot,{...connection,action,key:input.key,summary:input.summary,refs:input.refs,...scoped} as Parameters<typeof runBrainMemory>[1]);
+    throw invalid("Invalid bounded Brain workflow request.");
   }, async disconnect() { await save(null); return status(); }};
 }

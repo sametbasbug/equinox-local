@@ -2,6 +2,7 @@
 
 - Introduce a native Plugins workspace and connected-only Control Center settings, beginning with Equinox Brain (Powered by Avenox Beyin). Connect existing V3 vaults or install the pinned SHA-256-verified V3.17.0 upstream release into an empty folder, without deleting vault data on disconnect.
 - Add explicit opt-in local Brain indexing and bounded `brain_search` retrieval through the integrations capability. Keep private/untrusted notes excluded, preserve source citations, and discover Python 3.11+ on macOS and Windows including modern Python Install Manager installations. No automatic context injection.
+- Extend Equinox Brain with guarded body edits, upstream task creation and revision-checked updates, and idempotent source-backed receipts. Add a folder path dialog, native Open vault action and explicit shared preference profile controls.
 - Add exact-ID `brain_read` and separately authorized `brain_create` for new internal notes, with upstream note journaling, stable idempotency, and mandatory screening of agent-written content without changing existing vault preferences.
 
 - Reduce Windows cold-start work by verifying the production-signed ZIP and deriving the native-store fingerprint from the same authenticated physical file scan. All archive, path, inventory, mode, digest and selector checks remain mandatory.
