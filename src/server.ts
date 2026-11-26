@@ -229,6 +229,7 @@ import { registerTaskCapsuleTools } from "./task-capsule-tools.js";
 import { startRuntimeLifecycle } from "./equinox-local-runtime-lifecycle.js";
 import { createTurnBudgetController } from "./turn-budget-controller.js";
 import { equinoxLocalPlatformPaths } from "./equinox-local-platform.js";
+import { createPluginCatalog } from "./equinox-local-plugins.js";
 import { probeWindowsTerminalExecution } from "./equinox-local-windows-terminal-health.js";
 
 type RuntimeBoundary = any; // Cross-module injected runtime compatibility boundary; per-endpoint checks remain in the owning modules.
@@ -243,6 +244,7 @@ const execFile = promisify(execFileCallback);
 const runtimeHomeDir = homeDir;
 const runtimeEnv = env;
 const runtimePlatformPaths = equinoxLocalPlatformPaths({ platform, arch, homeDir: runtimeHomeDir, env: runtimeEnv });
+const pluginCatalog = createPluginCatalog(runtimePlatformPaths.stateRoot);
 
 const equinoxLocalConfigManager:RuntimeBoundary = createEquinoxLocalConfigManager({
   platform,
@@ -3429,6 +3431,10 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
     return disconnectTelegramIntegration();
   }),
   getHttpProfiles: async () => getAuthenticatedHttpProfiles(),
+  getPlugins: pluginCatalog.status,
+  connectBrain: async (vault) => withMutationLocks(["plugins"], () => pluginCatalog.connect(vault)),
+  installBrain: async (vault) => withMutationLocks(["plugins"], () => pluginCatalog.install(vault)),
+  disconnectBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.disconnect()),
   setHttpProfileManagement: async ({ enabled }) => withMutationLocks(["authenticated-http-profiles"], async () => {
     await setAuthenticatedHttpAgentManagement({ enabled });
     return getAuthenticatedHttpProfiles();
