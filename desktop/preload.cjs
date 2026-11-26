@@ -13,6 +13,7 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
         },
         pickFolder: () => ipcRenderer.invoke("equinox-shell:pick-folder"),
         copyText: (value) => ipcRenderer.invoke("equinox-shell:copy-text", value),
+        returnToTask: (taskId, checkpointRevision) => ipcRenderer.invoke("equinox-shell:task-return", { taskId, checkpointRevision }),
         getCommandHistory: () => ipcRenderer.invoke("equinox-shell:command-history-status"),
         setCommandHistory: (value) => {
             if (typeof value !== "boolean")

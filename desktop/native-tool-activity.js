@@ -49,8 +49,9 @@ export function decorateNativeToolActivity(update, generation) {
     const keyOf = (e) => e.owner ? JSON.stringify([e.owner, e.id]) : null;
     const record = (e) => {
         const key = keyOf(e);
-        if (!recording || !key || !e.owner || !e.signature || e.operation !== "terminal_exec" || !e.status || e.status === "running")
+        if (!recording || !key || !e.owner || !e.signature || e.operation !== "terminal_exec" || !e.status || e.status === "running" || e.recordedSignature === e.signature || e.fromDisk)
             return;
+        e.recordedSignature = e.signature;
         pending.set(key, { owner: e.owner, id: e.id, signature: e.signature });
         while (pending.size > 120) {
             const first = pending.keys().next().value;
@@ -285,8 +286,10 @@ export function decorateNativeToolActivity(update, generation) {
             duration: typeof d.durationMs === "number" && Number.isFinite(d.durationMs) && d.durationMs >= 0 ? Math.round(d.durationMs) : null };
         accepted = Math.min(10000, accepted + 1);
         const signature = JSON.stringify(data);
-        if (signature === e.signature && e.host?.isConnected)
+        if (signature === e.signature && e.host?.isConnected) {
+            record(e);
             return;
+        }
         renderRow(e, data, signature, true);
         record(e);
         const key = keyOf(e);
@@ -491,7 +494,9 @@ export function decorateNativeToolActivity(update, generation) {
             const items = [...pending.entries()].slice(0, 32);
             for (const [key] of items)
                 pending.delete(key);
-            return { pathname: location.pathname, items: items.map(([, item]) => item) };
+            return JSON.stringify({ pathname: location.pathname, items: items.map(([, item]) => item), recording,
+                observed: accepted, owned: [...entries.values()].filter(e => e.owner && e.signature).length,
+                retained: retained.size });
         }, refresh(pathname, nextLanguage, nextGeneration, nextRecording) {
             if (disposed || !sameRoute() || location.pathname !== pathname)
                 return false;
@@ -512,6 +517,6 @@ export function decorateNativeToolActivity(update, generation) {
         }, inspect: () => ({ frames, candidates, requests, replies, accepted }) };
     window.addEventListener("message", onMessage);
     window.addEventListener("load", onLoad, true);
-    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "data-response-body", "data-mcp-app-portal-target", "data-mcp-app-origin-generated", "data-spacing"] });
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "data-response-body", "data-mcp-app-portal-target", "data-mcp-app-origin-generated", "data-spacing", "data-turn-key", "data-content-search-turn-key", "data-chatgpt-conversation-selection-target", "data-chatgpt-search-message-ids", "data-chatgpt-search-unit-key"] });
     scan();
 }

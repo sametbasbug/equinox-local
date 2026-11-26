@@ -81,6 +81,27 @@ export function createEquinoxLocalCliBridge({ stateRoot, platform = process.plat
                 throw new Error("Unsupported native Chat exchange.");
             return { status: 200, body: { ok: true, ...nativeChatExchange(input.exchange) } };
         }
+        if (action === "task.return") {
+            // Private current-user socket only. The renderer never provides or
+            // receives a conversation URL or a browser target to substitute.
+            if (Object.keys(input).some(key => !["token", "action", "taskId", "checkpointRevision"].includes(key)) ||
+                !Number.isSafeInteger(input.checkpointRevision))
+                throw new Error("Invalid task return request.");
+            const task = await tasks.readInternal(taskId(input));
+            if (task.status !== "active" || task.checkpointRevision !== input.checkpointRevision)
+                throw new Error("The task checkpoint changed. Refresh before returning.");
+            const binding = task.chatBinding;
+            if (!binding)
+                throw new Error("This task has no verified conversation.");
+            if (task.freshResume?.status === "creating" || task.continuation?.status === "delivering")
+                throw new Error("A conversation transition is in progress.");
+            if (binding.browserContext === "native")
+                return { status: 200, body: { ok: true, context: "native", canonicalUrl: binding.canonicalUrl, conversationId: binding.conversationId } };
+            if (binding.browserContext !== "agent" && binding.browserContext !== "user")
+                throw new Error("Unsupported conversation context.");
+            await chat.focusBinding(binding);
+            return { status: 200, body: { ok: true, context: binding.browserContext } };
+        }
         if (action === "control.request") {
             // A private CLI socket token is required by the framing server before
             // dispatch. Only the existing bounded Control Center operation set is

@@ -9,7 +9,7 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
   const world = window as Window & {__equinoxRunTimeline?: {generation: number; dispose: () => void;
     refresh: (pathname: string, language: "en" | "tr", generation: number, recording: boolean) => boolean;
     restore: (input: unknown) => void;
-    take: () => {pathname:string; items: {owner:string;id:string;signature:string}[]};
+    take: () => string;
     discardPending: (clearRestored?:boolean) => void;
     inspect: () => {frames: number; candidates: number; requests: number; replies: number; accepted: number}}};
   if (world.__equinoxRunTimeline && world.__equinoxRunTimeline.generation > generation) return;
@@ -27,7 +27,7 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
   const tr = (en: string, turkish: string) => language === "tr" ? turkish : en;
   const selector = "[data-response-body] > [data-mcp-app-portal-target] iframe";
   type Presentation = {body: Element; id: string; owner: string | null;
-    host?: HTMLDivElement; row?: HTMLDetailsElement; group?: HTMLButtonElement; operation?: string; status?: string; signature?: string; collapsedSlot?: Element; fromDisk?:boolean};
+    host?: HTMLDivElement; row?: HTMLDetailsElement; group?: HTMLButtonElement; operation?: string; status?: string; signature?: string; recordedSignature?:string; collapsedSlot?: Element; fromDisk?:boolean};
   type Entry = Presentation & {frame: HTMLIFrameElement; portal: Element; src: string; origin: string; nonce: string; timers: number[]};
   const entries = new Map<HTMLIFrameElement, Entry>();
   // Only data received from a verified live invocation is retained. Keep
@@ -50,7 +50,8 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
   const keyOf = (e: Presentation) => e.owner ? JSON.stringify([e.owner,e.id]) : null;
   const record = (e:Presentation) => {
     const key=keyOf(e);
-    if(!recording||!key||!e.owner||!e.signature||e.operation!=="terminal_exec"||!e.status||e.status==="running")return;
+    if(!recording||!key||!e.owner||!e.signature||e.operation!=="terminal_exec"||!e.status||e.status==="running"||e.recordedSignature===e.signature||e.fromDisk)return;
+    e.recordedSignature=e.signature;
     pending.set(key,{owner:e.owner,id:e.id,signature:e.signature});
     while(pending.size>120){const first=pending.keys().next().value;if(first===undefined)break;pending.delete(first);}
   };
@@ -236,7 +237,7 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
       duration:typeof d.durationMs==="number"&&Number.isFinite(d.durationMs)&&d.durationMs>=0?Math.round(d.durationMs):null};
     accepted=Math.min(10000,accepted+1);
     const signature=JSON.stringify(data);
-    if(signature===e.signature&&e.host?.isConnected)return;
+    if(signature===e.signature&&e.host?.isConnected){record(e);return;}
     renderRow(e,data,signature,true);
     record(e);
     const key=keyOf(e);
@@ -351,7 +352,9 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
   },take(){
     const items=[...pending.entries()].slice(0,32);
     for(const [key] of items)pending.delete(key);
-    return {pathname:location.pathname,items:items.map(([,item])=>item)};
+    return JSON.stringify({pathname:location.pathname,items:items.map(([,item])=>item),recording,
+      observed:accepted,owned:[...entries.values()].filter(e=>e.owner&&e.signature).length,
+      retained:retained.size});
   },refresh(pathname,nextLanguage,nextGeneration,nextRecording) {
     if(disposed||!sameRoute()||location.pathname!==pathname)return false;
     this.generation=nextGeneration;
@@ -367,6 +370,6 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
   },inspect:()=>({frames,candidates,requests,replies,accepted})};
   window.addEventListener("message",onMessage);
   window.addEventListener("load",onLoad,true);
-  observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["src","data-response-body","data-mcp-app-portal-target","data-mcp-app-origin-generated","data-spacing"]});
+  observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["src","data-response-body","data-mcp-app-portal-target","data-mcp-app-origin-generated","data-spacing","data-turn-key","data-content-search-turn-key","data-chatgpt-conversation-selection-target","data-chatgpt-search-message-ids","data-chatgpt-search-unit-key"]});
   scan();
 }

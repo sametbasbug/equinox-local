@@ -63,7 +63,15 @@ function providerProbe(action, expected) {
         || (expected.home ? home !== expected.home || canonicalUrl !== null : canonicalUrl !== expected.canonicalUrl)
         || userEpoch !== expected.userEpoch || assistantTurnKey !== expected.assistantTurnKey)
         return result;
-    if (action === "fresh" && result.composerEmpty && expected.freshUrl && route) {
+    if (action === "return" && result.composerEmpty && expected.returnUrl) {
+        const destination = new URL(expected.returnUrl);
+        if (destination.origin === url.origin && !destination.username && !destination.password && !destination.search && !destination.hash &&
+            /^\/(?:g\/[A-Za-z0-9_-]{8,160}\/)?c\/[A-Za-z0-9-]{8,160}\/?$/u.test(destination.pathname)) {
+            location.assign(destination.href);
+            result.performed = true;
+        }
+    }
+    else if (action === "fresh" && result.composerEmpty && expected.freshUrl && route) {
         const scope = route[1] ? /^(g-p-[a-f0-9]{32})(?:-[a-z0-9][a-z0-9-]{0,126})?$/u.exec(route[1])?.[1] : "root";
         const destination = scope === "root" ? url.origin + "/" : scope ? url.origin + "/g/" + scope : null;
         // Recheck the empty composer and current turn in the same DOM operation
@@ -122,14 +130,14 @@ export function createNativeChatContinuity(win, contents, isVisible, onBudget = 
         } })();
     const usable = () => aliveVisible() && inspectable();
     async function probe(action = "inspect", expected) {
-        const available = action === "inspect" ? inspectable : usable;
+        const available = action === "inspect" || action === "return" ? inspectable : usable;
         if (!available())
             return null;
         const before = contents.getURL();
         try {
             const result = await contents.executeJavaScriptInIsolatedWorld(1001, [{ code: "(" + providerProbe.toString() + ")(" + JSON.stringify(action) + "," + JSON.stringify(expected ?? null) + ")" }]);
             if (!available() || contents.getURL() !== before)
-                return (action === "submit" || action === "fresh") && result?.performed ? result : null;
+                return (action === "submit" || action === "fresh" || action === "return") && result?.performed ? result : null;
             return result;
         }
         catch {
@@ -263,6 +271,29 @@ export function createNativeChatContinuity(win, contents, isVisible, onBudget = 
         }
     }
     void tick();
-    return { dispose() { stopped = true; if (timer)
-            clearTimeout(timer); onBudget(null); } };
+    return {
+        async returnToConversation(canonicalUrl, conversationId) {
+            const destination = routeIdentity(canonicalUrl);
+            if (!destination || destination.conversationId !== conversationId || !inspectable())
+                return false;
+            if (routeIdentity(contents.getURL())?.canonicalUrl === destination.canonicalUrl)
+                return true;
+            const current = await probe();
+            if (!current || current.generationActive || !current.composerReady || !current.composerEmpty ||
+                (!current.canonicalUrl && !current.home))
+                return false;
+            const result = await probe("return", { ...(current.canonicalUrl ? { canonicalUrl: current.canonicalUrl } : { home: current.home }),
+                userEpoch: current.userEpoch, assistantTurnKey: current.assistantTurnKey, prompt: "", expiresAt: Date.now() + 5000, returnUrl: destination.canonicalUrl });
+            if (!result?.performed)
+                return false;
+            for (let i = 0; i < 40 && alive(); i++) {
+                if (!contents.isLoadingMainFrame() && routeIdentity(contents.getURL())?.canonicalUrl === destination.canonicalUrl)
+                    return true;
+                await delay(250);
+            }
+            return false;
+        },
+        dispose() { stopped = true; if (timer)
+            clearTimeout(timer); onBudget(null); }
+    };
 }

@@ -13,7 +13,7 @@ type Dependencies = {
   desktop: {catalog: () => Promise<unknown>;describe: (name: string) => Promise<unknown>;call?: (operation: string, args: JsonRecord) => Promise<unknown>;invoke?: (operation: string, args: JsonRecord) => Promise<unknown>};
   control: {executeDesktop: (request: {method: string; path: string; body?: string; backgroundRefresh?: boolean}) => Promise<{status:number;body:JsonRecord}>};
   tasks: {checkpoint: (args: JsonRecord) => Promise<any>;list: (args: JsonRecord) => Promise<unknown>;read: (id: string) => Promise<any>;readInternal: (id: string) => Promise<any>;remove: (id: string) => Promise<any>;bindChat: (args: JsonRecord) => Promise<unknown>};
-  chat: {inspectTurnIdentity: (args: JsonRecord) => Promise<any>;startTaskChat: (args: JsonRecord) => Promise<any>;deliverText: (args: JsonRecord) => Promise<any>;readFinal: (args: JsonRecord) => Promise<any>};
+  chat: {focusBinding:(binding:unknown)=>Promise<unknown>;inspectTurnIdentity: (args: JsonRecord) => Promise<any>;startTaskChat: (args: JsonRecord) => Promise<any>;deliverText: (args: JsonRecord) => Promise<any>;readFinal: (args: JsonRecord) => Promise<any>};
   assertMutationAllowed: (operation: string) => void;
   nativeChatExchange?: (input: unknown) => unknown;
 };
@@ -78,6 +78,23 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
     if (action === "native-chat.exchange") {
       if (!nativeChatExchange || Object.keys(input).some(key => !["token", "action", "exchange"].includes(key))) throw new Error("Unsupported native Chat exchange.");
       return {status: 200, body: {ok: true, ...nativeChatExchange(input.exchange) as object}};
+    }
+    if(action==="task.return"){
+      // Private current-user socket only. The renderer never provides or
+      // receives a conversation URL or a browser target to substitute.
+      if(Object.keys(input).some(key=>!["token","action","taskId","checkpointRevision"].includes(key))||
+        !Number.isSafeInteger(input.checkpointRevision))throw new Error("Invalid task return request.");
+      const task=await tasks.readInternal(taskId(input));
+      if(task.status!=="active"||task.checkpointRevision!==input.checkpointRevision)
+        throw new Error("The task checkpoint changed. Refresh before returning.");
+      const binding=task.chatBinding;
+      if(!binding)throw new Error("This task has no verified conversation.");
+      if(task.freshResume?.status==="creating"||task.continuation?.status==="delivering")
+        throw new Error("A conversation transition is in progress.");
+      if(binding.browserContext==="native")return {status:200,body:{ok:true,context:"native",canonicalUrl:binding.canonicalUrl,conversationId:binding.conversationId}};
+      if(binding.browserContext!=="agent"&&binding.browserContext!=="user")throw new Error("Unsupported conversation context.");
+      await chat.focusBinding(binding);
+      return {status:200,body:{ok:true,context:binding.browserContext}};
     }
     if (action === "control.request") {
       // A private CLI socket token is required by the framing server before

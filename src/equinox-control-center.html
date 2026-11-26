@@ -116,13 +116,13 @@
               </label>
             </div>
           </div>
-          <label class="preference-row language-control">
+          <div class="preference-row">
             <span>Assistant home</span>
-            <select id="assistant-home-select" aria-label="Assistant home">
-              <option value="portrait">Portrait</option>
-              <option value="type">Typography</option>
-            </select>
-          </label>
+            <div class="theme-switch assistant-home-switch" role="group" aria-label="Assistant home">
+              <button type="button" data-assistant-home="portrait" class="theme-option is-active" aria-pressed="true">Portrait</button>
+              <button type="button" data-assistant-home="type" class="theme-option" aria-pressed="false">Typography</button>
+            </div>
+          </div>
           <div class="command-history-preference">
             <label><input id="command-history-enabled" type="checkbox"> <span>Keep local command history</span></label>
             <p>Commands and outputs may contain sensitive data. Saved encrypted on this device for up to 30 days.</p>
@@ -583,6 +583,12 @@
                 <div><div class="task-heading-line"><h3 id="task-detail-title" tabindex="-1">Task</h3><span id="task-status-badge" class="badge neutral">Active</span></div><code id="task-detail-id" class="task-detail-id">task—</code><p id="task-detail-meta" class="task-detail-meta">Checkpoint — · Updated —</p></div>
                 <div class="task-continuation-summary"><span>Auto Continue</span><strong id="task-continuation-state">Not armed</strong><small id="task-continuation-target">No browser target</small></div>
               </div>
+              <section id="task-return-panel" class="task-return-panel" hidden aria-labelledby="task-return-heading">
+                <div class="task-return-heading"><div><h4 id="task-return-heading">Return to work</h4><p id="task-return-context"></p></div><span id="task-return-checkpoint" class="badge neutral"></span></div>
+                <div class="task-return-next"><span>Next saved step</span><p id="task-return-next"></p></div>
+                <p id="task-return-reason" class="task-return-reason" role="status"></p>
+                <div class="task-return-actions"><button id="task-return-button" class="button primary" type="button">Return to conversation</button><button id="task-copy-resume" class="button secondary" type="button">Copy continuation prompt</button></div>
+              </section>
               <section id="task-recovery-panel" class="task-recovery-panel" hidden aria-live="polite">
                 <div class="task-recovery-heading"><span class="eyebrow">Task recovery</span><span id="task-recovery-badge" class="badge neutral">Recoverable</span></div>
                 <strong id="task-recovery-title">Fresh-chat handoff stopped</strong>

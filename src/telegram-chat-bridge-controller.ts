@@ -161,6 +161,21 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
     return { binding: target, state, reacquired: target.tabId !== binding.tabId };
   };
 
+  // A human-initiated return focuses an existing exact bound tab. It
+  // neither rebinds a task nor sends a continuation prompt.
+  const focusBinding = async (binding: unknown) => {
+    const {binding:target}=await inspectBinding(binding, REQUIRED_CHAT_BRIDGE_VERSION,
+      {allowMissingAssistantTurnKey:true,allowMissingUserEpoch:true});
+    await callContext(target.browserContext,"tabs.activate",{tabId:target.tabId},5_000);
+    const verified=await inspectBinding(target, REQUIRED_CHAT_BRIDGE_VERSION,
+      {allowMissingAssistantTurnKey:true,allowMissingUserEpoch:true});
+    if(verified.binding.tabId!==target.tabId)throw new Error("The bound tab changed during activation.");
+    const tabs=await callContext(target.browserContext,"tabs.list",{},5_000) as (BrowserTab&{active?:boolean})[];
+    if(!Array.isArray(tabs)||!tabs.some(tab=>Number(tab.id??tab.tabId)===target.tabId&&tab.active===true&&chatGptConversationIdFromUrl(tab.url)===target.conversationId))
+      throw new Error("The bound conversation could not be confirmed active.");
+    return {browserContext:target.browserContext};
+  };
+
   const deliverText = async ({ binding, deliveryId, text, tool, file, files, requireExactTab = false }: {
     binding?: Binding; deliveryId?: string; text?: string;
     tool?:{name:string;kind:"tool"|"app"};file?:{path:string;name:string;size:number};
@@ -832,5 +847,5 @@ export function createTelegramChatBridgeController({ browserBridge, agentControl
       richText:validateChatRichText((result as BrowserResult & {richText?:unknown}).richText,4000),tabId:target.tabId});
   };
 
-  return Object.freeze({ inspectBinding, inspectTurnIdentity, deliverText, readFinal, readRecent, readLive, startTaskChat });
+  return Object.freeze({ inspectBinding, inspectTurnIdentity, focusBinding, deliverText, readFinal, readRecent, readLive, startTaskChat });
 }

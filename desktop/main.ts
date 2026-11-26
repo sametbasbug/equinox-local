@@ -7,7 +7,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { CONTROL_ORIGIN, isControlDocument, mutateControl, readControlJson, requestUiControlJson } from "./control-client.js";
+import { CONTROL_ORIGIN, isControlDocument, mutateControl, readControlJson, requestUiControlJson, returnToTaskConversation } from "./control-client.js";
 import { controlPageURL, installControlAssets, registerControlScheme } from "./control-assets.js";
 import { createRuntimeOwner } from "./runtime-owner.js";
 import type { RuntimeLaunch, RuntimeOwnerState } from "./runtime-owner.js";
@@ -884,10 +884,28 @@ ipcMain.handle("equinox-shell:pick-folder", async (event) => {
     return { cancelled: false, path: selected };
   } finally { pickerPending = false; }
 });
+ipcMain.handle("equinox-shell:task-return", async(event,value:unknown)=>{
+  if(!trustedSender(event)||quitting||!value||typeof value!=="object"||Array.isArray(value))throw new Error("Task return unavailable.");
+  const args=value as Record<string,unknown>;
+  if(Object.keys(args).some(k=>k!=="taskId"&&k!=="checkpointRevision")||typeof args.taskId!=="string"||
+    !/^task-[a-z0-9-]{6,80}$/u.test(args.taskId)||!Number.isSafeInteger(args.checkpointRevision))throw new Error("Invalid task return.");
+  const result=await returnToTaskConversation(args.taskId,Number(args.checkpointRevision));
+  if(!trustedSender(event)||quitting)throw new Error("Task return window changed.");
+  if(result.context==="native"){
+    if(!embeddedChat)throw new Error(text("Open Assistant first, then return to the task.","Önce Asistan'ı aç, ardından göreve dön."));
+    if(typeof result.canonicalUrl!=="string"||typeof result.conversationId!=="string"||
+      !await embeddedChat.returnToConversation(result.canonicalUrl,result.conversationId))
+      throw new Error(text("The saved native conversation could not be opened safely. Check the current chat or draft.","Kayıtlı yerel sohbet güvenli şekilde açılamadı. Mevcut sohbeti veya taslağı kontrol et."));
+    if(!trustedSender(event)||quitting)throw new Error("Task return window changed.");
+    openCompanionWorkspace("chat");
+  }else if(result.context!=="user"&&result.context!=="agent")throw new Error("Unsupported saved conversation.");
+  return true;
+});
 ipcMain.handle("equinox-shell:command-history-status", async event => {
   if(!trustedSender(event)||quitting||!activityHistory)throw new Error("Command history is unavailable.");
   await activityHistory.ready();
-  return activityHistory.status();
+  const status=activityHistory.status();
+  return runtimeRole==="source"?{...status,diagnostics:{...activityHistory.diagnostics(),...embeddedChat?.historyDiagnostics()}}:status;
 });
 ipcMain.handle("equinox-shell:command-history-enable", async (event,value:unknown) => {
   if(!trustedSender(event)||quitting||!activityHistory||!shellPreferences||typeof value!=="boolean")throw new Error("Command history is unavailable.");

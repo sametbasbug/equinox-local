@@ -8,7 +8,7 @@ type Probe = {
   generationActive: boolean; composerReady: boolean; composerEmpty: boolean;
   lastUserMatches: boolean; performed: boolean;
 };
-type Expected = { canonicalUrl?: string; home?: string; userEpoch: string | null; assistantTurnKey: string | null; prompt: string; expiresAt: number; freshUrl?: string };
+type Expected = { canonicalUrl?: string; home?: string; userEpoch: string | null; assistantTurnKey: string | null; prompt: string; expiresAt: number; freshUrl?: string; returnUrl?:string };
 type Request = {
   id: string; instanceId: string; method: "continuation.deliver" | "resume.create"; expiresAt: number;
   args: { tabId: number; conversationId: string; canonicalUrl: string; userEpoch: string; assistantTurnKey: string; prompt: string };
@@ -20,7 +20,7 @@ const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 
 /** Fixed isolated-world DOM operation, never a script or selector supplied by
  * the runtime, provider, renderer or MCP caller. Returns only identity/booleans. */
-function providerProbe(action: "inspect" | "focus" | "submit" | "fresh", expected?: Expected): Probe {
+function providerProbe(action: "inspect" | "focus" | "submit" | "fresh" | "return", expected?: Expected): Probe {
   const last = (items: Element[]) => items.at(-1) ?? null;
   const id = (value: string | null | undefined) => {
     const token = String(value || "").trim().split(/\s+/u)[0] || "";
@@ -72,7 +72,13 @@ function providerProbe(action: "inspect" | "focus" | "submit" | "fresh", expecte
   if (action === "inspect" || !expected || Date.now() >= expected.expiresAt || !composer || generationActive || attachments
     || (expected.home ? home !== expected.home || canonicalUrl !== null : canonicalUrl !== expected.canonicalUrl)
     || userEpoch !== expected.userEpoch || assistantTurnKey !== expected.assistantTurnKey) return result;
-  if (action === "fresh" && result.composerEmpty && expected.freshUrl && route) {
+  if(action==="return"&&result.composerEmpty&&expected.returnUrl){
+    const destination=new URL(expected.returnUrl);
+    if(destination.origin===url.origin&&!destination.username&&!destination.password&&!destination.search&&!destination.hash&&
+      /^\/(?:g\/[A-Za-z0-9_-]{8,160}\/)?c\/[A-Za-z0-9-]{8,160}\/?$/u.test(destination.pathname)){
+      location.assign(destination.href);result.performed=true;
+    }
+  } else if (action === "fresh" && result.composerEmpty && expected.freshUrl && route) {
     const scope = route[1] ? /^(g-p-[a-f0-9]{32})(?:-[a-z0-9][a-z0-9-]{0,126})?$/u.exec(route[1])?.[1] : "root";
     const destination = scope === "root" ? url.origin + "/" : scope ? url.origin + "/g/" + scope : null;
     // Recheck the empty composer and current turn in the same DOM operation
@@ -113,13 +119,13 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
   const inspectable = () => alive() && !contents.isLoadingMainFrame()
     && (() => { try {return new URL(contents.getURL()).origin === ORIGIN;} catch {return false;} })();
   const usable = () => aliveVisible() && inspectable();
-  async function probe(action: "inspect" | "focus" | "submit" | "fresh" = "inspect", expected?: Expected): Promise<Probe | null> {
-    const available = action === "inspect" ? inspectable : usable;
+  async function probe(action: "inspect" | "focus" | "submit" | "fresh" | "return" = "inspect", expected?: Expected): Promise<Probe | null> {
+    const available = action === "inspect" || action==="return" ? inspectable : usable;
     if (!available()) return null;
     const before = contents.getURL();
     try {
       const result = await contents.executeJavaScriptInIsolatedWorld(1001, [{code: "(" + providerProbe.toString() + ")(" + JSON.stringify(action) + "," + JSON.stringify(expected ?? null) + ")"}]) as Probe;
-      if (!available() || contents.getURL() !== before) return (action === "submit" || action === "fresh") && result?.performed ? result : null;
+      if (!available() || contents.getURL() !== before) return (action === "submit" || action === "fresh" || action==="return") && result?.performed ? result : null;
       return result;
     } catch { return null; }
   }
@@ -212,5 +218,23 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
     finally { if (!stopped) timer = setTimeout(() => { void tick(); }, reply ? 0 : aliveVisible() ? 650 : 1_000); }
   }
   void tick();
-  return {dispose() {stopped = true; if (timer) clearTimeout(timer); onBudget(null);}};
+  return {
+    async returnToConversation(canonicalUrl:string,conversationId:string):Promise<boolean>{
+      const destination=routeIdentity(canonicalUrl);
+      if(!destination||destination.conversationId!==conversationId||!inspectable())return false;
+      if(routeIdentity(contents.getURL())?.canonicalUrl===destination.canonicalUrl)return true;
+      const current=await probe();
+      if(!current||current.generationActive||!current.composerReady||!current.composerEmpty||
+        (!current.canonicalUrl&&!current.home))return false;
+      const result=await probe("return",{...(current.canonicalUrl?{canonicalUrl:current.canonicalUrl}:{home:current.home!}),
+        userEpoch:current.userEpoch,assistantTurnKey:current.assistantTurnKey,prompt:"",expiresAt:Date.now()+5000,returnUrl:destination.canonicalUrl});
+      if(!result?.performed)return false;
+      for(let i=0;i<40&&alive();i++){
+        if(!contents.isLoadingMainFrame()&&routeIdentity(contents.getURL())?.canonicalUrl===destination.canonicalUrl)return true;
+        await delay(250);
+      }
+      return false;
+    },
+    dispose() {stopped = true; if (timer) clearTimeout(timer); onBudget(null);}
+  };
 }

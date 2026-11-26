@@ -1605,6 +1605,7 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
     // Only the isolated, verified invocation queue is read. The provider
     // page has no filesystem API. Disabled history never pulls or writes.
     let historyBusy = false;
+    let historyDiagnostic = { polls: 0, observed: 0, owned: 0, retained: 0, queued: 0, recording: false, errors: 0 };
     const historyTimer = setInterval(async () => {
         if (historyBusy || !chatVisible || disposed || !history?.status().enabled || !history.status().available ||
             view.webContents.isDestroyed() || !isChatGPTOrigin(view.webContents.getURL()))
@@ -1613,11 +1614,23 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
         const pathname = new URL(view.webContents.getURL()).pathname;
         const epoch = history.epoch();
         try {
-            const value = await view.webContents.executeJavaScriptInIsolatedWorld(1002, [{ code: "window.__equinoxRunTimeline?.take() ?? null" }]);
-            if (value?.pathname === pathname && isChatGPTOrigin(view.webContents.getURL()) && new URL(view.webContents.getURL()).pathname === pathname)
+            const reply = await view.webContents.executeJavaScriptInIsolatedWorld(1002, [{ code: "window.__equinoxRunTimeline?.take() ?? null" }]);
+            if (typeof reply !== "string" || reply.length > 10_000_000)
+                return;
+            const value = JSON.parse(reply);
+            if (value?.pathname === pathname && isChatGPTOrigin(view.webContents.getURL()) && new URL(view.webContents.getURL()).pathname === pathname) {
+                if (diagnoseActivity) {
+                    const count = (n) => Number.isSafeInteger(n) && Number(n) >= 0 && Number(n) <= 10000 ? Number(n) : 0;
+                    historyDiagnostic = { ...historyDiagnostic, polls: Math.min(10000, historyDiagnostic.polls + 1), observed: count(value.observed),
+                        owned: count(value.owned), retained: count(value.retained), queued: Math.min(10000, historyDiagnostic.queued + (Array.isArray(value.items) ? value.items.length : 0)), recording: value.recording === true };
+                }
                 await history.merge(pathname, value.items, epoch);
+            }
         }
-        catch { /* persistence is optional */ }
+        catch {
+            if (diagnoseActivity)
+                historyDiagnostic.errors = Math.min(10000, historyDiagnostic.errors + 1);
+        }
         finally {
             historyBusy = false;
         }
@@ -1667,6 +1680,8 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
                 return;
             openProvider();
         },
+        returnToConversation: continuity.returnToConversation,
+        historyDiagnostics() { return { ...historyDiagnostic }; },
         refreshHistory() { if (chatVisible)
             applyIdentity(); },
         async discardHistoryPending(clearRestored = false) {

@@ -41,6 +41,7 @@ function validated(pathname, input) {
 export function createNativeActivityHistory(directory, initialEnabled) {
     const file = path.join(directory, "native-command-history.enc");
     let enabled = false, failed = false, epoch = 0, nextPruneAt = 0;
+    let received = 0, validCount = 0;
     let available = process.platform === "darwin" || process.platform === "win32";
     let tail = Promise.resolve();
     function enqueue(action) {
@@ -159,6 +160,7 @@ export function createNativeActivityHistory(directory, initialEnabled) {
     return {
         ready: () => ready,
         epoch: () => epoch,
+        diagnostics: () => ({ received, valid: validCount }),
         status: () => ({ enabled, available: available && !failed, count: currentRecords().length }),
         setEnabled(value) {
             epoch++;
@@ -193,10 +195,12 @@ export function createNativeActivityHistory(directory, initialEnabled) {
                 if (Date.now() >= nextPruneAt)
                     prune();
                 let changed = before !== records.length;
+                received = Math.min(10000, received + input.length);
                 for (const raw of input) {
                     const item = validated(pathname, raw);
                     if (!item)
                         continue;
+                    validCount = Math.min(10000, validCount + 1);
                     const previous = records.find(x => x.pathname === pathname && x.owner === item.owner && x.id === item.id);
                     if (previous?.signature === item.signature)
                         continue;

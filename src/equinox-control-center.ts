@@ -15,7 +15,7 @@ type ChatLoadState = "loading" | "ready" | "offline" | "failed";
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {returnToTask:(taskId:string,checkpointRevision:number)=>Promise<boolean>;getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -227,7 +227,7 @@ function localizeUiText(value: UiRemoteData) {
 
 const DYNAMIC_TEXT_IDS = new Set([
   "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "section-summary", "last-refreshed",
-  "chat-identity-feedback", "command-history-status", "native-turn-budget", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
+  "task-return-context", "task-return-checkpoint", "task-return-next", "task-return-reason", "chat-identity-feedback", "command-history-status", "native-turn-budget", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
   "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
   "runtime-health-badge", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
   "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
@@ -2491,6 +2491,36 @@ function freshResumeRecoveryPresentation(freshResume: UiRemoteData) {
   return null;
 }
 
+function taskReturnReason(task:UiRemoteData):string {
+  if(task.humanInput)return "A human reply is saved for the next continuation.";
+  const c=task.continuation;
+  if(c?.status==="armed"){
+    if(c.target?.browserContext==="native"&&state.status?.nativeChat?.viewVisible===false)
+      return "Auto Continue is waiting for the Assistant view.";
+    return "Auto Continue is armed for the saved conversation.";
+  }
+  if(c?.status==="delivering")return "A continuation is being delivered.";
+  const reason=String(c?.reason||"");
+  const messages:Record<string,string>={
+    composer_not_empty:"A draft or attachment prevented Auto Continue.",
+    human_interruption:"A new human message interrupted Auto Continue.",
+    conversation_changed:"The bound conversation changed.",
+    assistant_turn_changed:"The assistant turn changed.",
+    browser_target_unavailable:"The bound browser was unavailable.",
+    missing_browser_target:"No verified browser target was available.",
+    agent_paused:"Agent execution was paused.",
+    checkpoint_changed:"The checkpoint changed.",
+    browser_delivery_ambiguous_error:"Continuation delivery could not be confirmed.",
+    browser_delivery_unconfirmed:"Continuation delivery could not be confirmed.",
+    duplicate_delivery_prevented:"A duplicate continuation was prevented.",
+    delivery_guard_failed:"Continuation safety checks failed.",
+  };
+  if(reason)return messages[reason]??(localizeUiText("Continuation stopped")+" · "+reason.slice(0,120));
+  if(c?.status==="expired")return "The continuation window expired.";
+  if(c?.status==="delivered")return "The last continuation was delivered.";
+  return "Continue manually from the saved checkpoint.";
+}
+
 function taskLines(value: UiRemoteData) {
   return String(value || "").split(/\r?\n/u).map((item) => item.trim()).filter(Boolean);
 }
@@ -2625,6 +2655,20 @@ function renderTasks() {
   setText("task-continuation-state", continuation.label);
   setText("task-continuation-target", taskTargetLabel(current?.continuation ?? task.continuation));
   const revisionChanged = Boolean(current && current.checkpointRevision !== task.checkpointRevision);
+  const saved=current??task;
+  const context=saved.chatBinding?.browserContext;
+  const contextLabel=context==="native"?"Native Chat":context==="agent"?"Agent Browser":context==="user"?"Your Browser":"No verified conversation";
+  const returnPanel=$("task-return-panel");
+  returnPanel.hidden=saved.status!=="active";
+  if(!returnPanel.hidden){
+    setText("task-return-context",contextLabel);
+    setText("task-return-checkpoint","Checkpoint "+saved.checkpointRevision);
+    setText("task-return-next",saved.next?.[0]??"No next step recorded.");
+    setText("task-return-reason",revisionChanged?"A newer checkpoint is available. Load it before returning.":taskReturnReason(saved));
+    $("task-return-button").disabled=!current||!context||state.taskBusy||revisionChanged||
+      saved.continuation?.status==="delivering"||saved.freshResume?.status==="creating"||!window.equinoxShell?.returnToTask;
+    $("task-copy-resume").disabled=!current||state.taskBusy||revisionChanged||!window.equinoxShell?.copyText;
+  }
   $("task-draft-panel").hidden = !state.taskDraftDirty;
   $("task-discard-draft").disabled = state.taskBusy;
   setText("task-draft-note", !current
@@ -2772,6 +2816,26 @@ async function deleteSelectedTask() {
     state.taskReadGeneration += 1;
     renderTasks();
   }
+}
+
+async function returnToSelectedTask() {
+  const task=currentTaskRecord();
+  if(!task||task.status!=="active"||$("task-return-button").disabled||state.taskBusy)return;
+  state.taskBusy=true;renderTasks();
+  try {
+    if(!await window.equinoxShell?.returnToTask(task.taskId,task.checkpointRevision))throw new Error("The saved conversation could not be opened.");
+    showToast("Returned to the saved conversation.");
+  }catch(error){showError(error);}
+  finally{state.taskBusy=false;renderTasks();}
+}
+async function copySelectedContinuation() {
+  const task=currentTaskRecord();
+  if(!task||task.status!=="active"||$("task-copy-resume").disabled)return;
+  const prompt="Continue task "+task.taskId+" from checkpoint "+task.checkpointRevision+". Read the latest Task Capsule from Equinox Local, follow its current objective and next steps, and continue from the safe checkpoint.";
+  try{
+    if(!await window.equinoxShell?.copyText(prompt))throw new Error("Could not copy the continuation prompt.");
+    showToast("Continuation prompt copied.");
+  }catch(error){showError(error);}
 }
 
 async function runTaskAction(action: UiRemoteData) {
@@ -4143,7 +4207,14 @@ function bindEvents() {
       checkbox.checked=status.enabled;
       checkbox.disabled=!status.available&&!status.enabled;
       clear.disabled=status.available&&!status.count&&!status.enabled;
-      setText("command-history-status",status.available ? (status.enabled ? "Local history enabled" : "Not saved") : "Encryption or storage unavailable");
+      setText("command-history-status",status.available ? (status.enabled ? localizeUiText("Local history enabled")+" · "+status.count : "Not saved") : "Encryption or storage unavailable");
+      // Factory-only numeric diagnostics from trusted main; no command,
+      // output, URL or invocation identity is included.
+      const diagnostic=(status as {diagnostics?:Record<string,unknown>}).diagnostics;
+      if(diagnostic){
+        const parts=["polls","observed","owned","retained","queued","received","valid","errors"].map(key=>key+" "+String(diagnostic[key]??0));
+        $("command-history-status").title=parts.join(" · ")+" · recording "+String(diagnostic.recording===true);
+      }
     };
     try{apply(await (action??shell.getCommandHistory)());}
     catch(error){showError(error);try{apply(await shell.getCommandHistory());}catch{/* unavailable */}}
@@ -4156,20 +4227,25 @@ function bindEvents() {
   });
   $("settings-open-button").addEventListener("click", () => {
     void renderCommandHistory();
-    if (window.equinoxShell) $("assistant-home-select").value = window.equinoxShell.getAssistantHome();
+    if (window.equinoxShell) renderAssistantHome(window.equinoxShell.getAssistantHome());
     settingsDialog.showModal();
     if (window.equinoxShell) void changeChatIdentity(() => window.equinoxShell!.getChatIdentity());
   });
-  $("assistant-home-select").addEventListener("change", async () => {
-    const shell = window.equinoxShell;
-    if (!shell) return;
-    const select = $("assistant-home-select");
-    const value = select.value;
-    if (value !== "portrait" && value !== "type") return;
-    select.disabled = true;
-    try { select.value = await shell.setAssistantHome(value); }
-    catch (error) { select.value = shell.getAssistantHome(); showError(error); }
-    finally { select.disabled = false; }
+  const homeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-assistant-home]")];
+  function renderAssistantHome(value:"portrait"|"type") {
+    for(const button of homeButtons){
+      const active=button.dataset.assistantHome===value;
+      button.classList.toggle("is-active",active);
+      button.setAttribute("aria-pressed",String(active));
+    }
+  }
+  for(const button of homeButtons)button.addEventListener("click",async()=>{
+    const shell=window.equinoxShell, value=button.dataset.assistantHome;
+    if(!shell||(value!=="portrait"&&value!=="type"))return;
+    for(const control of homeButtons)control.disabled=true;
+    try{renderAssistantHome(await shell.setAssistantHome(value));}
+    catch(error){renderAssistantHome(shell.getAssistantHome());showError(error);}
+    finally{for(const control of homeButtons)control.disabled=false;}
   });
   $("chat-agent-name").addEventListener("change", () => {
     if (window.equinoxShell) void changeChatIdentity(() => window.equinoxShell!.setChatAgentName($("chat-agent-name").value));
@@ -4295,6 +4371,8 @@ function bindEvents() {
       renderTasks();
     });
   }
+  $("task-return-button").addEventListener("click",()=>void returnToSelectedTask());
+  $("task-copy-resume").addEventListener("click",()=>void copySelectedContinuation());
   $("task-cancel-continuation-button").addEventListener("click", () => void runTaskAction("continuation"));
   $("task-cancel-fresh-resume-button").addEventListener("click", () => void runTaskAction("fresh-cancel"));
   $("task-abandon-fresh-resume-button").addEventListener("click", () => void runTaskAction("fresh-abandon"));

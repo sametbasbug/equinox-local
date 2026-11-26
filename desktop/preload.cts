@@ -13,6 +13,7 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
     },
     pickFolder: () => ipcRenderer.invoke("equinox-shell:pick-folder"),
     copyText: (value: unknown) => ipcRenderer.invoke("equinox-shell:copy-text", value),
+    returnToTask:(taskId:unknown,checkpointRevision:unknown)=>ipcRenderer.invoke("equinox-shell:task-return",{taskId,checkpointRevision}),
     getCommandHistory: () => ipcRenderer.invoke("equinox-shell:command-history-status"),
     setCommandHistory: (value:unknown) => {
       if(typeof value!=="boolean")return Promise.reject(new Error("Invalid history preference."));
