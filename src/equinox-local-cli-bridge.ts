@@ -84,7 +84,7 @@ export function createEquinoxLocalCliBridge({stateRoot, platform = process.platf
       // receives a conversation URL or a browser target to substitute.
       if(Object.keys(input).some(key=>!["token","action","taskId","checkpointRevision"].includes(key))||
         !Number.isSafeInteger(input.checkpointRevision))throw new Error("Invalid task return request.");
-      const task=await tasks.readInternal(taskId(input));
+      const task=await tasks.readInternal(taskId({task:input.taskId}));
       if(task.status!=="active"||task.checkpointRevision!==input.checkpointRevision)
         throw new Error("The task checkpoint changed. Refresh before returning.");
       const binding=task.chatBinding;
