@@ -8,6 +8,7 @@
 - Route Pet menu **New Chat** to the built-in Chat tab and **Control Center** to the existing Control Center workspace instead of opening ChatGPT in a browser or merely focusing the last open tab.
 - Surface the existing version and update-check entry directly in **Control Center → Overview** beside live runtime metadata, keeping the exact signed Main/Factory update dialog and status rules intact. The Settings modal retains runtime diagnostics and restart controls.
 - Restore full-chat speaker avatars and author styling after provider SPA navigation: recognize genuine conversation message content even when the composer is still hydrating, re-evaluate the active surface as messages mount, and prevent a previous route observer from disposing the current one. Keep the signed-in account picture on the RIGHT and Selene on the LEFT without changing provider data.
+- Keep Assistant styling through the first turn, transcript remounts and in-page frame navigation. Remove the portrait orbits and the divider below the workspace header in Assistant.
 
 ## [7.1.0] - 2026-11-25
 

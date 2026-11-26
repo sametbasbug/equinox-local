@@ -70,7 +70,7 @@ function permittedExternalLink(value) {
 // Appearance only. These selectors use observed provider layout attributes and
 // semantic class names; no provider action is replaced or programmatically invoked.
 const STYLE = String.raw `
-html.chatgpt-theme[data-equinox-surface] {
+html:root[data-equinox-surface] {
   --eq-canvas: #f9fbff;
   --eq-sidebar: #f0f3f9;
   --eq-chrome: #f9fbff;
@@ -109,7 +109,7 @@ html.chatgpt-theme[data-equinox-surface] {
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  html.chatgpt-theme[data-equinox-surface] {
+  html:root[data-equinox-surface] {
     --eq-canvas: #161822;
     --eq-sidebar: #1b1d29;
     --eq-chrome: #161822;
@@ -126,48 +126,48 @@ html.chatgpt-theme[data-equinox-surface] {
     color-scheme: dark;
   }
 }
-html.chatgpt-theme[data-equinox-surface] body { background: var(--eq-canvas) !important; color: var(--eq-text); }
-html.chatgpt-theme[data-equinox-surface] ::selection { background: color-mix(in srgb, var(--eq-accent) 25%, transparent); }
-html.chatgpt-theme[data-equinox-surface] :focus-visible { outline-color: var(--eq-accent); }
+html:root[data-equinox-surface] body { background: var(--eq-canvas) !important; color: var(--eq-text); }
+html:root[data-equinox-surface] ::selection { background: color-mix(in srgb, var(--eq-accent) 25%, transparent); }
+html:root[data-equinox-surface] :focus-visible { outline-color: var(--eq-accent); }
 /* Keep the real search, account, projects, history, and feature actions.
    The provider's own collapse and mobile layout still decide visibility. */
-html.chatgpt-theme[data-equinox-surface] aside[data-app-shell-left-panel-appearance] {
+html:root[data-equinox-surface] aside[data-app-shell-left-panel-appearance] {
   background: var(--eq-sidebar) !important;
   border-inline-end: 0 !important;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar,
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar > .bg-surface { background: var(--eq-sidebar) !important; }
+html:root[data-equinox-surface] #app-shell-sidebar,
+html:root[data-equinox-surface] #app-shell-sidebar > .bg-surface { background: var(--eq-sidebar) !important; }
 @media (min-width: 769px) {
-  html.chatgpt-theme[data-equinox-surface] [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] {
+  html:root[data-equinox-surface] [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] {
     --app-shell-left-panel-width: var(--eq-sidebar-width) !important;
   }
-  html.chatgpt-theme[data-equinox-surface] [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] aside[data-app-shell-left-panel-appearance] > div:first-child {
+  html:root[data-equinox-surface] [data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="false"] aside[data-app-shell-left-panel-appearance] > div:first-child {
     width: var(--eq-sidebar-width) !important;
     min-width: var(--eq-sidebar-width) !important;
     max-width: 100% !important;
   }
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar :is(button,a)[aria-current="page"],
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar :is(button,a)[data-selected] {
+html:root[data-equinox-surface] #app-shell-sidebar :is(button,a)[aria-current="page"],
+html:root[data-equinox-surface] #app-shell-sidebar :is(button,a)[data-selected] {
   background-color: var(--eq-active) !important;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar :is(button,a) { border-radius: 7px; }
+html:root[data-equinox-surface] #app-shell-sidebar :is(button,a) { border-radius: 7px; }
 /* Accounts with the provider's feature rail get the same single Equinox rail
    beside a conversation sidebar. Reflow the genuine feature buttons and the
    account controls inside the expanded sidebar. Collapsed/mobile layouts and
    any unrecognized provider structure keep the original provider layout. */
 @media (min-width: 769px) {
-  html.chatgpt-theme[data-equinox-surface] [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) {
+  html:root[data-equinox-surface] [data-app-shell-frame][data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation) {
     --app-shell-left-panel-width: var(--eq-sidebar-width) !important;
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div:has(> nav[data-app-navigation-rail]):has(> .sidebar-navigation) {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div:has(> nav[data-app-navigation-rail]):has(> .sidebar-navigation) {
     position: relative;
     flex-direction: column !important;
     padding-bottom: 42px;
     min-height: 0;
     background: var(--eq-sidebar);
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > nav[data-app-navigation-rail] {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > nav[data-app-navigation-rail] {
     flex: 0 0 auto !important;
     width: 100% !important;
     min-width: 0;
@@ -175,7 +175,7 @@ html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar :is(button,a) { bord
     padding: 5px 10px !important;
     border-bottom: 0;
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] {
     flex: 0 0 auto !important;
     flex-direction: row !important;
     flex-wrap: wrap;
@@ -188,26 +188,26 @@ html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar :is(button,a) { bord
     mask-image: none !important;
     padding: 0 !important;
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div:not([data-appearance]) { width: auto !important; }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > [data-appearance="plain"] {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div:not([data-appearance]) { width: auto !important; }
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > [data-appearance="plain"] {
     flex-direction: row !important;
     flex-wrap: wrap;
     gap: 3px !important;
     width: auto !important;
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] button {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] button {
     width: 30px !important;
     height: 32px !important;
     flex: 0 0 30px !important;
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div.border-t {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > [data-appearance="plain"] > div.border-t {
     width: 1px !important;
     height: 18px;
     margin: 0 1px !important;
     border-top: 0;
     border-inline-start: 1px solid var(--eq-border);
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child {
     position: absolute !important;
     inset-inline: 0;
     bottom: 0;
@@ -218,72 +218,72 @@ html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar :is(button,a) { bord
     background: var(--eq-sidebar);
     z-index: 2;
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div {
     flex-direction: row !important;
     justify-content: space-between;
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div > div { width: auto !important; }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > .sidebar-navigation {
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar nav[data-app-navigation-rail] > div:last-child > div > div { width: auto !important; }
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar > div > .sidebar-navigation {
     border-radius: 0 !important;
     background: var(--eq-sidebar) !important;
   }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child { width: var(--eq-sidebar-width) !important; min-width: var(--eq-sidebar-width) !important; max-width: 100% !important; }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
-  html.chatgpt-theme[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child > div:has(> #app-shell-sidebar) { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child { width: var(--eq-sidebar-width) !important; min-width: var(--eq-sidebar-width) !important; max-width: 100% !important; }
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) #app-shell-sidebar { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
+  html:root[data-equinox-surface] :where([data-app-shell-sidebar-open="true"][data-app-shell-feature-navigation="true"]:has(#app-shell-sidebar > div > nav[data-app-navigation-rail]):has(#app-shell-sidebar > div > .sidebar-navigation)) aside[data-app-shell-left-panel-appearance] > div:first-child > div:has(> #app-shell-sidebar) { width: 100% !important; min-width: 0 !important; max-width: 100% !important; }
 }
 /* Task-oriented workspace, not a second renderer of the provider conversation.
    The actual conversation tree, menus, streaming and message actions stay intact.
    The native application header above this view owns the Equinox branding. */
-html.chatgpt-theme[data-equinox-surface] main[data-app-shell-main-surface] {
+html:root[data-equinox-surface] main[data-app-shell-main-surface] {
   --thread-content-max-width: 48rem !important;
   --thread-content-compact-max-width: 48rem !important;
   --thread-content-expanded-max-width: 52rem !important;
   border-radius: 0 !important;
   background: var(--eq-canvas) !important;
 }
-html.chatgpt-theme[data-equinox-surface] [data-app-shell-titlebar] {
+html:root[data-equinox-surface] [data-app-shell-titlebar] {
   background: var(--eq-chrome);
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation {
   --height-token-row: 30px;
   --height-token-nav-row: 30px;
   background: var(--eq-sidebar) !important;
   font-size: 13px;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav {
   padding-inline: 10px;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span {
   position: relative;
   font-size: 0 !important;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span > span:has(> svg):not(:has(button,a,input)) {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span > span:has(> svg):not(:has(button,a,input)) {
   position: absolute !important;
   width: 1px !important;
   height: 1px !important;
   overflow: hidden !important;
   clip-path: inset(50%) !important;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
   content: "Conversations";
   font-size: 14px;
   letter-spacing: -.02em;
   font-weight: 670;
 }
-html.chatgpt-theme[data-equinox-surface]:lang(tr) #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
+html:root[data-equinox-surface]:lang(tr) #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
   content: "Sohbetler";
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href*="/c/"] {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href*="/c/"] {
   font-size: 13px;
   line-height: 1.4;
 }
-html.chatgpt-theme[data-equinox-surface] :is([data-markdown-text-style="assistant-message"],[data-virtualized-turn-content] .markdown) {
+html:root[data-equinox-surface] :is([data-markdown-text-style="assistant-message"],[data-virtualized-turn-content] .markdown) {
   font-size: 15px;
   line-height: 1.7;
 }
 /* Keep the provider's genuine per-turn activity disclosure compact.
    The inline MCP App renders only data from its originating real tool call. */
-html.chatgpt-theme[data-equinox-surface] button[data-turn-disclosure-button] {
+html:root[data-equinox-surface] button[data-turn-disclosure-button] {
   min-height: 28px;
   padding: 3px 8px !important;
   border: 1px solid var(--eq-border) !important;
@@ -292,47 +292,47 @@ html.chatgpt-theme[data-equinox-surface] button[data-turn-disclosure-button] {
   color: var(--eq-secondary) !important;
   font-size: 12px !important;
 }
-html.chatgpt-theme[data-equinox-surface] button[data-turn-disclosure-button]:hover {
+html:root[data-equinox-surface] button[data-turn-disclosure-button]:hover {
   background: var(--eq-active) !important;
 }
-html.chatgpt-theme[data-equinox-surface] [class~="-ms-2"][class~="ps-2"] > [data-spacing="activity"] {
+html:root[data-equinox-surface] [class~="-ms-2"][class~="ps-2"] > [data-spacing="activity"] {
   border-inline-start: 2px solid var(--eq-border);
   padding-inline-start: 10px;
 }
-html.chatgpt-theme[data-equinox-surface] [data-spacing="activity"] [class~="group/activity-header"] {
+html:root[data-equinox-surface] [data-spacing="activity"] [class~="group/activity-header"] {
   gap: 6px;
 }
-html.chatgpt-theme[data-equinox-surface] [data-spacing="activity"] [class~="group/activity-header"] [class~="text-size-chat"] {
+html:root[data-equinox-surface] [data-spacing="activity"] [class~="group/activity-header"] [class~="text-size-chat"] {
   font-size: 13px;
 }
-html.chatgpt-theme[data-equinox-surface] [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
+html:root[data-equinox-surface] [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
   background: var(--eq-paper) !important;
   border: 1px solid var(--eq-border) !important;
   border-radius: 9px !important;
 }
-html.chatgpt-theme[data-equinox-surface] [data-markdown-text-style="assistant-message"] [data-code-block="true"] pre {
+html:root[data-equinox-surface] [data-markdown-text-style="assistant-message"] [data-code-block="true"] pre {
   font-size: 13px;
   line-height: 1.65;
 }
-html.chatgpt-theme[data-equinox-surface] [data-markdown-text-style="assistant-message"] table {
+html:root[data-equinox-surface] [data-markdown-text-style="assistant-message"] table {
   font-size: 13px;
   line-height: 1.5;
 }
-html.chatgpt-theme[data-equinox-surface] [data-user-message-bubble="true"] {
+html:root[data-equinox-surface] [data-user-message-bubble="true"] {
   font-size: 15px;
   line-height: 1.65;
 }
-html.chatgpt-theme[data-equinox-surface] [data-virtualized-turn-content] .markdown :is(pre,table) {
+html:root[data-equinox-surface] [data-virtualized-turn-content] .markdown :is(pre,table) {
   border-radius: 7px;
   border-color: var(--eq-border);
 }
-html.chatgpt-theme[data-equinox-surface] [data-virtualized-turn-content] .markdown pre {
+html:root[data-equinox-surface] [data-virtualized-turn-content] .markdown pre {
   border: 1px solid var(--eq-border);
   background: var(--eq-paper);
 }
 /* Before identity decoration completes, a provider-owned user bubble
    still has the quiet V2 surface rather than the retired left accent stripe. */
-html.chatgpt-theme[data-equinox-surface] .bg-user-message.text-user-message {
+html:root[data-equinox-surface] .bg-user-message.text-user-message {
   background: var(--eq-bubble) !important;
   color: var(--eq-bubble-text) !important;
   border: 1px solid var(--eq-border);
@@ -343,32 +343,32 @@ html.chatgpt-theme[data-equinox-surface] .bg-user-message.text-user-message {
 }
 /* The provider may align the user turn to the opposite edge. Align its real
    message container to the task column, without moving any React-owned nodes. */
-html.chatgpt-theme[data-equinox-surface] :is([data-virtualized-turn-content], [class~="group/user-message"]) :is(div,section):has(> .bg-user-message.text-user-message),
-html.chatgpt-theme[data-equinox-surface] [class~="group/user-message"]:has(> [data-user-message-bubble="true"]) {
+html:root[data-equinox-surface] :is([data-virtualized-turn-content], [class~="group/user-message"]) :is(div,section):has(> .bg-user-message.text-user-message),
+html:root[data-equinox-surface] [class~="group/user-message"]:has(> [data-user-message-bubble="true"]) {
   justify-content: flex-start !important;
   align-items: flex-start !important;
 }
-html.chatgpt-theme[data-equinox-surface] [data-message-author-role="user"] {
+html:root[data-equinox-surface] [data-message-author-role="user"] {
   align-self: stretch !important;
   max-width: 100% !important;
 }
-html.chatgpt-theme[data-equinox-surface] [data-message-author-role="user"] :is(div,section):has(> .bg-user-message.text-user-message) {
+html:root[data-equinox-surface] [data-message-author-role="user"] :is(div,section):has(> .bg-user-message.text-user-message) {
   justify-content: flex-end !important;
   align-items: flex-end !important;
 }
 /* The same native input, attachment and action controls stay mounted. A
    two-row editor matches the Codex reference in both new and ongoing chats. */
-html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer] [class*="ComposerSurface-"] {
+html:root[data-equinox-surface] form[data-chatgpt-composer] [class*="ComposerSurface-"] {
   background: var(--eq-editor) !important;
   border: 1px solid var(--eq-border) !important;
   border-radius: 17px !important;
   box-shadow: var(--eq-editor-shadow) !important;
   --composer-layout-surface-background: var(--eq-editor);
 }
-html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer] [data-composer-body]:has([data-composer-footer-responsive][data-composer-rows="responsive"]) {
+html:root[data-equinox-surface] form[data-chatgpt-composer] [data-composer-body]:has([data-composer-footer-responsive][data-composer-rows="responsive"]) {
   height: auto !important;
 }
-html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] {
+html:root[data-equinox-surface] form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) auto !important;
   grid-template-rows: minmax(47px, auto) auto !important;
@@ -377,63 +377,63 @@ html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer] [data-compo
   padding: 9px 10px !important;
   height: auto !important;
 }
-html.chatgpt-theme[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] > [class*="FooterInput-"] {
+html:root[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] > [class*="FooterInput-"] {
   grid-column: 1 / -1 !important;
   grid-row: 1 !important;
   align-self: stretch;
   min-width: 0;
   padding: 5px 8px;
 }
-html.chatgpt-theme[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-leading-controls] {
+html:root[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-leading-controls] {
   grid-column: 1 !important;
   grid-row: 2 !important;
   justify-self: start;
 }
-html.chatgpt-theme[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-trailing-controls] {
+html:root[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-trailing-controls] {
   grid-column: 2 !important;
   grid-row: 2 !important;
   justify-self: end;
   background: transparent !important;
 }
-html.chatgpt-theme[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-expansion-control] {
+html:root[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] > [data-composer-expansion-control] {
   grid-column: 2 !important;
   grid-row: 1 !important;
   align-self: start;
   justify-self: end;
 }
-html.chatgpt-theme[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
+html:root[data-equinox-surface] [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
   min-height: 40px;
 }
 /* Keep the ongoing composer compact while preserving native attachment,
    expansion and textarea growth. Inline runs stay inside agent messages. */
-html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer]:not([data-composer-placement="home"]) [data-composer-footer-responsive][data-composer-rows="responsive"] {
+html:root[data-equinox-surface] form[data-chatgpt-composer]:not([data-composer-placement="home"]) [data-composer-footer-responsive][data-composer-rows="responsive"] {
   grid-template-rows: minmax(36px, auto) auto !important;
   padding-block: 6px !important;
 }
-html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer]:not([data-composer-placement="home"]) [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
+html:root[data-equinox-surface] form[data-chatgpt-composer]:not([data-composer-placement="home"]) [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
   min-height: 32px;
 }
 @media (max-height: 520px) {
-  html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] {
+  html:root[data-equinox-surface] form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] {
     grid-template-rows: minmax(36px, auto) auto !important;
   }
-  html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
+  html:root[data-equinox-surface] form[data-chatgpt-composer] [data-composer-footer-responsive][data-composer-rows="responsive"] .ProseMirror {
     min-height: 32px;
   }
 }
-html.chatgpt-theme[data-equinox-surface] .thread-scroll-container {
+html:root[data-equinox-surface] .thread-scroll-container {
   scroll-padding-top: max(12px, var(--app-shell-titlebar-height, 44px));
 }
-html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer] [data-composer-markdown] p[data-empty-paragraph="true"][data-placeholder]::before {
+html:root[data-equinox-surface] form[data-chatgpt-composer] [data-composer-markdown] p[data-empty-paragraph="true"][data-placeholder]::before {
   content: "Describe a task or ask a question..." !important;
   color: var(--eq-muted) !important;
 }
-html.chatgpt-theme[data-equinox-surface]:lang(tr) form[data-chatgpt-composer] [data-composer-markdown] p[data-empty-paragraph="true"][data-placeholder]::before {
+html:root[data-equinox-surface]:lang(tr) form[data-chatgpt-composer] [data-composer-markdown] p[data-empty-paragraph="true"][data-placeholder]::before {
   content: "Bir görev tarif et veya soru sor..." !important;
 }
 /* The form and heading stay in the provider's own layout. These treatments are
    applied only to a recognized, empty home region. */
-html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting] {
+html:root[data-equinox-surface="home"] [data-equinox-greeting] {
   position: relative;
   isolation: isolate;
   display: grid !important;
@@ -446,14 +446,14 @@ html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting] {
   padding: 10px 0 !important;
   text-align: start;
 }
-html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting] > div {
+html:root[data-equinox-surface="home"] [data-equinox-greeting] > div {
   position: absolute !important;
   width: 1px !important;
   height: 1px !important;
   overflow: hidden !important;
   clip-path: inset(50%) !important;
 }
-html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting]::before {
+html:root[data-equinox-surface="home"] [data-equinox-greeting]::before {
   content: attr(data-equinox-initial);
   display: grid;
   place-items: center;
@@ -467,8 +467,8 @@ html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting]::before {
   font-size: 38px;
   font-weight: 580;
 }
-html.chatgpt-theme[data-equinox-surface][data-equinox-agent-photo="true"] [data-equinox-greeting]::before { color: transparent; }
-html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting]::after {
+html:root[data-equinox-surface="home"][data-equinox-agent-photo="true"] [data-equinox-greeting]::before { color: transparent; }
+html:root[data-equinox-surface="home"] [data-equinox-greeting]::after {
   content: attr(data-equinox-greeting);
   z-index: 1;
   color: var(--eq-text);
@@ -477,32 +477,11 @@ html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting]::after {
   letter-spacing: -.054em;
   font-weight: 630;
 }
-html.chatgpt-theme[data-equinox-surface] [data-equinox-home] {
-  position: relative;
-  isolation: isolate;
-}
-html.chatgpt-theme[data-equinox-surface] [data-equinox-home]::before,
-html.chatgpt-theme[data-equinox-surface] [data-equinox-home]::after {
-  content: "";
-  position: absolute;
-  inset-inline-start: -17px;
-  inset-block-start: 50%;
-  width: 147px;
-  height: 75px;
-  transform: translateY(-50%) rotate(-27deg);
-  border: 1px solid color-mix(in srgb, var(--eq-accent) 55%, var(--eq-border));
-  border-radius: 50%;
-  pointer-events: none;
-}
-html.chatgpt-theme[data-equinox-surface] [data-equinox-home]::after {
-  transform: translateY(-50%) rotate(39deg);
-  border-color: var(--eq-border);
-}
-html.chatgpt-theme[data-equinox-surface][data-equinox-home-style="type"] [data-equinox-greeting] {
+html:root[data-equinox-surface="home"][data-equinox-home-style="type"] [data-equinox-greeting] {
   grid-template-columns: minmax(0, 1fr) max-content;
   min-height: 112px;
 }
-html.chatgpt-theme[data-equinox-surface][data-equinox-home-style="type"] [data-equinox-greeting]::before {
+html:root[data-equinox-surface="home"][data-equinox-home-style="type"] [data-equinox-greeting]::before {
   grid-column: 2;
   grid-row: 1;
   width: 54px;
@@ -510,36 +489,32 @@ html.chatgpt-theme[data-equinox-surface][data-equinox-home-style="type"] [data-e
   border-radius: 15px;
   font-size: 23px;
 }
-html.chatgpt-theme[data-equinox-surface][data-equinox-home-style="type"] [data-equinox-greeting]::after {
+html:root[data-equinox-surface="home"][data-equinox-home-style="type"] [data-equinox-greeting]::after {
   grid-column: 1;
   grid-row: 1;
   padding-inline-start: 20px;
   font-family: ui-serif, Georgia, serif;
   font-weight: 500;
 }
-html.chatgpt-theme[data-equinox-surface][data-equinox-home-style="type"] [data-equinox-home]::before {
+html:root[data-equinox-surface="home"][data-equinox-home-style="type"] [data-equinox-home] { position: relative; }
+html:root[data-equinox-surface="home"][data-equinox-home-style="type"] [data-equinox-home]::before {
+  content: "";
+  position: absolute;
   inset-inline-start: 0;
+  inset-block-start: 50%;
   width: 5px;
   height: 68px;
   transform: translateY(-50%);
-  border: 0;
-  border-radius: 0;
   background: repeating-linear-gradient(to bottom, var(--eq-accent) 0 8px, transparent 8px 12px);
+  pointer-events: none;
 }
-html.chatgpt-theme[data-equinox-surface][data-equinox-home-style="type"] [data-equinox-home]::after { display: none; }
 @media (max-width: 1020px), (max-height: 640px) {
-  html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting] { min-height: 82px; }
-  html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting]::before { width: 64px; height: 64px; font-size: 26px; }
-  html.chatgpt-theme[data-equinox-surface] [data-equinox-greeting]::after { font-size: clamp(25px, 3.5vw, 42px); }
-  html.chatgpt-theme[data-equinox-surface] [data-equinox-home]::before,
-  html.chatgpt-theme[data-equinox-surface] [data-equinox-home]::after {
-    inset-inline-start: -8px;
-    width: 81px;
-    height: 48px;
-  }
+  html:root[data-equinox-surface="home"] [data-equinox-greeting] { min-height: 82px; }
+  html:root[data-equinox-surface="home"] [data-equinox-greeting]::before { width: 64px; height: 64px; font-size: 26px; }
+  html:root[data-equinox-surface="home"] [data-equinox-greeting]::after { font-size: clamp(25px, 3.5vw, 42px); }
 }
 /* The existing turn wrappers carry the original provider messages and activity. */
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role] {
+html:root[data-equinox-surface] main [data-equinox-role] {
   position: relative;
   box-sizing: border-box;
   min-width: 0;
@@ -550,7 +525,7 @@ html.chatgpt-theme[data-equinox-surface] main [data-equinox-role] {
   width: 100%;
   max-width: 100%;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role]::before {
+html:root[data-equinox-surface] main [data-equinox-role]::before {
   content: attr(data-equinox-initial);
   position: absolute;
   inset-inline-start: 0;
@@ -566,7 +541,7 @@ html.chatgpt-theme[data-equinox-surface] main [data-equinox-role]::before {
   border-radius: 50%;
   background: var(--eq-active) center / cover no-repeat;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role]::after {
+html:root[data-equinox-surface] main [data-equinox-role]::after {
   content: attr(data-equinox-author);
   position: absolute;
   inset-inline-start: var(--eq-author-offset);
@@ -577,7 +552,7 @@ html.chatgpt-theme[data-equinox-surface] main [data-equinox-role]::after {
   letter-spacing: .012em;
   color: var(--eq-secondary);
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="user"] {
+html:root[data-equinox-surface] main [data-equinox-role="user"] {
   padding-inline-start: 0 !important;
   padding-inline-end: var(--eq-author-offset) !important;
   display: flex;
@@ -585,23 +560,23 @@ html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="user"] {
   align-items: flex-end !important;
   text-align: start;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="user"]::before {
+html:root[data-equinox-surface] main [data-equinox-role="user"]::before {
   inset-inline-start: auto;
   inset-inline-end: 0;
   background-image: var(--eq-human-avatar, none);
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="user"]::after {
+html:root[data-equinox-surface] main [data-equinox-role="user"]::after {
   inset-inline-start: auto;
   inset-inline-end: var(--eq-author-offset);
   text-align: right;
   color: var(--eq-accent);
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="user"] [class~="group/user-message"] {
+html:root[data-equinox-surface] main [data-equinox-role="user"] [class~="group/user-message"] {
   align-items: flex-end !important;
   justify-content: flex-end !important;
   width: 100%;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="user"] [data-user-message-bubble="true"] {
+html:root[data-equinox-surface] main [data-equinox-role="user"] [data-user-message-bubble="true"] {
   width: fit-content !important;
   max-width: min(34rem, 100%) !important;
   min-width: 0;
@@ -615,24 +590,24 @@ html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="user"] [data-u
   line-height: 1.58;
   box-shadow: none;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] {
   padding-inline-start: var(--eq-author-offset) !important;
   padding-inline-end: 0 !important;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"]::before {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"]::before {
   inset-inline-start: 0;
   background-image: var(--eq-agent-avatar, none);
 }
-html.chatgpt-theme[data-equinox-surface][data-equinox-agent-photo="true"] main [data-equinox-role="assistant"]::before,
-html.chatgpt-theme[data-equinox-surface][data-equinox-human-photo="true"] main [data-equinox-role="user"]::before { color: transparent; }
+html:root[data-equinox-surface][data-equinox-agent-photo="true"] main [data-equinox-role="assistant"]::before,
+html:root[data-equinox-surface][data-equinox-human-photo="true"] main [data-equinox-role="user"]::before { color: transparent; }
 
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"]::after {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"]::after {
   inset-inline-start: var(--eq-author-offset);
   color: var(--eq-text);
 }
 /* Plain agent prose, like the approved reference. Only genuine tool
    results receive framed surfaces inside the original assistant turn. */
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [data-response-body] {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-response-body] {
   max-width: 100%;
   min-width: 0;
   padding: 0 !important;
@@ -641,24 +616,24 @@ html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [d
   background: transparent !important;
   box-shadow: none !important;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] {
   max-width: 72ch;
   line-height: 1.67;
   font-size: 15px;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(h1,h2,h3) {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(h1,h2,h3) {
   letter-spacing: -.024em;
   color: var(--eq-text);
 }
 /* Provider's measured table width (880px) can exceed the padded card
    (788px). Keep the semantic table and constrain its columns to its reader. */
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [class*="TableFrame-"] {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] [class*="TableFrame-"] {
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
   margin-inline: 0 !important;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [class*="TableViewport-"] {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] [class*="TableViewport-"] {
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
@@ -667,56 +642,56 @@ html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [c
      only the scroll container, never the table's own text or columns. */
   direction: rtl;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] table {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] table {
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
   direction: ltr;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(th,td) {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(th,td) {
   overflow-wrap: anywhere;
 }
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] [data-code-block="true"] {
   max-width: 100% !important;
   overflow: hidden;
 }
 
 /* Clear, quiet reading line for the real per-tool MCP App card. */
-html.chatgpt-theme[data-equinox-surface] main [data-equinox-role="assistant"] iframe {
+html:root[data-equinox-surface] main [data-equinox-role="assistant"] iframe {
   max-width: 100%;
   border-radius: 8px;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar :is(a,button):hover {
+html:root[data-equinox-surface] #app-shell-sidebar :is(a,button):hover {
   background-color: color-mix(in srgb, var(--eq-accent) 7%, var(--eq-sidebar));
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar :is(a,button)[aria-current="page"] {
+html:root[data-equinox-surface] #app-shell-sidebar :is(a,button)[aria-current="page"] {
   color: var(--eq-text) !important;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation [role="heading"] {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation [role="heading"] {
   margin-block: 12px 4px;
   font-size: 11px;
   font-weight: 650;
   letter-spacing: .02em;
   color: var(--eq-secondary);
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav a[href*="/c/"] {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav a[href*="/c/"] {
   min-height: 29px;
   padding-inline: 9px;
 }
-html.chatgpt-theme[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav :is(a,button):focus-visible {
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav :is(a,button):focus-visible {
   outline: 2px solid var(--eq-accent);
   outline-offset: -1px;
 }
-html.chatgpt-theme[data-equinox-surface] form[data-chatgpt-composer]:focus-within [class*="ComposerSurface-"] {
+html:root[data-equinox-surface] form[data-chatgpt-composer]:focus-within [class*="ComposerSurface-"] {
   border-color: color-mix(in srgb, var(--eq-accent) 58%, var(--eq-border)) !important;
 }
 @media (max-width: 700px) {
-  html.chatgpt-theme[data-equinox-surface] main [data-equinox-role] { --eq-avatar-size: 26px; --eq-author-offset: 35px; }
+  html:root[data-equinox-surface] main [data-equinox-role] { --eq-avatar-size: 26px; --eq-author-offset: 35px; }
 }
 /* Home suggestions remain real, selectable provider controls. Compact
    only the ordinary small button lists below the composer; never restyle
    a Work/onboarding takeover, attachment picker or arbitrary content. */
-html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(button,a):nth-child(2)):not(:has(> :not(:is(button,a)))):not(:has(> :nth-child(5))) {
+html:root[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(button,a):nth-child(2)):not(:has(> :not(:is(button,a)))):not(:has(> :nth-child(5))) {
   display: flex !important;
   flex-direction: row !important;
   flex-wrap: wrap !important;
@@ -725,7 +700,7 @@ html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:n
   gap: 6px !important;
   padding-block: 3px !important;
 }
-html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(div,li):nth-child(2) > :is(button,a)):not(:has(> :not(:is(div,li)))):not(:has(> :nth-child(5))):not(:has(> :is(div,li) > :not(:is(button,a)))) {
+html:root[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(div,li):nth-child(2) > :is(button,a)):not(:has(> :not(:is(div,li)))):not(:has(> :nth-child(5))):not(:has(> :is(div,li) > :not(:is(button,a)))) {
   display: flex !important;
   flex-direction: row !important;
   flex-wrap: wrap !important;
@@ -733,12 +708,12 @@ html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:n
   gap: 6px !important;
   padding-block: 3px !important;
 }
-html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(button,a):has(> svg):not(:has(input,textarea)) {
+html:root[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(button,a):has(> svg):not(:has(input,textarea)) {
   min-height: 30px !important;
   padding-block: 4px !important;
   font-size: 12px !important;
 }
-html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(button,a):nth-child(2)):not(:has(> :not(:is(button,a)))):not(:has(> :nth-child(5))) > :is(button,a) {
+html:root[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover])):has(form[data-composer-placement="home"]) [class*="BelowComposer-"] :is(div,ul):has(> :is(button,a):nth-child(2)):not(:has(> :not(:is(button,a)))):not(:has(> :nth-child(5))) > :is(button,a) {
   width: auto !important;
   min-width: 0;
   min-height: 32px !important;
@@ -748,13 +723,13 @@ html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:n
   font-size: 12px !important;
 }
 @media (min-height: 460px) {
-  html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover], [data-composer-expanded])):has(form[data-composer-placement="home"]) [class*="StreamedComposer-"] {
+  html:root[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover], [data-composer-expanded])):has(form[data-composer-placement="home"]) [class*="StreamedComposer-"] {
     grid-template-rows: auto auto auto !important;
     align-content: center;
     row-gap: 15px;
     padding-block: 18px 60px;
   }
-  html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover], [data-composer-expanded])):has(form[data-composer-placement="home"]) [class*="GreetingRegion-"] {
+  html:root[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover], [data-composer-expanded])):has(form[data-composer-placement="home"]) [class*="GreetingRegion-"] {
     align-self: end;
     justify-content: center !important;
     justify-self: center;
@@ -762,7 +737,7 @@ html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:n
     padding: 0 0 5px !important;
   }
 }
-html.chatgpt-theme[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover], [data-composer-expanded])):has(form[data-composer-placement="home"]) {
+html:root[data-equinox-surface] [class~="group/home-composer-layout"]:not(:has([data-homepage-takeover], [data-composer-expanded])):has(form[data-composer-placement="home"]) {
   --thread-content-max-width: var(--eq-home-width) !important;
   --thread-content-compact-max-width: var(--eq-home-width) !important;
   --thread-content-expanded-max-width: var(--eq-home-width) !important;
@@ -773,23 +748,34 @@ function decorateProviderIdentity(update, generation) {
     const world = window;
     if (world.__equinoxDecoration && world.__equinoxDecoration.generation > generation)
         return;
-    world.__equinoxDecoration?.dispose();
-    world.__equinoxDecoration = { generation, dispose: () => { } };
-    if (!update || location.href !== update.href)
+    // A queued update for a previous route must not remove the active decoration.
+    if (update && location.pathname !== update.pathname)
         return;
-    const { identity, language, accent, composition, href } = update;
     const root = document.documentElement;
+    const homeRoute = update?.pathname === "/";
+    const threadRoute = !!update && /^\/(?:g\/[A-Za-z0-9_-]{8,160}\/)?c\/[A-Za-z0-9-]{8,160}\/?$/u.test(update.pathname);
+    const carryThread = threadRoute || (homeRoute && world.__equinoxDecoration?.pathname === update?.pathname);
+    let threadRecognized = carryThread && root.getAttribute("data-equinox-surface") === "thread";
+    world.__equinoxDecoration?.dispose();
+    const decoration = { generation, pathname: update?.pathname, dispose: () => { } };
+    world.__equinoxDecoration = decoration;
+    if (!update || (!homeRoute && !threadRoute))
+        return;
+    const { identity, language, accent, composition, pathname } = update;
     const agent = identity.name.trim();
     const human = language === "tr" ? "Sen" : "You";
     const agentInitial = Array.from(agent || "E")[0]?.toLocaleUpperCase(language) ?? "E";
     const url = (value) => "url(" + JSON.stringify(value) + ")";
     const agentImage = identity.avatar && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/u.test(identity.avatar) ? url(identity.avatar) : "none";
-    const messageSelector = '[data-chatgpt-search-unit-key$=":user"],[data-user-message-bubble="true"],[data-response-body],[data-message-author-role]';
+    const userUnit = '[data-chatgpt-search-unit-key$=":user"]';
+    const userMessage = '[data-user-message-bubble="true"],[data-message-author-role="user"]';
+    const assistantMessage = '[data-chatgpt-search-unit-key$=":assistant"],[data-message-author-role="assistant"]';
+    const messageSelector = [userUnit, userMessage, assistantMessage, '[data-response-body]'].join(",");
     const greetingSelector = '[class*="Greeting-"]';
     // Provider conversation routes sometimes replace the app-shell main with
     // an ordinary <main>. Keep route/identity guards in syncSurface instead of
     // losing all avatars and message styling when that attribute is absent.
-    const mainSelector = 'main[data-app-shell-main-surface], main';
+    const mainSelector = "main[data-app-shell-main-surface]";
     const profileSelector = '#app-shell-sidebar';
     const marker = '[data-equinox-role],[data-equinox-greeting],[data-equinox-home]';
     const marks = new Set();
@@ -809,7 +795,7 @@ function decorateProviderIdentity(update, generation) {
         marks.delete(element);
     }
     function mark(element, role) {
-        if (!main?.contains(element) || element.closest('dialog,[role="dialog"],[role="menu"]'))
+        if (!main?.contains(element) || element === main || element.closest('dialog,[role="dialog"],[role="menu"]'))
             return;
         element.setAttribute("data-equinox-role", role);
         element.setAttribute("data-equinox-author", role === "assistant" ? (agent || "Equinox") : human);
@@ -819,24 +805,28 @@ function decorateProviderIdentity(update, generation) {
     function syncMessage(evidence) {
         if (!main?.contains(evidence))
             return;
-        const bubble = '[data-user-message-bubble="true"],[data-message-author-role="user"]';
-        const user = evidence.closest('[data-chatgpt-search-unit-key$=":user"],[data-message-author-role="user"]');
-        if (user && (user.matches(bubble) || user.querySelector(bubble))) {
+        const user = evidence.closest(userUnit);
+        if (user && (user.matches(userMessage) || user.querySelector(userMessage))) {
             mark(user, "user");
             return;
         }
-        if (evidence.matches('[data-user-message-bubble="true"]')) {
-            const group = evidence.closest('[class~="group/user-message"]');
-            mark(group ?? evidence, "user");
+        if (evidence.matches(userMessage)) {
+            const attributed = evidence.closest('[data-message-author-role="user"]');
+            mark(attributed ?? evidence.closest('[class~="group/user-message"]') ?? evidence, "user");
             return;
         }
-        if (!evidence.matches('[data-response-body],[data-message-author-role="assistant"]'))
+        const isResponseBody = evidence.matches("[data-response-body]");
+        if (!isResponseBody && !evidence.matches(assistantMessage))
             return;
-        const response = evidence.closest('[data-content-search-unit-key],[data-message-author-role="assistant"]') ??
-            (evidence.matches("[data-response-body]") ? evidence.parentElement : null);
+        const attributed = evidence.closest(assistantMessage);
+        const response = attributed ?? evidence.closest('[data-content-search-unit-key]') ?? evidence.parentElement;
         // A provider turn can contain both speakers. Only decorate an answer-only wrapper.
-        if (response && !response.matches(bubble) && !response.querySelector(bubble))
+        if (response && response !== main && !response.matches(userMessage) && !response.querySelector(userMessage)) {
             mark(response, "assistant");
+        }
+        else if (isResponseBody) {
+            mark(evidence, "assistant");
+        }
     }
     function syncBranch(branch) {
         if (!main?.contains(branch) || visited.has(branch))
@@ -848,6 +838,8 @@ function decorateProviderIdentity(update, generation) {
             syncMessage(element);
     }
     function syncProfile() {
+        if (!profile)
+            return; // The sidebar can unmount while the account is still signed in.
         const image = profile?.querySelector('nav[data-app-navigation-rail] button[aria-haspopup="menu"] img')
             ?? profile?.querySelector('button[aria-haspopup="menu"] img[class~="rounded-full"]');
         const src = image?.currentSrc || image?.getAttribute("src") || "";
@@ -856,24 +848,47 @@ function decorateProviderIdentity(update, generation) {
         root.setAttribute("data-equinox-human-photo", String(valid));
     }
     function syncSurface() {
-        const path = location.pathname;
+        if (threadRoute) {
+            // Confirm a thread once. The composer, sidebar and all visible turns can
+            // disappear together when the provider hydrates or remounts the transcript.
+            if (!threadRecognized && main) {
+                const hasMessages = main.querySelector(messageSelector);
+                const hasComposer = (main.matches(mainSelector) || profile) &&
+                    main.querySelector('form[data-chatgpt-composer]:not([data-composer-placement="home"])');
+                if (hasMessages || hasComposer) {
+                    threadRecognized = true;
+                    changed.add(main);
+                }
+            }
+            if (threadRecognized && root.getAttribute("data-equinox-surface") !== "thread") {
+                root.setAttribute("data-equinox-surface", "thread");
+            }
+            return;
+        }
+        // A first turn can mount before the navigation from home to /c/ completes,
+        // and can stay on / for temporary chats. Trust the actual transcript.
+        if (!homeChanged && (threadRecognized || changed.size === 0))
+            return;
         const formSelector = 'form[data-chatgpt-composer]';
         const forms = main?.querySelectorAll(formSelector);
         const form = forms?.length === 1 ? forms[0] : null;
-        const home = path === "/" && profile && form?.matches('[data-composer-placement="home"]')
+        const home = profile && form?.matches('[data-composer-placement="home"]')
             && !main?.querySelector('[data-homepage-takeover]');
-        // The thread's composer can be absent, replaced, or duplicated while the
-        // provider hydrates. A genuine signed-in thread with real message evidence
-        // still deserves its original role/avatar layout.
-        const threadEvidence = !!main?.querySelector('[data-chatgpt-search-unit-key$=":user"],[data-user-message-bubble="true"],[data-response-body],[data-message-author-role]');
-        const thread = /^(?:\/g\/[^/]+)?\/c\/[^/]+\/?$/u.test(path)
-            && !!main && !!profile && (threadEvidence || !!form && !form.matches('[data-composer-placement="home"]'));
-        if (home || thread)
-            root.setAttribute("data-equinox-surface", home ? "home" : "thread");
+        if (main?.querySelector(messageSelector)) {
+            if (!threadRecognized) {
+                threadRecognized = true;
+                changed.add(main);
+            }
+            root.setAttribute("data-equinox-surface", "thread");
+            return;
+        }
+        if (threadRecognized && !home)
+            return;
+        threadRecognized = false;
+        if (home)
+            root.setAttribute("data-equinox-surface", "home");
         else
             root.removeAttribute("data-equinox-surface");
-        if (!homeChanged)
-            return;
         if (greeting)
             clearMark(greeting);
         if (greetingRegion)
@@ -900,22 +915,24 @@ function decorateProviderIdentity(update, generation) {
     }
     function flush() {
         frame = 0;
-        if (!root.isConnected || location.href !== href) {
-            // An old route's queued frame must never tear down the newer
-            // did-navigate-in-page decoration instance.
-            if (world.__equinoxDecoration?.generation === generation)
-                world.__equinoxDecoration.dispose();
+        if (world.__equinoxDecoration?.generation !== generation)
+            return;
+        if (!root.isConnected) {
+            decorateProviderIdentity(update, generation);
+            return;
+        }
+        if (location.pathname !== pathname) {
+            // Wait for the native main-frame navigation event to swap decorations.
+            // Keep the current styling until the new route can take over.
+            observer.disconnect();
             return;
         }
         if (shellChanged)
             bindRoots();
         if (profileChanged)
             syncProfile();
-        // Re-evaluate the active provider surface as message nodes and composers
-        // hydrate, not only when the home form changes. Otherwise a real thread
-        // keeps the raw ChatGPT styling and hides both speaker portraits.
         syncSurface();
-        if (root.getAttribute("data-equinox-surface") === "thread") {
+        if (threadRecognized) {
             for (const branch of changed)
                 syncBranch(branch);
         }
@@ -949,8 +966,9 @@ function decorateProviderIdentity(update, generation) {
                     changed.add(parent?.matches(messageSelector) ? parent : oldMark);
                 }
                 changed.add(target);
-                if (record.attributeName === "data-composer-placement" || record.attributeName === "data-homepage-takeover")
+                if (homeRoute && ["data-chatgpt-composer", "data-composer-placement", "data-homepage-takeover"].includes(record.attributeName ?? "")) {
                     homeChanged = true;
+                }
                 continue;
             }
             for (const node of record.addedNodes) {
@@ -958,8 +976,8 @@ function decorateProviderIdentity(update, generation) {
                     continue;
                 if (node.matches(messageSelector) || !node.closest("[data-equinox-role]"))
                     changed.add(node);
-                if (node.matches('form,[data-homepage-takeover]') || node.querySelector('form[data-chatgpt-composer],[data-homepage-takeover]') ||
-                    (location.pathname === "/" && (node.matches(greetingSelector) || node.querySelector(greetingSelector))))
+                if (homeRoute && (node.matches('form,[data-homepage-takeover]') || node.querySelector('form[data-chatgpt-composer],[data-homepage-takeover]') ||
+                    node.matches(greetingSelector) || node.querySelector(greetingSelector)))
                     homeChanged = true;
             }
             for (const node of record.removedNodes) {
@@ -974,8 +992,8 @@ function decorateProviderIdentity(update, generation) {
                     clearMark(wrapper);
                     changed.add(wrapper);
                 }
-                if (node.matches('form,[data-homepage-takeover]') || node.querySelector('form[data-chatgpt-composer],[data-homepage-takeover]') ||
-                    (location.pathname === "/" && (node.matches(greetingSelector) || node.querySelector(greetingSelector))))
+                if (homeRoute && (node.matches('form,[data-homepage-takeover]') || node.querySelector('form[data-chatgpt-composer],[data-homepage-takeover]') ||
+                    node.matches(greetingSelector) || node.querySelector(greetingSelector)))
                     homeChanged = true;
             }
             const wrapper = target.closest('[data-chatgpt-search-unit-key$=":user"],[data-content-search-unit-key],[data-message-author-role]');
@@ -986,7 +1004,7 @@ function decorateProviderIdentity(update, generation) {
             frame = requestAnimationFrame(flush);
     });
     function bindRoots() {
-        const nextMain = document.querySelector(mainSelector);
+        const nextMain = document.querySelector(mainSelector) ?? document.querySelector("main");
         const nextProfile = document.querySelector(profileSelector);
         if (nextMain === main && nextProfile === profile && (main || profile))
             return;
@@ -1005,8 +1023,8 @@ function decorateProviderIdentity(update, generation) {
         profileChanged = true;
         observer.disconnect();
         if (!main) {
-            // Mount discovery only. The native caller bounds how long an unknown
-            // route can be observed before returning it to the provider.
+            // A known route can mount late. Once main exists, narrow the observer
+            // back to its subtree and the host's direct wrapper replacements.
             observer.observe(document, { childList: true, subtree: true });
             return;
         }
@@ -1014,7 +1032,7 @@ function decorateProviderIdentity(update, generation) {
             observer.observe(profile, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset"] });
         observer.observe(main, { childList: true, subtree: true, attributes: true, attributeFilter: [
                 "data-chatgpt-search-unit-key", "data-user-message-bubble", "data-response-body", "data-message-author-role",
-                "data-composer-placement", "data-homepage-takeover",
+                "data-chatgpt-composer", "data-composer-placement", "data-homepage-takeover",
             ] });
         // Observe wrapper replacement along each ancestry path, not its descendants.
         for (const start of [main, profile])
@@ -1027,11 +1045,8 @@ function decorateProviderIdentity(update, generation) {
     root.style.setProperty("--eq-agent-avatar", agentImage);
     root.setAttribute("data-equinox-agent-photo", String(agentImage !== "none"));
     root.setAttribute("data-equinox-home-style", composition);
-    const discovery = window.setTimeout(() => { if (!main)
-        observer.disconnect(); }, 4_000);
-    world.__equinoxDecoration.dispose = () => {
+    decoration.dispose = () => {
         observer.disconnect();
-        window.clearTimeout(discovery);
         if (frame)
             cancelAnimationFrame(frame);
         for (const element of marks)
@@ -1245,22 +1260,28 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
     let bounds = null;
     let loadState = "loading";
     let decorationGeneration = 0;
+    let decoratedPath = null;
     const applyIdentity = (visible = chatVisible) => {
-        if (view.webContents.isDestroyed() || !isChatGPTOrigin(view.webContents.getURL()))
+        if (view.webContents.isDestroyed())
             return;
-        const update = visible ? { identity, language, accent, composition, href: view.webContents.getURL() } : null;
+        const url = view.webContents.getURL();
+        if (!isChatGPTOrigin(url))
+            return;
+        decoratedPath = visible ? new URL(url).pathname : null;
+        const update = decoratedPath === null ? null : { identity, language, accent, composition, pathname: decoratedPath };
         const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(update) + "," + (++decorationGeneration) + ")";
         void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{ code }]).catch(() => { });
     };
-    view.webContents.on("did-navigate-in-page", () => { if (chatVisible)
-        applyIdentity(); });
+    view.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
+        if (isMainFrame && chatVisible && isChatGPTOrigin(url) && new URL(url).pathname !== decoratedPath)
+            applyIdentity();
+    });
     view.webContents.on("did-finish-load", () => {
         if (view.webContents.isDestroyed() || loadState !== "loading" || !admitted(view.webContents.getURL()))
             return;
         setLoadState("ready");
         if (isChatGPTOrigin(view.webContents.getURL())) {
-            void view.webContents.insertCSS(STYLE).then(() => { if (chatVisible)
-                applyIdentity(); }).catch(() => { });
+            void view.webContents.insertCSS(STYLE).catch(() => { });
         }
     });
     view.webContents.on("did-start-navigation", ({ isMainFrame, isSameDocument }) => {
