@@ -180,10 +180,11 @@ code { font-size: .92em; overflow-wrap: anywhere; }
 /* Overview puts the runtime and the provider link above its capability list. */
 .runtime-overview { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 18px 0 29px; border-bottom: 1px solid var(--line); }
 .runtime-summary { min-width: 0; }
-.runtime-summary h3 { margin: 9px 0 0; font-size: clamp(25px, 2.5vw, 38px); font-weight: 630; letter-spacing: -.048em; line-height: 1.13; text-wrap: balance; }
-.runtime-summary p { max-width: 53ch; margin: 11px 0 0; color: var(--text-2); font-size: 14px; line-height: 1.55; }
-.runtime-summary > .badge { display: inline-flex; align-items: center; gap: 7px; padding: 0; background: transparent; font-size: 11px; letter-spacing: .055em; }
-.runtime-summary > .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.runtime-overview-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.runtime-summary h3 { margin: 0; font-size: clamp(23px, 2.2vw, 31px); font-weight: 630; letter-spacing: -.035em; line-height: 1.15; }
+.overview-attention { display: grid; justify-items: start; gap: 4px; margin-top: 10px; }
+.overview-attention p { margin: 0; color: var(--text-2); font-size: 14px; line-height: 1.55; }
+.overview-attention .text-button, .connection-summary .text-button { min-height: 24px; }
 .runtime-metadata { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 17px; color: var(--muted); font-size: 12px; }
 .runtime-metadata strong, .runtime-metadata small { font-size: inherit; font-variant-numeric: tabular-nums; }
 .runtime-metadata strong { color: var(--text-2); font-weight: 600; }
@@ -378,6 +379,15 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .tasks-workspace.is-empty .task-list-pane { display: none; }
 .task-list-pane { min-width: 0; padding: 13px 11px; background: var(--surface-2); border-inline-end: 1px solid var(--line); }
 .task-detail-pane { min-width: 0; padding: var(--panel-padding); }
+.task-list-back { display: none; margin-block-end: 14px; }
+@media (max-width: 1000px) {
+  .tasks-workspace { grid-template-columns: minmax(0, 1fr); }
+  .tasks-workspace:not(.is-empty, .shows-task-detail) .task-detail-pane,
+  .tasks-workspace.shows-task-detail .task-list-pane { display: none; }
+  .tasks-workspace .task-list-pane { border: 0; }
+  .tasks-workspace .task-list { max-height: min(60dvh, 530px); }
+  .tasks-workspace:not(.is-empty) .task-list-back { display: inline-flex; }
+}
 .task-pane-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; padding: 3px 6px 12px; }
 .task-pane-heading h3 { font-size: 14px; }
 .task-pane-heading .muted { font-size: 12px; }
@@ -526,6 +536,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .root-dialog { width: min(560px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); padding: 0; border: 1px solid var(--line); border-radius: 18px; color: var(--text); background: var(--surface); box-shadow: var(--shadow-lg); }
 .root-dialog::backdrop, .settings-dialog::backdrop, .update-dialog::backdrop { background: var(--modal-backdrop); backdrop-filter: blur(3px); }
 .root-dialog form { display: grid; gap: 21px; padding: 28px; }
+.draft-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+#draft-dialog-title { margin: 0; font-size: 1.25rem; }
+#draft-dialog-copy { margin: 8px 0 0; }
 .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 4px; }
 .dialog-header h2 { margin: 0; font-size: 23px; font-weight: 600; letter-spacing: -.035em; }
 .root-dialog .toggle-field { border-bottom: 0; padding-block: 8px; }
@@ -650,6 +663,9 @@ body.chat-workspace-active { overflow: hidden; }
 .chat-workspace-active .main-panel > :is(.pause-banner,.restart-banner,.error-banner) { flex: none; margin: 0; border-radius: 0; }
 .chat-workspace-active #section-chat { min-height: 0; flex: 1; display: flex; flex-direction: column; margin: 0; }
 .chat-provider-host { min-width: 0; min-height: 0; flex: 1; display: grid; place-items: center; margin: 10px 12px 12px; border-radius: 15px; background: var(--bg); color: var(--muted); }
+.chat-provider-fallback { padding: 16px; text-align: center; }
+.chat-provider-fallback p { margin: 0; }
+.chat-provider-fallback button { margin-top: 13px; }
 /* Chat activity is rendered by its own MCP call inside the conversation. */
 .chat-identity-settings { display: flex; align-items: flex-start; gap: 14px; }
 .chat-agent-preview { flex: 0 0 47px; width: 47px; height: 47px; display: grid; place-items: center; border-radius: 14px; background: var(--accent-soft) center/cover no-repeat; color: var(--accent); font-size: 23px; font-weight: 650; border: 1px solid var(--line); }

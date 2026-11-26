@@ -3154,12 +3154,15 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   getStatus: async () => {
     const browser = equinoxBrowserBridge.snapshot();
     const browserSettingsByContext:Record<"agent"|"user",RuntimeBoundary> = { agent: null, user: null };
+    const settingsConnectionIds = { agent: equinoxBrowserBridge.settingsConnectionId("agent"), user: equinoxBrowserBridge.settingsConnectionId("user") };
     for (const context of ["agent", "user"] as const) {
-      if (!browser.contexts?.[context]?.ready) continue;
+      const expectedConnectionId = settingsConnectionIds[context];
+      if (!expectedConnectionId) continue;
       try {
         browserSettingsByContext[context] = await equinoxBrowserBridge.call("settings.status", {}, {
           timeoutMs: 2_500,
           context,
+          expectedConnectionId,
         });
       } catch {
         // Older extension builds may not expose the settings control plane yet.
@@ -3236,6 +3239,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
           agent: {
             ready: Boolean(browser.contexts?.agent?.ready),
             connectedAt: browser.contexts?.agent?.connectedAt ?? null,
+            settingsConnectionId: browserSettingsByContext.agent ? settingsConnectionIds.agent : null,
             extensionVersion: browser.contexts?.agent?.extension?.extensionVersion ?? null,
             consentAccepted: typeof browserSettingsByContext.agent?.consentAccepted === "boolean" ? browserSettingsByContext.agent.consentAccepted : null,
             controlEnabled: typeof browserSettingsByContext.agent?.enabled === "boolean" ? browserSettingsByContext.agent.enabled : null,
@@ -3245,6 +3249,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
           user: {
             ready: Boolean(browser.contexts?.user?.ready),
             connectedAt: browser.contexts?.user?.connectedAt ?? null,
+            settingsConnectionId: browserSettingsByContext.user ? settingsConnectionIds.user : null,
             extensionVersion: browser.contexts?.user?.extension?.extensionVersion ?? null,
             consentAccepted: typeof browserSettingsByContext.user?.consentAccepted === "boolean" ? browserSettingsByContext.user.consentAccepted : null,
             controlEnabled: typeof browserSettingsByContext.user?.enabled === "boolean" ? browserSettingsByContext.user.enabled : null,
@@ -3346,7 +3351,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   )),
   updateBrowserSettings: async (settings) => {
     const context = settings?.context === "agent" ? "agent" : "user";
-    const { context: _context, ...extensionSettings } = settings ?? {};
+    const { context: _context, expectedConnectionId, ...extensionSettings } = settings ?? {};
     return await withMutationLocks([`browser:${context}`], async () => {
       if (!equinoxBrowserBridge.readyFor(context)) {
         const error:Error & {statusCode?:number}=new Error(
@@ -3360,6 +3365,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
       return await equinoxBrowserBridge.call("settings.update", extensionSettings, {
         timeoutMs: 5_000,
         context,
+        expectedConnectionId,
       });
     });
   },

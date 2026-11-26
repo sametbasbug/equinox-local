@@ -109,11 +109,15 @@ function validateBrowserSettings(body:JsonBoundary) {
     throw badRequest("Browser settings body must be a JSON object.");
   }
   const keys = Object.keys(body);
-  if (keys.length < 1 || keys.some((key) => !["context", "enabled", "agentCursorEnabled", "agentCursorName"].includes(key))) {
+  if (keys.some((key) => !["context", "expectedConnectionId", "enabled", "agentCursorEnabled", "agentCursorName"].includes(key)) ||
+    !["enabled", "agentCursorEnabled", "agentCursorName"].some((key) => Object.hasOwn(body, key))) {
     throw badRequest("Browser settings body has no supported settings or contains an unsupported field.");
   }
-  if (Object.hasOwn(body, "context") && !["agent", "user"].includes(body.context)) {
+  if (!["agent", "user"].includes(body.context)) {
     throw badRequest("Browser settings context must be agent or user.");
+  }
+  if (typeof body.expectedConnectionId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(body.expectedConnectionId)) {
+    throw badRequest("Browser connection changed. Review settings before applying changes.");
   }
   if (Object.hasOwn(body, "enabled") && typeof body.enabled !== "boolean") {
     throw badRequest("enabled must be boolean.");

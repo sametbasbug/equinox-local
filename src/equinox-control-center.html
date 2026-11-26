@@ -20,9 +20,9 @@
       </div>
 
       <nav id="workspace-nav" class="workspace-tabs" aria-label="Workspaces">
-        <button class="nav-item workspace-tab" type="button" data-section="chat" aria-label="Chat" title="Chat">
+        <button class="nav-item workspace-tab" type="button" data-section="chat" aria-label="Assistant" title="Assistant" aria-keyshortcuts="Alt+Shift+5">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 2v-9a9 9 0 0 1 9-9 9 9 0 0 1 9 8Z"/><path d="M8 10h8M8 14h5"/></svg>
-          <span>Chat</span>
+          <span>Assistant</span>
         </button>
         <button id="workspace-local" class="nav-item workspace-tab is-active" type="button" data-section="dashboard" aria-current="page" aria-label="Control Center" title="Control Center">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M10 9v11"/></svg>
@@ -369,9 +369,15 @@
       <section id="section-dashboard" class="page-section is-active" aria-labelledby="section-title">
         <div class="runtime-overview" id="runtime-overview">
           <div class="runtime-summary">
-            <span id="runtime-health-badge" class="badge neutral">Checking runtime</span>
-            <h3 id="overview-title">Checking your computer</h3>
-            <p id="overview-copy">Equinox Local is collecting a private status summary.</p>
+            <div class="runtime-overview-heading">
+              <h3>Local runtime</h3>
+              <span id="runtime-health-badge" class="badge neutral">Checking runtime</span>
+            </div>
+            <div id="overview-attention" class="overview-attention" hidden>
+              <p id="overview-copy"></p>
+              <a class="text-button" href="#doctor-title" id="overview-runtime-diagnostics">Open diagnostics</a>
+              <button class="text-button" type="button" data-jump-section="permissions" id="overview-safety" hidden>Review Safety</button>
+            </div>
             <div class="runtime-metadata">
               <strong id="runtime-version">—</strong>
               <span class="metric-divider" aria-hidden="true"></span>
@@ -391,6 +397,7 @@
             <div>
               <strong>ChatGPT connection</strong>
               <span id="chatgpt-connection-badge" class="badge neutral">Checking connection</span>
+              <a class="text-button" href="#doctor-title" id="overview-connection-diagnostics" hidden>Open diagnostics</a>
             </div>
           </div>
         </div>
@@ -457,20 +464,6 @@
               <p class="panel-note">Your named projects and folders, saved privately on this computer.</p>
             </article>
 
-            <article class="panel-card">
-              <div class="panel-header">
-                <div>
-                  <p class="eyebrow">Runtime health</p>
-                  <h3 id="health-summary-title">Checking recent runtime events</h3>
-                </div>
-                <span id="health-summary-badge" class="badge neutral">Checking</span>
-              </div>
-              <p id="health-summary-copy" class="health-copy">The Control Center is asking the existing observability layer for a bounded health summary.</p>
-              <div class="health-meta">
-                <span id="health-event-count">— recent events</span>
-                <span id="health-evaluated-at">Not evaluated yet</span>
-              </div>
-            </article>
           </div>
         </div>
 
@@ -479,7 +472,7 @@
             <div class="panel-header">
               <div>
                 <p class="eyebrow">System doctor</p>
-                <h3 id="doctor-title">Full system check is available</h3>
+                <h3 id="doctor-title" tabindex="-1">Full system check is available</h3>
               </div>
               <button id="run-doctor-button" class="button secondary" type="button">Run full checks</button>
               <span id="doctor-badge" class="badge neutral">Not checked</span>
@@ -487,6 +480,10 @@
             <p id="doctor-copy" class="health-copy">Equinox Local is checking the runtime, private configuration, update path and optional integrations.</p>
             <details class="doctor-details">
               <summary>View all checks</summary>
+              <div class="health-meta">
+                <span id="health-event-count">— recent events</span>
+                <span id="health-evaluated-at">Not evaluated yet</span>
+              </div>
               <div id="doctor-list" class="doctor-list" aria-live="polite"></div>
             </details>
             <section class="doctor-fix-block" aria-labelledby="doctor-fix-title">
@@ -561,14 +558,16 @@
             <div id="task-list" class="task-list" aria-live="polite"></div>
           </aside>
           <section class="task-detail-pane" aria-label="Task details">
+            <button id="task-list-back" class="button secondary task-list-back" type="button">Back to tasks</button>
             <div id="task-detail-empty" class="task-detail-empty">
               <div class="surface-icon" aria-hidden="true"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4.5V3h6v1.5M8.5 10h7M8.5 14h7M8.5 18h4"/></svg></div>
               <strong>No tasks yet</strong>
               <p>Tasks appear here after an agent saves a checkpoint.</p>
             </div>
             <form id="task-form" hidden>
+              <p id="task-draft-note" class="readonly-note" role="status" hidden></p>
               <div class="task-detail-heading">
-                <div><div class="task-heading-line"><h3 id="task-detail-title">Task</h3><span id="task-status-badge" class="badge neutral">Active</span></div><code id="task-detail-id" class="task-detail-id">task—</code><p id="task-detail-meta" class="task-detail-meta">Checkpoint — · Updated —</p></div>
+                <div><div class="task-heading-line"><h3 id="task-detail-title" tabindex="-1">Task</h3><span id="task-status-badge" class="badge neutral">Active</span></div><code id="task-detail-id" class="task-detail-id">task—</code><p id="task-detail-meta" class="task-detail-meta">Checkpoint — · Updated —</p></div>
                 <div class="task-continuation-summary"><span>Auto Continue</span><strong id="task-continuation-state">Not armed</strong><small id="task-continuation-target">No browser target</small></div>
               </div>
               <section id="task-recovery-panel" class="task-recovery-panel" hidden aria-live="polite">
@@ -606,7 +605,10 @@
 
       <section id="section-chat" class="page-section" aria-labelledby="section-title" hidden>
         <div id="chat-provider-host" class="chat-provider-host">
-          <p id="chat-provider-status" role="status">Loading ChatGPT…</p>
+          <div id="chat-provider-fallback" class="chat-provider-fallback">
+            <p id="chat-provider-status" role="status">Loading ChatGPT…</p>
+            <button id="chat-provider-retry" class="button secondary" type="button" hidden>Try again</button>
+          </div>
         </div>
 
       </section>
@@ -688,7 +690,8 @@
               <small>Shown beside the visible agent cursor. This setting stays in the selected extension profile's local storage.</small>
             </label>
             <button id="apply-browser-settings" class="button primary full-width" type="button" disabled>Apply browser settings</button>
-            <p id="browser-settings-note" class="save-hint">Settings apply immediately and do not require a Local restart.</p>
+            <p id="browser-settings-note" class="save-hint" role="status">Settings apply immediately and do not require a Local restart.</p>
+            <button id="discard-browser-draft" class="text-button" type="button" hidden>Discard draft</button>
             </div>
         </article>
       </section>
@@ -879,6 +882,20 @@
       </section>
     </main>
   </div>
+
+  <dialog id="draft-dialog" class="root-dialog" aria-labelledby="draft-dialog-title" aria-describedby="draft-dialog-copy">
+    <form method="dialog">
+      <div>
+        <h2 id="draft-dialog-title">Unsaved changes</h2>
+        <p id="draft-dialog-copy" class="muted"></p>
+      </div>
+      <div class="draft-dialog-actions">
+        <button id="draft-dialog-stay" class="button secondary" type="submit" value="stay" autofocus>Stay here</button>
+        <button class="button secondary" type="submit" value="discard">Discard changes</button>
+        <button id="draft-dialog-save" class="button primary" type="submit" value="save">Save and switch</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="root-dialog" class="root-dialog" aria-labelledby="dialog-title">
     <form id="root-form" novalidate>

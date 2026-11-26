@@ -49,6 +49,15 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
     },
     requestJson: (request: unknown) => ipcRenderer.invoke("equinox-shell:control-request", request),
     setEmbeddedChatBounds: (bounds: unknown) => ipcRenderer.invoke("equinox-shell:embedded-chat-layout", bounds),
+    retryEmbeddedChat: () => ipcRenderer.invoke("equinox-shell:embedded-chat-retry"),
+    onEmbeddedChatStatus: (callback: unknown) => {
+      if (typeof callback !== "function") return () => {};
+      const listener = (_event: unknown, value: unknown) => {
+        if (value === "loading" || value === "ready" || value === "offline" || value === "failed") callback(value);
+      };
+      ipcRenderer.on("equinox-shell:embedded-chat-status", listener);
+      return () => ipcRenderer.removeListener("equinox-shell:embedded-chat-status", listener);
+    },
     requestEmbeddedChatMicrophone: () => ipcRenderer.invoke("equinox-shell:embedded-chat-microphone"),
     setLanguage: (language: unknown) => {
       if (language === "en" || language === "tr") {
