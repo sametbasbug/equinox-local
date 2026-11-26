@@ -667,14 +667,15 @@ html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"]::after 
   inset-inline-start: var(--eq-author-offset);
   color: var(--eq-text);
 }
-/* Symmetric message surfaces; the answer, streaming nodes and genuine
-   tool cards remain provider-owned. Older transcript variants without an
-   answer body use their outer Markdown region instead, never both. */
+/* A response-body also serves as an empty streaming/tool placeholder.
+   Frame only real message content, not the provider's activity headers,
+   empty blocks, or original inline MCP App portal. Older transcript
+   variants use the outer Markdown region instead, never both. */
 html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] :is(
   [data-response-body]:not([data-response-body] *),
   [data-markdown-text-style="assistant-message"]:not([data-response-body] *, [data-markdown-text-style="assistant-message"] *),
   .markdown:not([data-response-body] *, [data-markdown-text-style="assistant-message"] *, .markdown *)
-) {
+):not(:empty, [data-spacing="activity"] *, [class~="group/activity-header"] *, [data-mcp-app-portal-target] *, :has(> [data-mcp-app-portal-target], > [class~="group/activity-header"])) {
   box-sizing: border-box;
   max-width: 100%;
   min-width: 0;
