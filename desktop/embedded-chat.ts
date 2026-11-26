@@ -745,6 +745,7 @@ html:root[data-equinox-surface="thread"] [data-talvt-turn-state]:has([data-equin
    visual layout or tab order. The original remains the unconfirmed fallback. */
 [data-equinox-native-run] > [data-mcp-app-portal-target] {position:absolute !important; inset:0 auto auto 0 !important; width:1px !important; height:1px !important; overflow:hidden !important; visibility:hidden !important; pointer-events:none !important;}
 .eq-run-host { font: 13px/1.5 system-ui,sans-serif; color:var(--eq-secondary); min-width:0; }
+html:root[data-equinox-surface="thread"] .eq-run-host:not([data-equinox-role] *) { margin-inline-start:var(--eq-author-offset,56px); }
 .eq-run-group { display:flex; align-items:center; gap:8px; border:0; background:transparent; color:var(--eq-secondary); font:inherit; text-align:start; padding:3px 0; cursor:pointer; }
 .eq-run-group::before { content:"⌘"; font-size:14px; }
 .eq-run-group::after { content:"›"; margin-inline-start:2px; }
@@ -937,13 +938,18 @@ function decorateProviderIdentity(update: {
     marks.delete(element);
   }
 
+  function hasAssistantProse(element: Element) {
+    // Activity summaries, tool placeholders and sr-only speaker headings
+    // are not messages. Use the provider's actual selected-message body.
+    const prose='[data-response-body] > [data-chatgpt-selection-message-id], [data-markdown-text-style="assistant-message"], .markdown';
+    const nodes=[...(element.matches(prose)?[element]:[]),...element.querySelectorAll(prose)];
+    return nodes.some(node=>Boolean(node.textContent?.trim())&&
+      !node.closest('[class~="group/activity-header"], [data-response-body] > [data-mcp-app-portal-target]'));
+  }
+
   function mark(element: Element, role: "user" | "assistant") {
     if (!main?.contains(element) || element === main || element.closest(inactiveRegion)) return;
-    if (role === "assistant" && (element.matches(userEvidence) || element.querySelector(userEvidence))) return;
-    // An empty provider response placeholder is not a speaker. A real
-    // assistant unit may have prose, an inline tool, or an activity control.
-    if (role === "assistant" && !element.textContent?.trim() &&
-        !element.querySelector("iframe,button,img,video,canvas,[data-mcp-app-portal-target]")) return;
+    if (role === "assistant" && (element.matches(userEvidence) || element.querySelector(userEvidence) || !hasAssistantProse(element))) return;
     const current = element.closest("[data-equinox-role]");
     if (current && current !== element) return;
     const nested = [...element.querySelectorAll("[data-equinox-role]")];
@@ -1116,12 +1122,8 @@ function decorateProviderIdentity(update: {
       // own any response; remove the stale speaker before re-evaluating.
       for (const element of marks) {
         if (element.getAttribute("data-equinox-role") !== "assistant") continue;
-        const realResponse = element.matches(assistantMessage + "," + responseBody) ||
-          element.querySelector(assistantMessage + "," + responseBody);
-        const hasContent = element.textContent?.trim() ||
-          element.querySelector("iframe,[data-response-body] > [data-mcp-app-portal-target]");
         if (!element.isConnected || element.matches(userEvidence) || element.querySelector(userEvidence) ||
-            !realResponse || !hasContent) {
+            !hasAssistantProse(element)) {
           clearMark(element);
           if (element.isConnected) changed.add(element);
         }

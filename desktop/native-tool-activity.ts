@@ -14,15 +14,35 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
   const sameRoute = () => location.origin + location.pathname === route;
   const tr = (en: string, turkish: string) => update.language === "tr" ? turkish : en;
   const selector = "[data-response-body] > [data-mcp-app-portal-target] iframe";
-  type Entry = {frame: HTMLIFrameElement; body: Element; portal: Element; id: string; src: string; origin: string; nonce: string;
-    host?: HTMLDivElement; row?: HTMLDetailsElement; group?: HTMLButtonElement; operation?: string; status?: string; signature?: string; collapsedSlot?: Element; timers: number[]};
+  type Presentation = {body: Element; id: string; owner: string | null;
+    host?: HTMLDivElement; row?: HTMLDetailsElement; group?: HTMLButtonElement; operation?: string; status?: string; signature?: string; collapsedSlot?: Element};
+  type Entry = Presentation & {frame: HTMLIFrameElement; portal: Element; src: string; origin: string; nonce: string; timers: number[]};
   const entries = new Map<HTMLIFrameElement, Entry>();
+  // Only data received from a verified live invocation is retained. Keep
+  // this bounded to the current document/route and exact provider turn and
+  // response identifiers, never reconstruct from a general execution log.
+  const retained = new Map<string, Presentation>();
+  const ownerOf = (body: Element): string | null => {
+    const turn=body.closest("[data-turn-key]");
+    const scope=body.closest("[data-content-search-turn-key]");
+    const transcript=body.closest("[data-chatgpt-conversation-selection-target]");
+    const conversation=transcript?.getAttribute("data-chatgpt-conversation-selection-target");
+    const turnId=turn?.getAttribute("data-turn-key");
+    const scopeId=scope?.getAttribute("data-content-search-turn-key");
+    const users=turn?.querySelectorAll('[data-chatgpt-search-unit-key$=":user"]');
+    const userId=users?.length===1?users[0]?.getAttribute("data-chatgpt-search-message-ids"):null;
+    if(!conversation||!turnId||!scopeId||!userId||!turn?.contains(scope??null)||
+      !location.pathname.endsWith("/c/"+conversation)||turnId!==userId)return null;
+    return JSON.stringify([conversation,turnId,scopeId,userId]);
+  };
+  const keyOf = (e: Presentation) => e.owner ? JSON.stringify([e.owner,e.id]) : null;
   const expanded = new WeakMap<Element, boolean>();
   let scheduled = 0;
   let disposed = false;
   let frames=0,candidates=0,requests=0,replies=0,accepted=0;
   const valid = (e: Entry) => !disposed && sameRoute() && e.frame.isConnected && e.body.isConnected &&
     e.frame.src === e.src && e.body.getAttribute("data-response-body") === e.id &&
+    (!e.owner || ownerOf(e.body)===e.owner) &&
     e.portal.parentElement === e.body && e.portal.contains(e.frame);
   // WindowProxy exposes child references across origins without granting DOM
   // access. The observed provider shell has exactly one inner resource frame.
@@ -44,18 +64,67 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     // challenge is sent with wildcard targeting, never command/result data.
     target.postMessage({type:"equinox-native-run/request-v1",nonce:e.nonce},target===e.frame.contentWindow?e.origin:"*");
   };
-  const forget = (e: Entry) => {
-    for (const timer of e.timers) window.clearTimeout(timer);
+  const detach = (e: Presentation) => {
     e.host?.remove();
     e.collapsedSlot?.removeAttribute("data-equinox-run-collapsed");
+    delete e.collapsedSlot;
     e.body.removeAttribute("data-equinox-native-run");
-    entries.delete(e.frame);
   };
+  const forget = (e: Entry, keep = true) => {
+    for (const timer of e.timers) window.clearTimeout(timer);
+    detach(e);
+    entries.delete(e.frame);
+    const key=keyOf(e);
+    if(!keep||!key||!e.host||!e.row||!e.status||e.status==="running")return;
+    // Store the presentation only, not a detached provider frame or window.
+    // A detached group button closes over its original entry. Drop it
+    // before retaining the row, so no provider iframe is kept alive.
+    if(e.group){e.group.onclick=null;e.group.remove();delete e.group;}
+    const {id,owner,host,row,operation,status,signature}=e;
+    const saved: Presentation={body:document.createElement("div"),id,owner,host,row};
+    if(operation!==undefined)saved.operation=operation;
+    if(status!==undefined)saved.status=status;
+    if(signature!==undefined)saved.signature=signature;
+    const previous=retained.get(key);
+    if(previous)detach(previous);
+    retained.set(key,saved);
+    while(retained.size>120) {
+      const first=retained.keys().next().value;
+      if(first===undefined)break;
+      const item=retained.get(first);
+      if(item)detach(item);
+      retained.delete(first);
+    }
+  };
+  function reconcileRetained() {
+    for(const [key,e] of retained) {
+      const live=[...entries.values()].find(x=>keyOf(x)===key && valid(x));
+      if(live) {
+        // An exact remounted original has priority. Restore the live
+        // presentation only after it receives its own verified reply.
+        detach(e);
+        if(live.row)retained.delete(key);
+        continue;
+      }
+      const slots=[...document.querySelectorAll("[data-response-body]")].filter(body=>
+        body.getAttribute("data-response-body")===e.id && ownerOf(body)===e.owner);
+      const body=slots.length===1?slots[0]:null;
+      if(!body || body.querySelector("[data-mcp-app-portal-target],iframe") ||
+        [...body.childNodes].some(n=>n!==e.host&&(n.nodeType===Node.ELEMENT_NODE||Boolean(n.textContent?.trim())))) {
+        detach(e);continue;
+      }
+      if(e.body!==body) {detach(e);e.body=body;}
+      if(e.host&&!e.host.isConnected)body.append(e.host);
+      body.setAttribute("data-equinox-native-run","");
+    }
+  }
   function reconcileGroups() {
-    const ready = [...entries.values()].filter(e => e.host?.isConnected && e.row && valid(e))
-      .sort((a,b) => a.body.compareDocumentPosition(b.body) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-    const groups: Entry[][] = [];
-    const slot = (e: Entry) => {
+    const ready: Presentation[] = [
+      ...[...entries.values()].filter(e => e.host?.isConnected && e.row && valid(e)),
+      ...[...retained.values()].filter(e=>e.host?.isConnected&&e.row&&ownerOf(e.body)===e.owner),
+    ].sort((a,b) => a.body.compareDocumentPosition(b.body) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+    const groups: Presentation[][] = [];
+    const slot = (e: Presentation) => {
       const p=e.body.parentElement;
       return p?.parentElement?.getAttribute("data-spacing")==="activity" && p.children.length===1 ? p : e.body;
     };
@@ -115,6 +184,7 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
         (event.origin===x.origin||(source!==x.frame.contentWindow&&event.origin==="null"));
     });
     if(!e||!valid(e))return;
+    e.owner ??= ownerOf(e.body);
     const d=event.data.data;
     if(!d||typeof d.operation!=="string"||!/^[a-z][a-z0-9_]{0,159}$/.test(d.operation)||
       !["running","success","complete","failed","cancelled","background"].includes(d.state))return;
@@ -160,6 +230,15 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     detail.append(footer);row.append(detail);e.host.append(row);
     e.row=row;e.operation=data.operation;e.status=data.state;e.signature=signature;
     e.body.setAttribute("data-equinox-native-run","");
+    const key=keyOf(e);
+    if(key&&retained.has(key)) {
+      const previous=retained.get(key)!;
+      // Do not clear the live marker when both use the same exact slot.
+      previous.host?.remove();
+      previous.collapsedSlot?.removeAttribute("data-equinox-run-collapsed");
+      retained.delete(key);
+    }
+    reconcileRetained();
     reconcileGroups();
     if(wasFocused&&!row.hidden)summary.focus({preventScroll:true});
   }
@@ -168,7 +247,10 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     if(disposed)return;
     if(!sameRoute()){dispose();return;}
     let changed=false;
-    for(const e of entries.values())if(!valid(e)){forget(e);changed=true;}
+    for(const e of entries.values()) {
+      if(!valid(e)){forget(e);changed=true;}
+      else e.owner ??= ownerOf(e.body);
+    }
     const mounted=Array.from(document.querySelectorAll<HTMLIFrameElement>(selector)).slice(-120);
     frames=Math.max(frames,mounted.length);
     for(const frame of mounted) {
@@ -180,12 +262,15 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
       try{origin=new URL(frame.src).origin;}catch{continue;}
       if(!/^https:\/\/connector-id-[a-f0-9-]+\.web-sandbox\.oaiusercontent\.com$/u.test(origin)||
         frame.closest("[data-mcp-app-origin-generated]")?.getAttribute("data-mcp-app-origin-generated")!==origin)continue;
-      const e:Entry={frame,body,portal,id,src:frame.src,origin,nonce:crypto.randomUUID(),timers:[]};
+      const e:Entry={frame,body,portal,id,owner:ownerOf(body),src:frame.src,origin,nonce:crypto.randomUUID(),timers:[]};
       candidates=Math.min(10000,candidates+1);
       entries.set(frame,e);
       for(const delay of [0,300,1200,4000,9000,16000])e.timers.push(window.setTimeout(()=>request(e),delay));
     }
-    if(changed)reconcileGroups();
+    if(changed || retained.size) {
+      reconcileRetained();
+      reconcileGroups();
+    }
   }
   function schedule(){if(!disposed&&!scheduled)scheduled=requestAnimationFrame(scan);}
   const observer=new MutationObserver(records=>{
@@ -194,7 +279,9 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
   function onLoad(event: Event){if(event.target instanceof HTMLIFrameElement){const e=entries.get(event.target);if(e)request(e);else schedule();}}
   function dispose(){if(disposed)return;disposed=true;observer.disconnect();if(scheduled)cancelAnimationFrame(scheduled);
     window.removeEventListener("message",onMessage);window.removeEventListener("load",onLoad,true);
-    for(const e of entries.values())forget(e);}
+    for(const e of entries.values())forget(e,false);
+    for(const e of retained.values())detach(e);
+    retained.clear();}
   world.__equinoxRunTimeline={generation,dispose,inspect:()=>({frames,candidates,requests,replies,accepted})};
   window.addEventListener("message",onMessage);
   window.addEventListener("load",onLoad,true);
