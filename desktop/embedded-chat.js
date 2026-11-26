@@ -791,7 +791,11 @@ function decorateProviderIdentity(update, generation) {
     const userMessage = userTurn + "," + userBubble;
     const assistantMessage = '[data-chatgpt-search-unit-key$=":assistant"],[data-message-author-role="assistant"],:is(article,section)[data-turn="assistant"][data-testid]';
     const responseBody = '[data-response-body],[data-markdown-text-style="assistant-message"]';
-    const messageSelector = [userUnit, userMessage, assistantMessage, responseBody].join(",");
+    const explicitMessage = [userUnit, userMessage, assistantMessage, responseBody].join(",");
+    const speakerHeading = 'h4,[role="heading"][aria-level="4"]';
+    const messageSelector = explicitMessage + "," + speakerHeading;
+    const turnWrapper = 'article,section,[data-testid^="conversation-turn-"],[data-virtualized-turn-content],[data-content-search-unit-key]';
+    const inactiveRegion = 'dialog,[role="dialog"],[role="menu"],[hidden],[aria-hidden="true"],nav,aside';
     const greetingSelector = '[class*="Greeting-"]';
     const headingSelector = 'h1,[role="heading"][aria-level="1"]';
     const formSelector = "form[data-chatgpt-composer]";
@@ -822,16 +826,49 @@ function decorateProviderIdentity(update, generation) {
         marks.delete(element);
     }
     function mark(element, role) {
-        if (!main?.contains(element) || element === main || element.closest('dialog,[role="dialog"],[role="menu"]'))
+        if (!main?.contains(element) || element === main || element.closest(inactiveRegion))
             return;
+        const current = element.closest("[data-equinox-role]");
+        if (current && current !== element)
+            return;
+        const nested = [...element.querySelectorAll("[data-equinox-role]")];
+        if (nested.some(turn => turn.getAttribute("data-equinox-role") !== role))
+            return;
+        for (const turn of nested)
+            clearMark(turn);
         element.setAttribute("data-equinox-role", role);
         element.setAttribute("data-equinox-author", role === "assistant" ? (agent || "Equinox") : human);
         element.setAttribute("data-equinox-initial", role === "assistant" ? agentInitial : human.charAt(0));
         marks.add(element);
     }
+    function speakerRole(heading) {
+        // Some provider renderers supply a visually hidden heading in place of
+        // the normal author attributes. Never interpret a visible message heading.
+        const rect = heading.getBoundingClientRect();
+        if (!heading.getClientRects().length ||
+            (rect.width > 4 && rect.height > 4 && !heading.classList.contains("sr-only")))
+            return null;
+        const label = heading.textContent?.trim().replace(/:$/u, "");
+        if (label === "You said")
+            return "user";
+        if (label === "ChatGPT said")
+            return "assistant";
+        return null;
+    }
     function syncMessage(evidence) {
         if (!main?.contains(evidence))
             return;
+        if (evidence.matches(speakerHeading)) {
+            const speaker = speakerRole(evidence);
+            const wrapper = speaker ? evidence.closest(turnWrapper) : null;
+            if (!speaker || !wrapper || wrapper.querySelector(explicitMessage))
+                return;
+            // A common wrapper sometimes owns both sides of the exchange.
+            const headings = [...wrapper.querySelectorAll(speakerHeading)].filter(heading => speakerRole(heading));
+            if (headings.length === 1)
+                mark(wrapper, speaker);
+            return;
+        }
         const user = evidence.closest(userUnit);
         if (user && (user.matches(userMessage) || user.querySelector(userMessage))) {
             mark(user, "user");
@@ -914,7 +951,7 @@ function decorateProviderIdentity(update, generation) {
             : alternateHeadings.length === 1 ? alternateHeadings[0] : null;
         // A visible home form and heading are stronger evidence than old turns
         // that the provider leaves mounted during the transition back to home.
-        if (!candidate && main?.querySelector(messageSelector)) {
+        if (!candidate && main?.querySelector(explicitMessage)) {
             if (!threadRecognized) {
                 threadRecognized = true;
                 changed.add(main);
@@ -1037,7 +1074,8 @@ function decorateProviderIdentity(update, generation) {
     });
     function bindRoots() {
         const shell = document.querySelector("[data-app-shell-main-surface]") ?? document.querySelector(mainSelector);
-        const evidence = document.querySelector(messageSelector);
+        const evidence = [...document.querySelectorAll(messageSelector)].find(element => !element.closest(inactiveRegion) &&
+            (element.matches(speakerHeading) ? speakerRole(element) : element.getClientRects().length > 0));
         const thread = document.getElementById("thread");
         const nextMain = shell && (!evidence || shell.contains(evidence)) ? shell
             : thread && (!evidence || thread.contains(evidence)) ? thread
