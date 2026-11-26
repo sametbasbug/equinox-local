@@ -239,6 +239,18 @@
         <button id="dismiss-error" class="icon-button" type="button" aria-label="Dismiss error">×</button>
       </div>
 
+      <div class="control-startup">
+        <div id="startup-progress" class="startup-progress" role="status">
+          <span class="startup-spinner" aria-hidden="true"></span>
+          <h3>Starting Equinox Local…</h3>
+          <p>Waiting for installation verification and the local runtime.</p>
+        </div>
+        <div id="startup-failed" class="startup-progress" hidden>
+          <h3>Control Center is not ready</h3>
+          <button id="startup-retry" class="button secondary" type="button">Retry</button>
+        </div>
+      </div>
+
       <section id="section-setup" class="page-section setup-section" aria-labelledby="section-title" hidden>
         <div class="setup-hero">
           <div>

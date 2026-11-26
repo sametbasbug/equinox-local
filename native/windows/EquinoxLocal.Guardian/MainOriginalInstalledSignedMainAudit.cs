@@ -67,14 +67,14 @@ internal static partial class Program
             throw new InvalidDataException("Signed Main release metadata differs from production SHA.");
         var claim = manifest.GetProperty("releaseFingerprint");
         RequireExactKeys(claim, ["schemaVersion", "sha256", "entries", "bytes"]);
-        var measured = FingerprintNativeMainRelease(release);
+        var measured = InspectOriginalSignedWindowsArchive(Path.Combine(store, "signed-artifact.zip"),
+            release, signed.ArtifactSha256, signed.ArtifactBytes, measureFingerprint: true)
+            ?? throw new InvalidDataException("Installed Main fingerprint was not measured.");
         if (claim.GetProperty("schemaVersion").GetInt32() != 1 ||
             claim.GetProperty("sha256").GetString() != measured.Sha256 ||
             claim.GetProperty("entries").GetInt32() != measured.Entries ||
             claim.GetProperty("bytes").GetInt64() != measured.Bytes)
             throw new InvalidDataException("Installed Main files differ from their signed store fingerprint.");
-        InspectOriginalSignedWindowsArchive(Path.Combine(store, "signed-artifact.zip"),
-            release, signed.ArtifactSha256, signed.ArtifactBytes);
         InspectionPhase = "installed-main-production-signed-exact-files";
     }
 }

@@ -70,6 +70,15 @@ body.control-loading #control-center-nav,
 body.control-loading #setup-nav,
 body.control-loading .page-section,
 body.control-loading .topbar-actions { visibility: hidden; pointer-events: none; }
+body.control-loading .page-section, body.control-loading .topbar { display: none; }
+.control-startup { display: none; }
+body.control-loading .control-startup { display: grid; place-items: center; min-height: min(460px, 65vh); padding: 32px 16px; text-align: center; }
+.startup-progress { display: grid; justify-items: center; gap: 12px; }
+.startup-progress h3 { margin: 0; font-size: 20px; font-weight: 620; letter-spacing: -.025em; }
+.startup-progress p { margin: 0; color: var(--muted); font-size: 13px; }
+.startup-spinner { width: 30px; height: 30px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: startup-spin .9s linear infinite; }
+@keyframes startup-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .startup-spinner { animation: none; } }
 button, input, select { font: inherit; }
 button, select, summary { cursor: pointer; }
 button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
