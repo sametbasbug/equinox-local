@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { protectWindowsPrivateStatePath } from "./equinox-local-private-state.js";
+import { protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 import { repairWindowsPathext } from "./equinox-local-generic-execution.js";
 import { managedSupervisorPaths, readSupervisorTransport } from "./equinox-local-supervisor.js";
 
@@ -203,7 +203,12 @@ export async function runWindowsShellRuntimeSupervisor({
 
   const initializeTunnel = async () => {
     await mkdirImpl(paths.profileDir, { recursive: true, mode: 0o700 });
-    await protectProfileImpl({ target: paths.profileDir, type: "directory" });
+    // Existing private profiles need verification, not another ACL rewrite.
+    // A fresh or nonconforming profile still takes the original protect path.
+    const profile = { target: paths.profileDir, type: "directory" as const };
+    if (protectProfileImpl !== protectWindowsPrivateStatePath || !(await verifyWindowsPrivateStateAcl(profile)).safe) {
+      await protectProfileImpl(profile);
+    }
     await execFileImpl(tunnel, windowsTunnelInitArguments({ paths, nodePath: node, serverPath, tunnelId: transport.tunnelId }), {
       cwd, env: childEnv(env, "tunnel"), timeout: 15_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
     });

@@ -352,11 +352,11 @@ async function readLoginPreference() {
     if (development)
         return;
     if (process.platform === "win32") {
-        if (!uninstallLaunch)
+        if (!uninstallLaunch?.windowsMaintenance)
             throw new Error("Admitted runtime required for Windows startup ownership.");
-        const helper = path.join(uninstallLaunch.cwd, "equinox-local-uninstall-helper.js");
+        const { node, helper } = uninstallLaunch.windowsMaintenance;
         const script = "import {pathToFileURL} from 'node:url';const helper=await import(pathToFileURL(process.argv[2]).href);const value=await helper.readWindowsStartupRegistrationOwnership({expectedCommand:process.argv[3],env:process.env});process.stdout.write(JSON.stringify({enabled:value.enabled}));";
-        const { stdout } = await execFile(uninstallLaunch.command, ["--input-type=module", "-e", script,
+        const { stdout } = await execFile(node, ["--input-type=module", "-e", script,
             "equinox-desktop", helper, `\"${process.execPath}\" --startup`], {
             cwd: uninstallLaunch.cwd, env: uninstallLaunch.env, windowsHide: true, timeout: 20_000, maxBuffer: 64 * 1024,
         });

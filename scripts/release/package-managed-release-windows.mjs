@@ -433,6 +433,7 @@ export async function compileWindowsJobObjectHelper({ rootDir = path.resolve(pat
     // Marker signals that this compiled native payload supports owned-process
     // gating. Older authenticated Main native releases lack this exact marker.
     await fs.writeFile(path.join(destination, "owned-process-gate-v1.marker"), "equinox-owned-process-gate-v1\n", { flag: "wx" });
+    await fs.writeFile(path.join(destination, "desktop-runtime-v1.marker"), "equinox-desktop-runtime-v1\n", { flag: "wx" });
     return helperPath;
 }
 async function compileBrowserLauncher(rootDir, releaseDir, contract) {
@@ -537,6 +538,8 @@ async function restoreCachedWindowsNativeHelper(cacheDir, folder, releaseDir, co
         const marker = await fs.readFile(path.join(source, "owned-process-gate-v1.marker"), "utf8");
         if (marker !== "equinox-owned-process-gate-v1\n")
             throw new Error("Cached Windows Job helper lacks its native process gate marker.");
+        if (await fs.readFile(path.join(source, "desktop-runtime-v1.marker"), "utf8") !== "equinox-desktop-runtime-v1\n")
+            throw new Error("Cached Windows Job helper lacks its desktop runtime ABI marker.");
     }
     await fs.cp(source, path.join(releaseDir, "runtime", folder), { recursive: true, dereference: false, force: false, errorOnExist: true });
 }

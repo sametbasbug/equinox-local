@@ -164,12 +164,20 @@ export async function inspectEquinoxLocalMainNativeStoredRelease({
   let raw;
   try { raw = JSON.parse(file.data); } catch { throw new Error("Main native store manifest contains invalid JSON."); }
   const manifest = validateStoreManifest(raw, { sourceSha, target, runtimeContractSha256: expectedRuntimeContractSha256 });
-  const validated = await validateRelease(paths.releaseDir, { target, fsImpl });
+  // Both are read-only mandatory checks of the same admitted release.
+  // Settle both before exposing the pointer or returning a failure.
+  const [validation, fingerprintResult] = await Promise.allSettled([
+    validateRelease(paths.releaseDir, { target, fsImpl }),
+    fingerprintRelease(paths.releaseDir, { fsImpl }),
+  ]);
+  if (validation.status === "rejected") throw validation.reason;
+  if (fingerprintResult.status === "rejected") throw fingerprintResult.reason;
+  const validated = validation.value;
   if (validated?.releaseDir !== paths.releaseDir || validated?.target !== target || validated?.version !== manifest.payloadVersion) throw new Error("Main native stored release validation drifted.");
   if (validated.metadata?.sourceSha !== sourceSha || validated.metadata?.version !== manifest.payloadVersion) {
     throw new Error("Main native stored release source SHA does not match the durable signed identity.");
   }
-  const fingerprint = await fingerprintRelease(paths.releaseDir, { fsImpl });
+  const fingerprint = fingerprintResult.value;
   if (fingerprint.sha256 !== manifest.releaseFingerprint.sha256 || fingerprint.entries !== manifest.releaseFingerprint.entries || fingerprint.bytes !== manifest.releaseFingerprint.bytes) {
     throw new Error("Main native stored release fingerprint mismatch.");
   }

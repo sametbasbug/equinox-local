@@ -15,6 +15,7 @@ export type RuntimeLaunch = {
   createJob?: () => Promise<RuntimeJobLease>;
   controlHelper?: string;
   readyMarker?: string;
+  windowsMaintenance?: { node: string; helper: string };
 };
 export type RuntimeOwnerState = "stopped" | "starting" | "running" | "attention";
 type OwnedRuntime = {
