@@ -15,19 +15,23 @@ export function decorateNativeToolActivity(update, generation) {
         delete world.__equinoxRunTimeline;
         return;
     }
-    const route = location.href;
+    const route = location.origin + location.pathname;
+    const sameRoute = () => location.origin + location.pathname === route;
     const tr = (en, turkish) => update.language === "tr" ? turkish : en;
     const selector = "[data-response-body] > [data-mcp-app-portal-target] iframe";
     const entries = new Map();
     const expanded = new WeakMap();
     let scheduled = 0;
     let disposed = false;
-    const valid = (e) => !disposed && location.href === route && e.frame.isConnected && e.body.isConnected &&
+    let frames = 0, candidates = 0, requests = 0, replies = 0, accepted = 0;
+    const valid = (e) => !disposed && sameRoute() && e.frame.isConnected && e.body.isConnected &&
         e.frame.src === e.src && e.body.getAttribute("data-response-body") === e.id &&
         e.portal.parentElement === e.body && e.portal.contains(e.frame);
     const request = (e) => {
-        if (valid(e))
-            e.frame.contentWindow?.postMessage({ type: "equinox-native-run/request-v1", nonce: e.nonce }, e.origin);
+        if (valid(e) && e.frame.contentWindow) {
+            requests = Math.min(10000, requests + 1);
+            e.frame.contentWindow.postMessage({ type: "equinox-native-run/request-v1", nonce: e.nonce }, e.origin);
+        }
     };
     const forget = (e) => {
         for (const timer of e.timers)
@@ -103,8 +107,9 @@ export function decorateNativeToolActivity(update, generation) {
         }
     }
     function onMessage(event) {
-        if (disposed || location.href !== route || event.data?.type !== "equinox-native-run/v1")
+        if (disposed || !sameRoute() || event.data?.type !== "equinox-native-run/v1")
             return;
+        replies = Math.min(10000, replies + 1);
         const e = [...entries.values()].find(x => x.frame.contentWindow === event.source && x.origin === event.origin && x.nonce === event.data.nonce);
         if (!e || !valid(e))
             return;
@@ -120,6 +125,7 @@ export function decorateNativeToolActivity(update, generation) {
             result: str(d.result, 24000), error: str(d.error, 24000), truncated: d.truncated === true,
             exit: Number.isSafeInteger(d.exitCode) ? Number(d.exitCode) : null,
             duration: typeof d.durationMs === "number" && Number.isFinite(d.durationMs) && d.durationMs >= 0 ? Math.round(d.durationMs) : null };
+        accepted = Math.min(10000, accepted + 1);
         const signature = JSON.stringify(data);
         if (signature === e.signature && e.host?.isConnected)
             return;
@@ -194,7 +200,7 @@ export function decorateNativeToolActivity(update, generation) {
         scheduled = 0;
         if (disposed)
             return;
-        if (location.href !== route) {
+        if (!sameRoute()) {
             dispose();
             return;
         }
@@ -204,13 +210,14 @@ export function decorateNativeToolActivity(update, generation) {
                 forget(e);
                 changed = true;
             }
-        for (const frame of Array.from(document.querySelectorAll(selector)).slice(-120)) {
+        const mounted = Array.from(document.querySelectorAll(selector)).slice(-120);
+        frames = Math.max(frames, mounted.length);
+        for (const frame of mounted) {
             if (entries.has(frame))
                 continue;
             const portal = frame.closest("[data-mcp-app-portal-target]"), body = portal?.parentElement;
             const id = body?.getAttribute("data-response-body");
-            if (!body || !portal || !id || !body.closest("[data-spacing='activity']") ||
-                body.querySelectorAll(selector).length !== 1)
+            if (!body || !portal || !id || body.querySelectorAll(selector).length !== 1)
                 continue;
             let origin;
             try {
@@ -223,6 +230,7 @@ export function decorateNativeToolActivity(update, generation) {
                 frame.closest("[data-mcp-app-origin-generated]")?.getAttribute("data-mcp-app-origin-generated") !== origin)
                 continue;
             const e = { frame, body, portal, id, src: frame.src, origin, nonce: crypto.randomUUID(), timers: [] };
+            candidates = Math.min(10000, candidates + 1);
             entries.set(frame, e);
             for (const delay of [0, 300, 1200, 4000, 9000])
                 e.timers.push(window.setTimeout(() => request(e), delay));
@@ -255,9 +263,9 @@ export function decorateNativeToolActivity(update, generation) {
         for (const e of entries.values())
             forget(e);
     }
-    world.__equinoxRunTimeline = { generation, dispose };
+    world.__equinoxRunTimeline = { generation, dispose, inspect: () => ({ frames, candidates, requests, replies, accepted }) };
     window.addEventListener("message", onMessage);
     window.addEventListener("load", onLoad, true);
-    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "data-response-body"] });
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "data-response-body", "data-mcp-app-portal-target", "data-mcp-app-origin-generated", "data-spacing"] });
     scan();
 }

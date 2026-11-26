@@ -673,10 +673,11 @@ html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"]::after 
    empty blocks, or original inline MCP App portal. Older transcript
    variants use the outer Markdown region instead, never both. */
 html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] :is(
-  [data-response-body]:not([data-response-body] *),
+  [data-response-body]:not([data-response-body] *, [data-spacing="activity"] *),
+  [data-response-body]:has(> [data-chatgpt-selection-message-id]):not([data-response-body] *),
   [data-markdown-text-style="assistant-message"]:not([data-response-body] *, [data-markdown-text-style="assistant-message"] *),
   .markdown:not([data-response-body] *, [data-markdown-text-style="assistant-message"] *, .markdown *)
-):not(:empty, [data-spacing="activity"] *, [class~="group/activity-header"] *, [data-mcp-app-portal-target] *, :has(> [data-mcp-app-portal-target], > [class~="group/activity-header"])) {
+):not(:empty, [class~="group/activity-header"] *, [data-response-body] > [data-mcp-app-portal-target] *, :has(> [data-mcp-app-portal-target], > [class~="group/activity-header"])) {
   box-sizing: border-box;
   max-width: 100%;
   min-width: 0;
@@ -738,7 +739,11 @@ html:root[data-equinox-surface="thread"] [data-talvt-turn-state]:has([data-equin
 /* Native activity timeline: replace a verified original invocation's
    presentation, never the provider's real tool result or surrounding prose.
    Unknown or legacy frames retain their original interactive fallback. */
-[data-equinox-native-run] > :is([data-mcp-app-portal-target],[class~="group/activity-header"]) { display:none !important; }
+[data-equinox-native-run] {position:relative;}
+[data-equinox-native-run] > [class~="group/activity-header"] {display:none !important;}
+/* Keep the exact provider frame alive for updates, but not in the reader's
+   visual layout or tab order. The original remains the unconfirmed fallback. */
+[data-equinox-native-run] > [data-mcp-app-portal-target] {position:absolute !important; inset:0 auto auto 0 !important; width:1px !important; height:1px !important; overflow:hidden !important; visibility:hidden !important; pointer-events:none !important;}
 .eq-run-host { font: 13px/1.5 system-ui,sans-serif; color:var(--eq-secondary); min-width:0; }
 .eq-run-group { display:flex; align-items:center; gap:8px; border:0; background:transparent; color:var(--eq-secondary); font:inherit; text-align:start; padding:3px 0; cursor:pointer; }
 .eq-run-group::before { content:"⌘"; font-size:14px; }
@@ -894,6 +899,7 @@ function decorateProviderIdentity(update: {
   const userTurn = '[data-message-author-role="user"],:is(article,section)[data-turn="user"][data-testid]';
   const userBubble = '[data-user-message-bubble="true"],.bg-user-message.text-user-message';
   const userMessage = userTurn + "," + userBubble;
+  const userEvidence = userUnit + "," + userMessage;
   const assistantMessage = '[data-chatgpt-search-unit-key$=":assistant"],[data-message-author-role="assistant"],:is(article,section)[data-turn="assistant"][data-testid]';
   const responseBody = '[data-response-body],[data-markdown-text-style="assistant-message"]';
   const explicitMessage = [userUnit, userMessage, assistantMessage, responseBody].join(",");
@@ -933,6 +939,11 @@ function decorateProviderIdentity(update: {
 
   function mark(element: Element, role: "user" | "assistant") {
     if (!main?.contains(element) || element === main || element.closest(inactiveRegion)) return;
+    if (role === "assistant" && (element.matches(userEvidence) || element.querySelector(userEvidence))) return;
+    // An empty provider response placeholder is not a speaker. A real
+    // assistant unit may have prose, an inline tool, or an activity control.
+    if (role === "assistant" && !element.textContent?.trim() &&
+        !element.querySelector("iframe,button,img,video,canvas,[data-mcp-app-portal-target]")) return;
     const current = element.closest("[data-equinox-role]");
     if (current && current !== element) return;
     const nested = [...element.querySelectorAll("[data-equinox-role]")];
@@ -984,10 +995,17 @@ function decorateProviderIdentity(update: {
     }
     const isResponseBody = evidence.matches(responseBody);
     if (!isResponseBody && !evidence.matches(assistantMessage)) return;
+    if (isResponseBody && !evidence.textContent?.trim() &&
+        !evidence.querySelector("iframe,button,img,video,canvas,[data-mcp-app-portal-target]")) return;
+    // Tool summaries and invisible placeholder responses are not additional
+    // speaker messages. Explicit assistant units remain the preferred owner.
+    if (isResponseBody && evidence.closest('[class~="group/activity-header"]')) return;
+    if (evidence.matches('[data-response-body]') && evidence.closest('[data-spacing="activity"]') &&
+        !evidence.querySelector(':scope > [data-chatgpt-selection-message-id], [data-markdown-text-style="assistant-message"], .markdown, :scope > [data-mcp-app-portal-target]')) return;
     const attributed = evidence.closest(assistantMessage);
     const response = attributed ?? evidence.closest('[data-content-search-unit-key]') ?? evidence.parentElement;
     // A provider turn can contain both speakers. Only decorate an answer-only wrapper.
-    if (response && response !== main && !response.matches(userMessage) && !response.querySelector(userMessage)) {
+    if (response && response !== main && !response.matches(userEvidence) && !response.querySelector(userEvidence)) {
       mark(response, "assistant");
     } else if (isResponseBody) {
       mark(evidence, "assistant");
@@ -1143,7 +1161,7 @@ function decorateProviderIdentity(update: {
         }
         if (homeRoute && (node.matches(homeChangeSelector) || node.querySelector(homeChangeSelector))) homeChanged = true;
       }
-      const wrapper = target.closest('[data-chatgpt-search-unit-key$=":user"],[data-content-search-unit-key],[data-message-author-role]');
+      const wrapper = target.closest('[data-chatgpt-search-unit-key$=":user"],[data-content-search-unit-key],[data-message-author-role],[data-response-body]');
       if (wrapper && !wrapper.hasAttribute("data-equinox-role")) changed.add(wrapper);
     }
     if (!frame && (shellChanged || profileChanged || homeChanged || changed.size)) frame = requestAnimationFrame(flush);
@@ -1223,7 +1241,7 @@ function decorateProviderIdentity(update: {
 }
 
 export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "tr" = "en", initialIdentity: ChatIdentity = {name:"",avatar:null}, initialAccent = "#8B6CF0", composition: HomeComposition = "portrait",
-  onLoadState: (value: EmbeddedChatLoadState) => void = () => {}, onBudget: (remainingMs: number | null) => void = () => {}) {
+  onLoadState: (value: EmbeddedChatLoadState) => void = () => {}, onBudget: (remainingMs: number | null) => void = () => {}, diagnoseActivity = false) {
   let language = initialLanguage;
   const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
   // Electron's default UA adds a non-browser product token to the actual
@@ -1405,9 +1423,23 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     decoratedPath = visible ? new URL(url).pathname : null;
     const update = decoratedPath === null ? null : { identity, language, accent, composition, pathname: decoratedPath };
     const revision = ++decorationGeneration;
-    const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(update) + "," + revision + ");"
-      + "(" + decorateNativeToolActivity.toString() + ")(" + JSON.stringify(update && {pathname:update.pathname,language:update.language}) + "," + revision + ")";
+    const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(update) + "," + revision + ")";
+    const activityCode = "(" + decorateNativeToolActivity.toString() + ")(" + JSON.stringify(update && {pathname:update.pathname,language:update.language}) + "," + revision + ")";
     void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code}]).catch(() => {});
+    void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code:activityCode}]).catch(() => {});
+    if (diagnoseActivity && update) {
+      // Source-only bounded aggregate diagnostics, never tool or chat contents.
+      setTimeout(() => {
+        if (view.webContents.isDestroyed() || decorationGeneration !== revision || !chatVisible) return;
+        void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code:"window.__equinoxRunTimeline?.inspect() ?? null"}]).then((value: unknown) => {
+          if (!value || typeof value !== "object") return;
+          const sample = value as Record<string, unknown>;
+          const keys = ["frames","candidates","requests","replies","accepted"];
+          if (!keys.every(key => Number.isSafeInteger(sample[key]) && Number(sample[key]) >= 0 && Number(sample[key]) <= 10000)) return;
+          if (Number(sample.frames) > 0) console.info("[Equinox Native Activity]", JSON.stringify(Object.fromEntries(keys.map(key => [key, sample[key]]))));
+        }).catch(() => {});
+      }, 20_000).unref();
+    }
   };
   view.webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
     if (isMainFrame) onBudget(null);

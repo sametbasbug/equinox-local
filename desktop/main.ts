@@ -793,7 +793,7 @@ ipcMain.handle("equinox-shell:embedded-chat-layout", (event, value: unknown) => 
     if (!host.isDestroyed() && isControlDocument(host.getURL())) host.send("equinox-shell:embedded-chat-status", value);
   }, remainingMs => {
     if (!host.isDestroyed() && isControlDocument(host.getURL())) host.send("equinox-shell:native-turn-budget", remainingMs);
-  });
+  }, runtimeRole === "source");
   return embeddedChat.setBounds({ x, y, width: right - x, height: bottom - y });
 });
 ipcMain.handle("equinox-shell:embedded-chat-retry", (event) => {

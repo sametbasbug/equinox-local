@@ -1,27 +1,28 @@
-export const INLINE_RUN_URI = "ui://equinox-local/run/v1.html";
+export const INLINE_RUN_URI = "ui://equinox-local/run/v2.html";
+const LEGACY_INLINE_RUN_URI = "ui://equinox-local/run/v1.html";
 /**
  * One component instance belongs to one real provider tool call. Its input
  * and result come directly from the host; no runtime-wide history or guessed
  * conversation attribution, and no extra fetches or duplicate execution.
  */
 const HTML = String.raw `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Equinox Local run</title>
+<html lang="en" data-equinox-run-version="2"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Equinox Local run</title>
 <style>
 :root{color-scheme:light;--fg:#181a29;--muted:#61677b;--line:#e1e6f0;--surface:#fff;--code:#eff2f8;--focus:#6546a9;--ok:#237253;--bad:#b53e4b;--pending:#916218;font:13px/1.5 system-ui,sans-serif}
 :root[data-theme="dark"]{color-scheme:dark}
 @media(prefers-color-scheme:dark){:root:not([data-theme]){color-scheme:dark}}
 :root{--fg:light-dark(#181a29,#eeeff8);--muted:light-dark(#61677b,#a1a9c1);--line:light-dark(#e1e6f0,#303548);--surface:light-dark(#fff,#1e2130);--code:light-dark(#eff2f8,#161822);--focus:light-dark(#6546a9,#b5a4ff);--ok:light-dark(#237253,#84d3ad);--bad:light-dark(#b53e4b,#f09eaa);--pending:light-dark(#916218,#e7c27c)}
 *{box-sizing:border-box}body{margin:0;padding:2px 0;color:var(--fg);background:transparent}
-details{border:1px solid var(--line);border-radius:12px;background:var(--surface);overflow:hidden}
-summary{display:grid;grid-template-columns:22px minmax(0,1fr) auto 14px;align-items:start;gap:9px;padding:10px 12px;list-style:none;cursor:pointer}
+details{border:0;background:transparent;overflow:hidden}
+summary{display:grid;grid-template-columns:22px minmax(0,1fr) auto 14px;align-items:center;gap:8px;padding:4px 5px;list-style:none;cursor:pointer}
 summary::-webkit-details-marker{display:none}summary:hover{background:var(--code)}
 summary:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
-.icon{display:grid;place-items:center;width:22px;height:22px;color:var(--fg);border-radius:6px;background:var(--code);font:600 13px ui-monospace,monospace}
+.icon{display:grid;place-items:center;width:18px;height:18px;color:var(--muted);background:transparent;font:600 13px ui-monospace,monospace}
 .title{min-width:0}.eyebrow,.command{display:block}.eyebrow{font-size:10px;color:var(--muted);margin-bottom:3px;font-weight:670;letter-spacing:.075em}.command{font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
-details:not([open]) .command{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+details:not([open]) .eyebrow{display:none}details:not([open]) .command{white-space:nowrap;text-overflow:ellipsis;overflow:hidden;color:var(--muted)}
 .status{white-space:nowrap;font-size:11px;color:var(--pending);padding-top:3px}.status[data-kind=ok]{color:var(--ok)}.status[data-kind=bad]{color:var(--bad)}.status[data-kind=neutral]{color:var(--muted)}
 .arrow{color:var(--muted);font-size:16px;line-height:22px;text-align:center}details[open] .arrow{transform:rotate(90deg)}
-.body{border-top:1px solid var(--line);padding:10px 12px;display:grid;gap:9px}.field{display:grid;gap:4px}.field-label{font-size:11px;color:var(--muted);font-weight:600}
+.body{border:1px solid var(--line);border-radius:7px;background:var(--code);margin:3px 0 4px 24px;padding:8px 10px;display:grid;gap:9px}.field{display:grid;gap:4px}.field-label{font-size:11px;color:var(--muted);font-weight:600}
 pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line);border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--fg)}
 .facts{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--muted)}.facts strong{color:var(--fg);font-weight:600}.empty{color:var(--muted);font-size:12px;padding:5px 0}
 @media(max-width:360px){summary{grid-template-columns:20px minmax(0,1fr) 13px;gap:6px}.status{grid-column:2;grid-row:2;padding:0}.arrow{grid-column:3;grid-row:1}}
@@ -164,18 +165,22 @@ pre{margin:0;padding:9px 10px;background:var(--code);border:1px solid var(--line
  });
  window.addEventListener("openai:set_globals",legacy);
  new ResizeObserver(size).observe(document.body);
- parent.postMessage({jsonrpc:"2.0",id:1,method:"ui/initialize",params:{protocolVersion:"2026-01-26",appInfo:{name:"Equinox Local run",version:"1.0.0"},appCapabilities:{}}},"*");
+ parent.postMessage({jsonrpc:"2.0",id:1,method:"ui/initialize",params:{protocolVersion:"2026-01-26",appInfo:{name:"Equinox Local run",version:"2.0.0"},appCapabilities:{}}},"*");
  $("run").addEventListener("toggle",size);
  legacy();render();
 })();
 </script></body></html>`;
 export function registerInlineRunResource(server) {
-    server.registerResource("Equinox Local run", INLINE_RUN_URI, {}, async () => ({
-        contents: [{
-                uri: INLINE_RUN_URI,
-                mimeType: "text/html;profile=mcp-app",
-                text: HTML,
-                _meta: { ui: { prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } } },
-            }],
-    }));
+    // A new URI invalidates hosts that cache the presentation by resource URI.
+    // Keep older conversation resource references valid without changing tools.
+    for (const [uri, name] of [[INLINE_RUN_URI, "Equinox Local activity"], [LEGACY_INLINE_RUN_URI, "Equinox Local run (legacy)"]]) {
+        server.registerResource(name, uri, {}, async () => ({
+            contents: [{
+                    uri,
+                    mimeType: "text/html;profile=mcp-app",
+                    text: HTML,
+                    _meta: { ui: { prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } } },
+                }],
+        }));
+    }
 }
