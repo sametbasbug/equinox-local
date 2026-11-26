@@ -5,14 +5,20 @@
  * arbitrary script, persistent data, network request or tool execution.
  */
 export function decorateNativeToolActivity(update: {pathname: string; language: "en" | "tr"} | null, generation: number): void {
-  const world = window as Window & {__equinoxRunTimeline?: {generation: number; dispose: () => void; inspect: () => {frames: number; candidates: number; requests: number; replies: number; accepted: number}}};
+  const world = window as Window & {__equinoxRunTimeline?: {generation: number; dispose: () => void;
+    refresh: (pathname: string, language: "en" | "tr", generation: number) => boolean;
+    inspect: () => {frames: number; candidates: number; requests: number; replies: number; accepted: number}}};
   if (world.__equinoxRunTimeline && world.__equinoxRunTimeline.generation > generation) return;
   if (update && (location.origin !== "https://chatgpt.com" || location.pathname !== update.pathname)) return;
+  // Reapplying appearance or reopening the same hidden view is not a new
+  // transcript. Keep the verified rows and their disclosure state.
+  if (update && world.__equinoxRunTimeline?.refresh(update.pathname,update.language,generation)) return;
   world.__equinoxRunTimeline?.dispose();
   if (!update) { delete world.__equinoxRunTimeline; return; }
   const route = location.origin + location.pathname;
   const sameRoute = () => location.origin + location.pathname === route;
-  const tr = (en: string, turkish: string) => update.language === "tr" ? turkish : en;
+  let language=update.language;
+  const tr = (en: string, turkish: string) => language === "tr" ? turkish : en;
   const selector = "[data-response-body] > [data-mcp-app-portal-target] iframe";
   type Presentation = {body: Element; id: string; owner: string | null;
     host?: HTMLDivElement; row?: HTMLDetailsElement; group?: HTMLButtonElement; operation?: string; status?: string; signature?: string; collapsedSlot?: Element};
@@ -175,6 +181,27 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
       }
     }
   }
+  function statusLabel(state: string) {
+    return state==="running"?tr("Running","Çalışıyor"):state==="failed"?tr("Failed","Başarısız"):
+      state==="cancelled"?tr("Cancelled","İptal"):state==="background"?tr("Background","Arka planda"):
+      state==="success"?tr("Success","Başarılı"):tr("Completed","Tamamlandı");
+  }
+  function localizeRow(e: Presentation) {
+    if(!e.row||!e.signature)return;
+    // The signature was produced from our bounded, validated projection.
+    const data=JSON.parse(e.signature) as {state:string;command:string;truncated:boolean;exit:number|null;duration:number|null};
+    const status=e.row.querySelector(".eq-run-status");
+    const heading=e.row.querySelector(".eq-run-detail-label");
+    const footer=e.row.querySelector(".eq-run-footer");
+    const waiting=e.row.querySelector(".eq-run-waiting");
+    if(status)status.textContent=statusLabel(data.state);
+    if(heading)heading.textContent=data.command?"Shell":tr("Result","Sonuç");
+    if(waiting)waiting.textContent=tr("Waiting for result…","Sonuç bekleniyor…");
+    if(footer)footer.textContent=[
+      data.truncated?tr("Output truncated","Çıktı kısaltıldı"):"",
+      data.exit!==null?tr("Exit ","Çıkış ")+data.exit:"",
+      data.duration!==null?data.duration+" ms":"",statusLabel(data.state)].filter(Boolean).join(" · ");
+  }
   function onMessage(event: MessageEvent) {
     if(disposed||!sameRoute()||event.data?.type!=="equinox-native-run/v1")return;
     replies=Math.min(10000,replies+1);
@@ -212,9 +239,7 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     const name=document.createElement("span");name.className="eq-run-label";name.textContent=command||data.operation.replace(/_/g," ");
     name.title=name.textContent;
     const status=document.createElement("span");status.className="eq-run-status";status.dataset.kind=data.state;
-    status.textContent=data.state==="running"?tr("Running","Çalışıyor"):data.state==="failed"?tr("Failed","Başarısız"):
-      data.state==="cancelled"?tr("Cancelled","İptal"):data.state==="background"?tr("Background","Arka planda"):
-      data.state==="success"?tr("Success","Başarılı"):tr("Completed","Tamamlandı");
+    status.textContent=statusLabel(data.state);
     summary.append(icon,name,status);row.append(summary);
     const detail=document.createElement("div");detail.className="eq-run-detail";
     const heading=document.createElement("div");heading.className="eq-run-detail-label";heading.textContent=command?"Shell":tr("Result","Sonuç");detail.append(heading);
@@ -222,13 +247,14 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     pre(command?"$ "+command:"");pre(data.stdout);
     if(data.stderr)pre("stderr\n"+data.stderr);
     pre(data.error);pre(data.result);
-    if(data.state==="running")pre(tr("Waiting for result…","Sonuç bekleniyor…"));
-    const footer=document.createElement("div");footer.className="eq-run-footer";footer.textContent=[
-      data.truncated?tr("Output truncated","Çıktı kısaltıldı"):"",
-      data.exit!==null?tr("Exit ","Çıkış ")+data.exit:"",
-      data.duration!==null?data.duration+" ms":"",status.textContent].filter(Boolean).join(" · ");
+    if(data.state==="running"){
+      const waiting=document.createElement("pre");waiting.className="eq-run-waiting";
+      waiting.textContent=tr("Waiting for result…","Sonuç bekleniyor…");detail.append(waiting);
+    }
+    const footer=document.createElement("div");footer.className="eq-run-footer";
     detail.append(footer);row.append(detail);e.host.append(row);
     e.row=row;e.operation=data.operation;e.status=data.state;e.signature=signature;
+    localizeRow(e);
     e.body.setAttribute("data-equinox-native-run","");
     const key=keyOf(e);
     if(key&&retained.has(key)) {
@@ -282,7 +308,18 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     for(const e of entries.values())forget(e,false);
     for(const e of retained.values())detach(e);
     retained.clear();}
-  world.__equinoxRunTimeline={generation,dispose,inspect:()=>({frames,candidates,requests,replies,accepted})};
+  world.__equinoxRunTimeline={generation,dispose,refresh(pathname,nextLanguage,nextGeneration) {
+    if(disposed||!sameRoute()||location.pathname!==pathname)return false;
+    this.generation=nextGeneration;
+    if(language!==nextLanguage){
+      language=nextLanguage;
+      for(const e of entries.values())localizeRow(e);
+      for(const e of retained.values())localizeRow(e);
+      reconcileGroups();
+    }
+    schedule();
+    return true;
+  },inspect:()=>({frames,candidates,requests,replies,accepted})};
   window.addEventListener("message",onMessage);
   window.addEventListener("load",onLoad,true);
   observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["src","data-response-body","data-mcp-app-portal-target","data-mcp-app-origin-generated","data-spacing"]});

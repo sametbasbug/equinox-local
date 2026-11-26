@@ -1441,9 +1441,15 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     const update = decoratedPath === null ? null : { identity, language, accent, composition, pathname: decoratedPath };
     const revision = ++decorationGeneration;
     const code = "(" + decorateProviderIdentity.toString() + ")(" + JSON.stringify(update) + "," + revision + ")";
-    const activityCode = "(" + decorateNativeToolActivity.toString() + ")(" + JSON.stringify(update && {pathname:update.pathname,language:update.language}) + "," + revision + ")";
     void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code}]).catch(() => {});
-    void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code:activityCode}]).catch(() => {});
+    // Settings, Control Center and minimize temporarily detach the same
+    // provider view. Its route-local activity must survive that transition.
+    // The renderer disposes on route change; a full navigation destroys
+    // its isolated world. No activity data crosses either boundary.
+    if (update) {
+      const activityCode = "(" + decorateNativeToolActivity.toString() + ")(" + JSON.stringify({pathname:update.pathname,language:update.language}) + "," + revision + ")";
+      void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code:activityCode}]).catch(() => {});
+    }
     if (diagnoseActivity && update) {
       // Source-only bounded aggregate diagnostics, never tool or chat contents.
       setTimeout(() => {

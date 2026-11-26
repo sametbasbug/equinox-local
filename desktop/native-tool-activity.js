@@ -10,6 +10,10 @@ export function decorateNativeToolActivity(update, generation) {
         return;
     if (update && (location.origin !== "https://chatgpt.com" || location.pathname !== update.pathname))
         return;
+    // Reapplying appearance or reopening the same hidden view is not a new
+    // transcript. Keep the verified rows and their disclosure state.
+    if (update && world.__equinoxRunTimeline?.refresh(update.pathname, update.language, generation))
+        return;
     world.__equinoxRunTimeline?.dispose();
     if (!update) {
         delete world.__equinoxRunTimeline;
@@ -17,7 +21,8 @@ export function decorateNativeToolActivity(update, generation) {
     }
     const route = location.origin + location.pathname;
     const sameRoute = () => location.origin + location.pathname === route;
-    const tr = (en, turkish) => update.language === "tr" ? turkish : en;
+    let language = update.language;
+    const tr = (en, turkish) => language === "tr" ? turkish : en;
     const selector = "[data-response-body] > [data-mcp-app-portal-target] iframe";
     const entries = new Map();
     // Only data received from a verified live invocation is retained. Keep
@@ -212,6 +217,33 @@ export function decorateNativeToolActivity(update, generation) {
             }
         }
     }
+    function statusLabel(state) {
+        return state === "running" ? tr("Running", "Çalışıyor") : state === "failed" ? tr("Failed", "Başarısız") :
+            state === "cancelled" ? tr("Cancelled", "İptal") : state === "background" ? tr("Background", "Arka planda") :
+                state === "success" ? tr("Success", "Başarılı") : tr("Completed", "Tamamlandı");
+    }
+    function localizeRow(e) {
+        if (!e.row || !e.signature)
+            return;
+        // The signature was produced from our bounded, validated projection.
+        const data = JSON.parse(e.signature);
+        const status = e.row.querySelector(".eq-run-status");
+        const heading = e.row.querySelector(".eq-run-detail-label");
+        const footer = e.row.querySelector(".eq-run-footer");
+        const waiting = e.row.querySelector(".eq-run-waiting");
+        if (status)
+            status.textContent = statusLabel(data.state);
+        if (heading)
+            heading.textContent = data.command ? "Shell" : tr("Result", "Sonuç");
+        if (waiting)
+            waiting.textContent = tr("Waiting for result…", "Sonuç bekleniyor…");
+        if (footer)
+            footer.textContent = [
+                data.truncated ? tr("Output truncated", "Çıktı kısaltıldı") : "",
+                data.exit !== null ? tr("Exit ", "Çıkış ") + data.exit : "",
+                data.duration !== null ? data.duration + " ms" : "", statusLabel(data.state)
+            ].filter(Boolean).join(" · ");
+    }
     function onMessage(event) {
         if (disposed || !sameRoute() || event.data?.type !== "equinox-native-run/v1")
             return;
@@ -264,9 +296,7 @@ export function decorateNativeToolActivity(update, generation) {
         const status = document.createElement("span");
         status.className = "eq-run-status";
         status.dataset.kind = data.state;
-        status.textContent = data.state === "running" ? tr("Running", "Çalışıyor") : data.state === "failed" ? tr("Failed", "Başarısız") :
-            data.state === "cancelled" ? tr("Cancelled", "İptal") : data.state === "background" ? tr("Background", "Arka planda") :
-                data.state === "success" ? tr("Success", "Başarılı") : tr("Completed", "Tamamlandı");
+        status.textContent = statusLabel(data.state);
         summary.append(icon, name, status);
         row.append(summary);
         const detail = document.createElement("div");
@@ -286,15 +316,14 @@ export function decorateNativeToolActivity(update, generation) {
             pre("stderr\n" + data.stderr);
         pre(data.error);
         pre(data.result);
-        if (data.state === "running")
-            pre(tr("Waiting for result…", "Sonuç bekleniyor…"));
+        if (data.state === "running") {
+            const waiting = document.createElement("pre");
+            waiting.className = "eq-run-waiting";
+            waiting.textContent = tr("Waiting for result…", "Sonuç bekleniyor…");
+            detail.append(waiting);
+        }
         const footer = document.createElement("div");
         footer.className = "eq-run-footer";
-        footer.textContent = [
-            data.truncated ? tr("Output truncated", "Çıktı kısaltıldı") : "",
-            data.exit !== null ? tr("Exit ", "Çıkış ") + data.exit : "",
-            data.duration !== null ? data.duration + " ms" : "", status.textContent
-        ].filter(Boolean).join(" · ");
         detail.append(footer);
         row.append(detail);
         e.host.append(row);
@@ -302,6 +331,7 @@ export function decorateNativeToolActivity(update, generation) {
         e.operation = data.operation;
         e.status = data.state;
         e.signature = signature;
+        localizeRow(e);
         e.body.setAttribute("data-equinox-native-run", "");
         const key = keyOf(e);
         if (key && retained.has(key)) {
@@ -391,7 +421,21 @@ export function decorateNativeToolActivity(update, generation) {
             detach(e);
         retained.clear();
     }
-    world.__equinoxRunTimeline = { generation, dispose, inspect: () => ({ frames, candidates, requests, replies, accepted }) };
+    world.__equinoxRunTimeline = { generation, dispose, refresh(pathname, nextLanguage, nextGeneration) {
+            if (disposed || !sameRoute() || location.pathname !== pathname)
+                return false;
+            this.generation = nextGeneration;
+            if (language !== nextLanguage) {
+                language = nextLanguage;
+                for (const e of entries.values())
+                    localizeRow(e);
+                for (const e of retained.values())
+                    localizeRow(e);
+                reconcileGroups();
+            }
+            schedule();
+            return true;
+        }, inspect: () => ({ frames, candidates, requests, replies, accepted }) };
     window.addEventListener("message", onMessage);
     window.addEventListener("load", onLoad, true);
     observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "data-response-body", "data-mcp-app-portal-target", "data-mcp-app-origin-generated", "data-spacing"] });
