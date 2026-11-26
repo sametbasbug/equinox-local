@@ -1088,6 +1088,21 @@ ipcMain.handle("equinox-shell:chat-avatar-remove", async (event) => {
     chatAgentAvatar = null;
     return publishChatIdentity();
 });
+ipcMain.handle("equinox-shell:open-brain-vault", async (event) => {
+    if (!trustedSender(event))
+        throw new Error("Untrusted vault request.");
+    const result = await readControlJson("/api/v1/plugins");
+    const brain = result.plugins?.brain;
+    if (!trustedSender(event) || !brain?.available || typeof brain.vault !== "string" || !path.isAbsolute(brain.vault))
+        throw new Error("Connected vault is unavailable.");
+    const canonical = await fs.promises.realpath(brain.vault);
+    if (canonical !== brain.vault || !(await fs.promises.lstat(canonical)).isDirectory() || canonical === path.parse(canonical).root)
+        throw new Error("Connected vault changed.");
+    const error = await shell.openPath(canonical);
+    if (error)
+        throw new Error("Could not open the memory vault.");
+    return true;
+});
 ipcMain.handle("equinox-shell:pick-folder", async (event) => {
     if (!trustedSender(event))
         throw new Error("Untrusted folder picker request.");

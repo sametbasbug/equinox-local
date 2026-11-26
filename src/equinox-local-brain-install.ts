@@ -167,7 +167,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'template/.claude/scripts'))
 from beyin_v3 import MemoryStore, _status_allowed
 request = json.load(sys.stdin)
-fields = ('id','source','title','text','kind','status','visibility','updated_at','text_truncated','revision','source_sha256')
+fields = ('id','source','title','text','kind','status','visibility','updated_at','text_truncated','revision','source_sha256','owner','next_action')
 def remote(record):
     return record.get('visibility') in ('public','internal') and record.get('remote_allowed') is not False
 def visible_exact(store, record_id, project):
@@ -213,10 +213,72 @@ elif request['action'] == 'create':
         metadata['project'] = request['project']
     result = engine.note_create(source, request['text'], metadata, idempotency_key=key)
     print(json.dumps({'status':result['status'],'id':record_id,'source':source,'sha256':result['sha256'],'secrets_redacted':result.get('secrets_redacted',0)},ensure_ascii=False))
+elif request['action'] in ('preferences','profile'):
+    from beyin_v3_preferences import read, save, PROFILES
+    prefs = save(request['vault'], {}, profile=request['profile']) if request['action'] == 'profile' else read(request['vault'])
+    profile = next((name for name,values in PROFILES.items() if all(prefs.get(k)==v for k,v in values.items() if k!='secret_filter')), 'custom')
+    print(json.dumps({'profile':profile,'autoSync':prefs['auto_sync'],'contextMode':prefs['context_mode'],'contextChars':prefs['context_chars'],'intervalMinutes':prefs['interval_minutes'],'secretFilter':prefs['secret_filter']}))
+elif request['action'] in ('edit','task_create','task_update','receipt'):
+    from beyin_v3_sync import SyncEngine, parse
+    from beyin_v3_secrets import redact
+    import hashlib
+    engine = SyncEngine(request['vault'], request['state'])
+    store = engine.store
+    action = request['action']
+    if any(redact(request[field], engine.state)[1] for field in ('title','text','project','new','owner','nextAction','summary') if request.get(field)):
+        print(json.dumps({'status':'refused','reason':'Potential secret detected; remove it before saving.'}))
+        sys.exit(0)
+    if action == 'edit':
+        record = visible_exact(store, request['id'], request.get('project'))
+        if record is None or record.get('kind') != 'note' or not record['source'].startswith(('notes/','knowledge/')):
+            raise ValueError('current visible human note required')
+        note = engine.note_read(record['source'])
+        if not note['exists'] or note['sha256'] != request['sha256']:
+            raise ValueError('source changed; reread the note')
+        metadata, body = parse(note['content'])
+        old, new = request['old'], request['new']
+        if body.count(old) != 1 or note['content'].count(old) != 1:
+            raise ValueError('body anchor must be unique')
+        candidate = note['content'].replace(old,new,1)
+        if parse(candidate)[0] != metadata or redact(candidate,engine.state)[1]:
+            raise ValueError('metadata changes or secrets are not allowed')
+        result = engine.note_edit({'source':record['source'],'expected_sha256':request['sha256'],'edits':[{'old':old,'new':new}]})
+        print(json.dumps({'status':result['status'],'id':record['id'],'source':record['source'],'sha256':result['sha256']}))
+    elif action == 'task_create':
+        record_id = 'el-task-' + hashlib.sha256(request['key'].encode('ascii')).hexdigest()
+        source = 'tasks/' + record_id + '.md'
+        metadata = {'id':record_id,'title':request['title'],'kind':'task','revision':1,'status':'inbox','owner':request['owner'],'visibility':'internal','facts':{'origin':'Equinox Local / ChatGPT Web'}}
+        if request.get('project'):
+            metadata['project'] = request['project']
+        if request.get('nextAction'):
+            metadata['next_action'] = request['nextAction']
+        result = engine.task_create(source,request['text'],metadata)
+        print(json.dumps({'status':'succeeded','id':record_id,'source':source,'revision':result['revision']}))
+    elif action == 'task_update':
+        record = visible_exact(store,request['id'],request.get('project'))
+        if record is None or record.get('kind') != 'task' or not record['source'].startswith('tasks/'):
+            raise ValueError('current visible task required')
+        changes = {'status':request['status']}
+        if 'nextAction' in request:
+            changes['next_action'] = request['nextAction']
+        result = engine.update_task(record['id'],request['revision'],changes)
+        print(json.dumps({'status':'succeeded','taskStatus':result['status'],'id':record['id'],'source':record['source'],'revision':result['revision']}))
+    else:
+        refs = []
+        for record_id in request['refs']:
+            record = visible_exact(store,record_id,request.get('project'))
+            if record is None:
+                raise ValueError('current visible evidence required')
+            refs.append(record['source'])
+        event_id = 'el-receipt-' + hashlib.sha256(request['key'].encode('ascii')).hexdigest()
+        # Upstream lacks a ChatGPT harness enum. Its neutral manual receipt
+        # explicitly attributes the origin without impersonating another client.
+        result = engine.receipt(event_id,'Equinox Local / ChatGPT Web: '+request['summary'],refs,'manual')
+        print(json.dumps({'status':result['status'],'id':event_id,'source':result['source']}))
 else:
     raise ValueError('unsupported operation')
 `;
-export async function runBrainMemory(stateRoot:string,request: {action:"sync"|"search"|"read"|"create";vault:string;state:string;query?:string;project?:string;limit?:number;budget?:number;id?:string;key?:string;title?:string;text?:string}):Promise<any> {
+export async function runBrainMemory(stateRoot:string,request: {action:"sync"|"search"|"read"|"create"|"edit"|"task_create"|"task_update"|"receipt"|"preferences"|"profile";vault:string;state:string;query?:string;project?:string;limit?:number;budget?:number;id?:string;key?:string;title?:string;text?:string;sha256?:string;old?:string;new?:string;owner?:string;nextAction?:string;status?:string;revision?:number;summary?:string;refs?:string[];profile?:string}):Promise<any> {
   const data=await cachedRelease(stateRoot).catch(()=>{throw invalid("Enable Brain memory access in Control Center to prepare the verified engine.");});
   const python=await findBrainPython();
   const staging=await fs.mkdtemp(path.join(stateRoot,".brain-memory-"));

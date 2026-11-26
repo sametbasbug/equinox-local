@@ -2540,6 +2540,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         setBrainSearch: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setSearchEnabled(enabled)),
         setBrainWrite: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setWriteEnabled(enabled)),
         syncBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.sync()),
+        brainPreferences: async (profile) => withMutationLocks(["plugins"], () => pluginCatalog.preferences(profile)),
         disconnectBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.disconnect()),
         setHttpProfileManagement: async ({ enabled }) => withMutationLocks(["authenticated-http-profiles"], async () => {
             await setAuthenticatedHttpAgentManagement({ enabled });
@@ -2615,6 +2616,21 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         inputSchema: { key: z.string().regex(/^[a-zA-Z0-9_-]{8,100}$/u), title: z.string().trim().min(1).max(160), text: z.string().trim().min(1).max(12000), project: z.string().trim().min(1).max(160).optional() },
         annotations: { title: "Create Equinox Brain memory", readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     }, async (input) => textResult(JSON.stringify(await withMutationLocks(["plugins"], () => pluginCatalog.createMemory(input)))), { capabilityDomain: "integrations" });
+    const brainProject = z.string().trim().min(1).max(160).optional();
+    const brainId = z.string().trim().min(1).max(200);
+    const brainKey = z.string().regex(/^[a-zA-Z0-9_-]{8,100}$/u);
+    const brainWorkflows = [
+        { name: "brain_edit", action: "edit", title: "Edit Equinox Brain note", description: "Replace one unique body-text anchor in a current visible human note. Read the record first and supply its exact source_sha256. No frontmatter changes, arbitrary paths, managed records or private notes. Requires separate writing permission. On conflict reread before retrying.", schema: { id: brainId, sha256: z.string().regex(/^[a-f0-9]{64}$/u), old: z.string().min(1).max(8000), new: z.string().max(8000), project: brainProject } },
+        { name: "brain_task_create", action: "task_create", title: "Create Equinox Brain task", description: "Create an internal task in the upstream shared vault with an explicit owner and initial inbox status. Stable key prevents duplicate task creation; an existing key is a conflict, not an overwrite. Requires writing permission.", schema: { key: brainKey, title: z.string().trim().min(1).max(160), text: z.string().trim().min(1).max(12000), owner: z.string().trim().min(1).max(160), nextAction: z.string().trim().min(1).max(1000).optional(), project: brainProject } },
+        { name: "brain_task_update", action: "task_update", title: "Update Equinox Brain task", description: "Update a current visible task's status and optional next action using its exact revision. Upstream completion contracts remain enforced. Never changes task visibility, owner or completion criteria. Requires writing permission.", schema: { id: brainId, revision: z.number().int().positive(), status: z.enum(["inbox", "active", "waiting", "blocked", "done", "cancelled"]), nextAction: z.string().max(1000).optional(), project: brainProject } },
+        { name: "brain_receipt", action: "receipt", title: "Record Equinox Brain work receipt", description: "Record completed work with references to one or more current visible Brain record IDs. Uses upstream neutral manual receipt attribution, explicitly identifies Equinox Local / ChatGPT Web, and deduplicates the stable event key. Requires writing permission.", schema: { key: brainKey, summary: z.string().trim().min(1).max(4000), refs: z.array(brainId).min(1).max(10), project: brainProject } },
+    ];
+    for (const workflow of brainWorkflows) {
+        registerRawTool(workflow.name, {
+            description: workflow.description, inputSchema: workflow.schema,
+            annotations: { title: workflow.title, readOnlyHint: false, destructiveHint: false, idempotentHint: workflow.action === "receipt", openWorldHint: false },
+        }, async (input) => textResult(JSON.stringify(await withMutationLocks(["plugins"], () => pluginCatalog.workflow({ ...input, action: workflow.action })))), { capabilityDomain: "integrations" });
+    }
     registerTextTool("update_runtime", {
         description: "Equinox Local güncellemesini kurulum türüne uygun mevcut Control Center Update yoluyla kontrol eder ve varsa başlatır. " +
             "Mac Factory yalnız temiz yerel main checkout'tan Source Electron paketini yeniler; public macOS/Windows mevcut imzalı Main installer'ını kullanır. " +

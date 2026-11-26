@@ -15,7 +15,7 @@ type ChatLoadState = "loading" | "ready" | "offline" | "failed";
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {returnToTask:(taskId:string,checkpointRevision:number)=>Promise<boolean>;getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {returnToTask:(taskId:string,checkpointRevision:number)=>Promise<boolean>;getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;openBrainVault:()=>Promise<boolean>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -2928,6 +2928,11 @@ function renderPlugins() {
   $("brain-offered-version").textContent = state.plugins?.offeredVersion ? `v${state.plugins.offeredVersion}` : "—";
   $("brain-settings").hidden = !brain;
   $("brain-disconnect").disabled = !brain || busy;
+  $("brain-open-vault").disabled = !brain?.available || busy;
+  $("brain-diagnose").disabled = !brain?.searchCompatible || busy;
+  $("brain-preferences").hidden = !brain || !state.brainPreferences;
+  $("brain-profile-apply").disabled = busy || !brain?.searchCompatible || !state.brainPreferences || $("brain-profile").value==="custom" || $("brain-profile").value===state.brainPreferences?.profile;
+  if (!brain) state.brainPreferences=null;
   $("brain-access").disabled = !brain || busy || (!brain.searchEnabled && !brain.searchCompatible);
   $("brain-sync").disabled = !brain?.searchEnabled || busy || !brain.searchCompatible;
   $("brain-write").disabled = busy || !brain?.searchEnabled || (!brain.writeEnabled && !brain.searchCompatible);
@@ -2964,13 +2969,25 @@ async function refreshPlugins() {
     state.pluginsError = localizeUiText("Plugin settings could not be loaded.");
   } finally { state.pluginsBusy = false; renderPlugins(); }
 }
-async function connectBrain(install = false) {
+function connectBrain(install = false) {
   if (state.pluginsBusy || !state.pluginsLoaded || state.plugins?.brain) return;
+  state.brainInstallMode=install;
+  setText("brain-vault-dialog-title", install?"Install Equinox Brain":"Connect existing");
+  setText("brain-vault-dialog-copy", install?"Choose a new empty folder. The verified upstream release will be installed there.":"Choose the root folder of your existing Avenox Beyin V3 vault.");
+  setText("brain-vault-submit", install?"Install":"Connect existing");
+  $("brain-folder-path").value=""; $("brain-vault-error").hidden=true;
+  $("brain-vault-dialog").showModal();
+}
+async function submitBrainVault(event:Event) {
+  event.preventDefault();
+  if(state.pluginsBusy || state.plugins?.brain)return;
+  const vault=$("brain-folder-path").value.trim();
+  if(!isAbsoluteLocalFolderPath(vault)){setText("brain-vault-error","Choose an absolute vault folder.");$("brain-vault-error").hidden=false;return;}
+  const install=state.brainInstallMode===true;
+  $("brain-vault-dialog").close();
   state.pluginsBusy = true; state.brainInstalling = install; renderPlugins();
   try {
-    const selected = await pickLocalFolder();
-    if (selected.cancelled || !selected.path) return;
-    const result = await mutationJson(install ? "/api/v1/plugins/brain/install" : "/api/v1/plugins/brain/connect", "POST", {vault:selected.path});
+    const result = await mutationJson(install ? "/api/v1/plugins/brain/install" : "/api/v1/plugins/brain/connect", "POST", {vault});
     state.plugins = result.plugins;
     state.pluginsError = "";
     renderPlugins();
@@ -3002,6 +3019,18 @@ async function refreshBrainIndex() {
   try { const result=await mutationJson("/api/v1/plugins/brain/sync","POST",{});state.plugins=result.plugins;showToast(result.indexStatus==="degraded"?"Index refreshed with warnings":"Index refreshed"); }
   catch(error){showError(error);}
   finally{state.pluginsBusy=false;state.brainSyncBusy=false;renderPlugins();}
+}
+async function brainPreferences(apply=false) {
+  if(state.pluginsBusy || !state.plugins?.brain?.searchCompatible)return;
+  state.pluginsBusy=true;renderPlugins();
+  try {
+    const result=await mutationJson("/api/v1/plugins/brain/preferences","POST",apply?{profile:$("brain-profile").value}:{});
+    state.plugins=result.plugins;state.brainPreferences=result.preferences;
+    $("brain-profile").value=result.preferences.profile;
+    $("brain-preference-summary").textContent=`${localizeUiText("Automatic sync")}: ${localizeUiText(result.preferences.autoSync?"Enabled":"Disabled")} · ${localizeUiText("Context mode")}: ${localizeUiText(result.preferences.contextMode)} · ${result.preferences.contextChars} ${localizeUiText("characters")} · ${localizeUiText("Secret filter")}: ${localizeUiText(result.preferences.secretFilter?"Enabled":"Disabled")}`;
+    if(apply)showToast("Memory profile updated");
+  } catch(error){showError(error);}
+  finally{state.pluginsBusy=false;renderPlugins();}
 }
 async function disconnectBrain() {
   if (state.pluginsBusy || !state.plugins?.brain) return;
@@ -4537,6 +4566,13 @@ function bindEvents() {
   $("brain-access").addEventListener("click", () => { void changeBrainSearch(); });
   $("brain-sync").addEventListener("click", () => { void refreshBrainIndex(); });
   $("brain-write").addEventListener("click", () => { void changeBrainWrite(); });
+  $("brain-vault-form").addEventListener("submit",submitBrainVault);
+  $("brain-vault-cancel").addEventListener("click",()=>$("brain-vault-dialog").close());
+  $("brain-browse").addEventListener("click",async()=>{try{const result=await pickLocalFolder();if(!result.cancelled&&result.path)$("brain-folder-path").value=result.path;}catch(error){showError(error);}});
+  $("brain-open-vault").addEventListener("click",async()=>{try{if(!window.equinoxShell?.openBrainVault)throw new Error("Native vault opening is unavailable.");await window.equinoxShell.openBrainVault();}catch(error){showError(error);}});
+  $("brain-diagnose").addEventListener("click",()=>void brainPreferences());
+  $("brain-profile").addEventListener("change",renderPlugins);
+  $("brain-profile-apply").addEventListener("click",()=>void brainPreferences(true));
   $("plugins-retry").addEventListener("click", () => { void refreshPlugins(); });
   $("startup-retry").addEventListener("click", () => { void refreshAll({ initial: true }); });
   $("run-doctor-button").addEventListener("click", () => { void runFullDoctorChecks(); });

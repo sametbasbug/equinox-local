@@ -31,7 +31,7 @@ export function isControlDocument(value) {
 }
 /** Native menu operations use the same authenticated private socket as the UI. */
 export async function readControlJson(route) {
-    if (route !== "/api/v1/status")
+    if (route !== "/api/v1/status" && route !== "/api/v1/plugins")
         throw new Error("Unsupported Control Center shell read.");
     const result = await callAuthenticatedControlSocket({ method: "GET", path: route, backgroundRefresh: true });
     if (result.status !== 200 || result.body.ok !== true)
@@ -69,7 +69,7 @@ const UI_WRITE_PATHS = {
         "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
         "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
         "/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install", "/api/v1/plugins/brain/disconnect",
-        "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access",
+        "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access", "/api/v1/plugins/brain/preferences",
     ]),
     PUT: new Set([
         "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",
