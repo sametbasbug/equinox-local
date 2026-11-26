@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const execFile = promisify(execFileCallback);
 const TARGETS = new Set(["darwin-arm64", "darwin-x64", "win32-arm64", "win32-x64"]);
 const SHELL_FILES = Object.freeze([
-  "desktop/main.js", "desktop/embedded-chat.js", "desktop/native-chat-continuity.js", "desktop/native-tool-activity.js", "desktop/control-client.js", "desktop/control-assets.js", "desktop/preload.cjs",
+  "desktop/main.js", "desktop/embedded-chat.js", "desktop/native-chat-continuity.js", "desktop/native-tool-activity.js", "desktop/native-activity-history.js", "desktop/control-client.js", "desktop/control-assets.js", "desktop/preload.cjs",
   "desktop/runtime-owner.js", "desktop/runtime-installation.js", "desktop/lifecycle-control.js",
   "desktop/uninstall-handoff.js", "desktop/shell-preferences.js", "desktop/companion.js",
   "desktop/companion-preload.cjs", "desktop/companion-renderer.js", "desktop/companion.html", "desktop/companion.css",

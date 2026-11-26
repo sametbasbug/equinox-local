@@ -13,6 +13,17 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
     },
     pickFolder: () => ipcRenderer.invoke("equinox-shell:pick-folder"),
     copyText: (value: unknown) => ipcRenderer.invoke("equinox-shell:copy-text", value),
+    getCommandHistory: () => ipcRenderer.invoke("equinox-shell:command-history-status"),
+    setCommandHistory: (value:unknown) => {
+      if(typeof value!=="boolean")return Promise.reject(new Error("Invalid history preference."));
+      return ipcRenderer.invoke("equinox-shell:command-history-enable",value);
+    },
+    clearCommandHistory: () => ipcRenderer.invoke("equinox-shell:command-history-clear"),
+    getAssistantHome: () => ipcRenderer.sendSync("equinox-shell:assistant-home-snapshot") === "type" ? "type" : "portrait",
+    setAssistantHome: (value: unknown) => {
+      if (value !== "portrait" && value !== "type") return Promise.reject(new Error("Unsupported Assistant home."));
+      return ipcRenderer.invoke("equinox-shell:assistant-home",value);
+    },
     getChatIdentity: () => ipcRenderer.invoke("equinox-shell:chat-identity"),
     setChatAgentName: (value: unknown) => ipcRenderer.invoke("equinox-shell:chat-agent-name", value),
     chooseChatAvatar: () => ipcRenderer.invoke("equinox-shell:chat-avatar-choose"),

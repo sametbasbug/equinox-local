@@ -1,27 +1,33 @@
 /**
  * Presentation-only isolated-world bridge. Every row is anchored to the
  * original host-created invocation frame and response-body, never a runtime
- * log, inferred conversation, or reconstructed tool call. No privileged IPC,
- * arbitrary script, persistent data, network request or tool execution.
+ * log, inferred conversation, or reconstructed tool call. Only verified local
+ * history projections may restore empty exact slots. No privileged IPC,
+ * arbitrary script, network request or tool execution.
  */
-export function decorateNativeToolActivity(update: {pathname: string; language: "en" | "tr"} | null, generation: number): void {
+export function decorateNativeToolActivity(update: {pathname: string; language: "en" | "tr"; recording?: boolean} | null, generation: number): void {
   const world = window as Window & {__equinoxRunTimeline?: {generation: number; dispose: () => void;
-    refresh: (pathname: string, language: "en" | "tr", generation: number) => boolean;
+    refresh: (pathname: string, language: "en" | "tr", generation: number, recording: boolean) => boolean;
+    restore: (input: unknown) => void;
+    take: () => {pathname:string; items: {owner:string;id:string;signature:string}[]};
+    discardPending: (clearRestored?:boolean) => void;
     inspect: () => {frames: number; candidates: number; requests: number; replies: number; accepted: number}}};
   if (world.__equinoxRunTimeline && world.__equinoxRunTimeline.generation > generation) return;
   if (update && (location.origin !== "https://chatgpt.com" || location.pathname !== update.pathname)) return;
   // Reapplying appearance or reopening the same hidden view is not a new
   // transcript. Keep the verified rows and their disclosure state.
-  if (update && world.__equinoxRunTimeline?.refresh(update.pathname,update.language,generation)) return;
+  if (update && world.__equinoxRunTimeline?.refresh(update.pathname,update.language,generation,update.recording===true)) return;
   world.__equinoxRunTimeline?.dispose();
   if (!update) { delete world.__equinoxRunTimeline; return; }
   const route = location.origin + location.pathname;
   const sameRoute = () => location.origin + location.pathname === route;
   let language=update.language;
+  let recording=update.recording===true;
+  const pending=new Map<string,{owner:string;id:string;signature:string}>();
   const tr = (en: string, turkish: string) => language === "tr" ? turkish : en;
   const selector = "[data-response-body] > [data-mcp-app-portal-target] iframe";
   type Presentation = {body: Element; id: string; owner: string | null;
-    host?: HTMLDivElement; row?: HTMLDetailsElement; group?: HTMLButtonElement; operation?: string; status?: string; signature?: string; collapsedSlot?: Element};
+    host?: HTMLDivElement; row?: HTMLDetailsElement; group?: HTMLButtonElement; operation?: string; status?: string; signature?: string; collapsedSlot?: Element; fromDisk?:boolean};
   type Entry = Presentation & {frame: HTMLIFrameElement; portal: Element; src: string; origin: string; nonce: string; timers: number[]};
   const entries = new Map<HTMLIFrameElement, Entry>();
   // Only data received from a verified live invocation is retained. Keep
@@ -42,6 +48,12 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     return JSON.stringify([conversation,turnId,scopeId,userId]);
   };
   const keyOf = (e: Presentation) => e.owner ? JSON.stringify([e.owner,e.id]) : null;
+  const record = (e:Presentation) => {
+    const key=keyOf(e);
+    if(!recording||!key||!e.owner||!e.signature||e.operation!=="terminal_exec"||!e.status||e.status==="running")return;
+    pending.set(key,{owner:e.owner,id:e.id,signature:e.signature});
+    while(pending.size>120){const first=pending.keys().next().value;if(first===undefined)break;pending.delete(first);}
+  };
   const expanded = new WeakMap<Element, boolean>();
   let scheduled = 0;
   let disposed = false;
@@ -225,12 +237,27 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     accepted=Math.min(10000,accepted+1);
     const signature=JSON.stringify(data);
     if(signature===e.signature&&e.host?.isConnected)return;
+    renderRow(e,data,signature,true);
+    record(e);
+    const key=keyOf(e);
+    if(key&&retained.has(key)) {
+      const previous=retained.get(key)!;
+      previous.host?.remove();
+      previous.collapsedSlot?.removeAttribute("data-equinox-run-collapsed");
+      retained.delete(key);
+    }
+    reconcileRetained();
+    reconcileGroups();
+  }
+  type RunData={operation:string;state:string;command:string;stdout:string;stderr:string;result:string;error:string;truncated:boolean;exit:number|null;duration:number|null};
+  function renderRow(e:Presentation,data:RunData,signature:string,attach:boolean) {
+    const command=data.command;
     const wasOpen=e.row?.open??false;
     const wasFocused=e.row?.querySelector("summary")===document.activeElement;
-    if(!e.host?.isConnected) {
+    if(!e.host) {
       e.host=document.createElement("div");e.host.className="eq-run-host";e.host.setAttribute("data-equinox-activity-ui","");
-      e.body.append(e.host);
     }
+    if(attach&&!e.host.isConnected)e.body.append(e.host);
     e.row?.remove();
     const row=document.createElement("details");row.className="eq-run-row";row.open=wasOpen;
     const summary=document.createElement("summary");
@@ -255,18 +282,25 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     detail.append(footer);row.append(detail);e.host.append(row);
     e.row=row;e.operation=data.operation;e.status=data.state;e.signature=signature;
     localizeRow(e);
-    e.body.setAttribute("data-equinox-native-run","");
-    const key=keyOf(e);
-    if(key&&retained.has(key)) {
-      const previous=retained.get(key)!;
-      // Do not clear the live marker when both use the same exact slot.
-      previous.host?.remove();
-      previous.collapsedSlot?.removeAttribute("data-equinox-run-collapsed");
-      retained.delete(key);
-    }
-    reconcileRetained();
-    reconcileGroups();
+    if(attach)e.body.setAttribute("data-equinox-native-run","");
     if(wasFocused&&!row.hidden)summary.focus({preventScroll:true});
+  }
+  function restore(input:unknown) {
+    if(disposed||!sameRoute()||!recording||!Array.isArray(input)||input.length>240)return;
+    for(const raw of input){
+      if(!raw||typeof raw.owner!=="string"||typeof raw.id!=="string"||typeof raw.signature!=="string")continue;
+      const e:Presentation={body:document.createElement("div"),owner:raw.owner,id:raw.id,fromDisk:true};
+      const key=keyOf(e);
+      if(!key||retained.has(key)||[...entries.values()].some(x=>keyOf(x)===key&&x.row))continue;
+      try{
+        const data=JSON.parse(raw.signature) as RunData;
+        if(data.operation!=="terminal_exec"||data.state==="running"||!data.command)continue;
+        renderRow(e,data,raw.signature,false);
+        retained.set(key,e);
+      }catch{/* invalid cached presentation */}
+    }
+    while(retained.size>240){const first=retained.keys().next().value;if(first===undefined)break;const old=retained.get(first);if(old)detach(old);retained.delete(first);}
+    reconcileRetained();reconcileGroups();
   }
   function scan() {
     scheduled=0;
@@ -275,7 +309,7 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     let changed=false;
     for(const e of entries.values()) {
       if(!valid(e)){forget(e);changed=true;}
-      else e.owner ??= ownerOf(e.body);
+      else if(!e.owner){e.owner=ownerOf(e.body);if(e.owner)record(e);}
     }
     const mounted=Array.from(document.querySelectorAll<HTMLIFrameElement>(selector)).slice(-120);
     frames=Math.max(frames,mounted.length);
@@ -307,10 +341,21 @@ export function decorateNativeToolActivity(update: {pathname: string; language: 
     window.removeEventListener("message",onMessage);window.removeEventListener("load",onLoad,true);
     for(const e of entries.values())forget(e,false);
     for(const e of retained.values())detach(e);
-    retained.clear();}
-  world.__equinoxRunTimeline={generation,dispose,refresh(pathname,nextLanguage,nextGeneration) {
+    retained.clear();pending.clear();}
+  world.__equinoxRunTimeline={generation,dispose,restore,discardPending(clearRestored=false){
+    pending.clear();
+    if(clearRestored){
+      for(const [key,e] of retained)if(e.fromDisk){detach(e);retained.delete(key);}
+      reconcileGroups();
+    }
+  },take(){
+    const items=[...pending.entries()].slice(0,32);
+    for(const [key] of items)pending.delete(key);
+    return {pathname:location.pathname,items:items.map(([,item])=>item)};
+  },refresh(pathname,nextLanguage,nextGeneration,nextRecording) {
     if(disposed||!sameRoute()||location.pathname!==pathname)return false;
     this.generation=nextGeneration;
+    recording=nextRecording;if(!recording)pending.clear();
     if(language!==nextLanguage){
       language=nextLanguage;
       for(const e of entries.values())localizeRow(e);

@@ -212,7 +212,7 @@ function localizeUiText(value) {
 }
 const DYNAMIC_TEXT_IDS = new Set([
     "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "section-summary", "last-refreshed",
-    "chat-identity-feedback", "native-turn-budget", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
+    "chat-identity-feedback", "command-history-status", "native-turn-budget", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
     "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
     "runtime-health-badge", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
     "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
@@ -4224,10 +4224,68 @@ function bindEvents() {
             setText("chat-identity-feedback", error instanceof Error ? error.message : String(error));
         }
     }
+    async function renderCommandHistory(action) {
+        const shell = window.equinoxShell;
+        if (!shell)
+            return;
+        const checkbox = $("command-history-enabled");
+        const clear = $("command-history-clear");
+        checkbox.disabled = true;
+        clear.disabled = true;
+        const apply = (status) => {
+            checkbox.checked = status.enabled;
+            checkbox.disabled = !status.available && !status.enabled;
+            clear.disabled = status.available && !status.count && !status.enabled;
+            setText("command-history-status", status.available ? (status.enabled ? "Local history enabled" : "Not saved") : "Encryption or storage unavailable");
+        };
+        try {
+            apply(await (action ?? shell.getCommandHistory)());
+        }
+        catch (error) {
+            showError(error);
+            try {
+                apply(await shell.getCommandHistory());
+            }
+            catch { /* unavailable */ }
+        }
+    }
+    $("command-history-enabled").addEventListener("change", () => {
+        const shell = window.equinoxShell;
+        if (shell)
+            void renderCommandHistory(() => shell.setCommandHistory($("command-history-enabled").checked));
+    });
+    $("command-history-clear").addEventListener("click", () => {
+        const shell = window.equinoxShell;
+        if (shell && window.confirm(localizeUiText("Clear locally saved commands and outputs?")))
+            void renderCommandHistory(() => shell.clearCommandHistory());
+    });
     $("settings-open-button").addEventListener("click", () => {
+        void renderCommandHistory();
+        if (window.equinoxShell)
+            $("assistant-home-select").value = window.equinoxShell.getAssistantHome();
         settingsDialog.showModal();
         if (window.equinoxShell)
             void changeChatIdentity(() => window.equinoxShell.getChatIdentity());
+    });
+    $("assistant-home-select").addEventListener("change", async () => {
+        const shell = window.equinoxShell;
+        if (!shell)
+            return;
+        const select = $("assistant-home-select");
+        const value = select.value;
+        if (value !== "portrait" && value !== "type")
+            return;
+        select.disabled = true;
+        try {
+            select.value = await shell.setAssistantHome(value);
+        }
+        catch (error) {
+            select.value = shell.getAssistantHome();
+            showError(error);
+        }
+        finally {
+            select.disabled = false;
+        }
     });
     $("chat-agent-name").addEventListener("change", () => {
         if (window.equinoxShell)

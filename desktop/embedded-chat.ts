@@ -1,5 +1,6 @@
 import { createNativeChatContinuity } from "./native-chat-continuity.js";
 import { decorateNativeToolActivity } from "./native-tool-activity.js";
+import type { NativeActivityHistory } from "./native-activity-history.js";
 import { WebContentsView, dialog, nativeTheme, session, shell } from "electron";
 import type { BrowserWindow, Rectangle } from "electron";
 import path from "node:path";
@@ -1258,7 +1259,7 @@ function decorateProviderIdentity(update: {
 }
 
 export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "tr" = "en", initialIdentity: ChatIdentity = {name:"",avatar:null}, initialAccent = "#8B6CF0", composition: HomeComposition = "portrait",
-  onLoadState: (value: EmbeddedChatLoadState) => void = () => {}, onBudget: (remainingMs: number | null) => void = () => {}, diagnoseActivity = false) {
+  onLoadState: (value: EmbeddedChatLoadState) => void = () => {}, onBudget: (remainingMs: number | null) => void = () => {}, diagnoseActivity = false, history?: NativeActivityHistory) {
   let language = initialLanguage;
   const isolated = session.fromPartition("persist:equinox-chatgpt-web-pilot");
   // Electron's default UA adds a non-browser product token to the actual
@@ -1447,7 +1448,9 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     // The renderer disposes on route change; a full navigation destroys
     // its isolated world. No activity data crosses either boundary.
     if (update) {
-      const activityCode = "(" + decorateNativeToolActivity.toString() + ")(" + JSON.stringify({pathname:update.pathname,language:update.language}) + "," + revision + ")";
+      const recording=history?.status().enabled===true&&history.status().available;
+      const activityCode = "(" + decorateNativeToolActivity.toString() + ")(" + JSON.stringify({pathname:update.pathname,language:update.language,recording}) + "," + revision + ");"
+        + (recording ? "if(location.pathname===" + JSON.stringify(update.pathname) + "){window.__equinoxRunTimeline?.restore(" + JSON.stringify(history!.read(update.pathname)) + ");}" : "");
       void view.webContents.executeJavaScriptInIsolatedWorld(1002, [{code:activityCode}]).catch(() => {});
     }
     if (diagnoseActivity && update) {
@@ -1516,11 +1519,29 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     syncVisibility();
     onLoadState(value);
   }
+  // Only the isolated, verified invocation queue is read. The provider
+  // page has no filesystem API. Disabled history never pulls or writes.
+  let historyBusy=false;
+  const historyTimer=setInterval(async()=>{
+    if(historyBusy||!chatVisible||disposed||!history?.status().enabled||!history.status().available||
+       view.webContents.isDestroyed()||!isChatGPTOrigin(view.webContents.getURL()))return;
+    historyBusy=true;
+    const pathname=new URL(view.webContents.getURL()).pathname;
+    const epoch=history.epoch();
+    try{
+      const value=await view.webContents.executeJavaScriptInIsolatedWorld(1002,[{code:"window.__equinoxRunTimeline?.take() ?? null"}]) as {pathname?:unknown;items?:unknown}|null;
+      if(value?.pathname===pathname&&isChatGPTOrigin(view.webContents.getURL())&&new URL(view.webContents.getURL()).pathname===pathname)
+        await history.merge(pathname,value.items,epoch);
+    }catch{/* persistence is optional */}
+    finally{historyBusy=false;}
+  },750);
+  historyTimer.unref();
   win.on("show", syncVisibility).on("hide", syncVisibility).on("minimize", syncVisibility).on("restore", syncVisibility);
   const dispose = () => {
     if (disposed) return;
     disposed = true;
     chatVisible = false;
+    clearInterval(historyTimer);
     continuity.dispose();
     win.removeListener("show", syncVisibility).removeListener("hide", syncVisibility)
       .removeListener("minimize", syncVisibility).removeListener("restore", syncVisibility);
@@ -1554,6 +1575,12 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
       if (disposed || !bounds || (loadState !== "failed" && loadState !== "offline")) return;
       openProvider();
     },
+    refreshHistory(): void { if(chatVisible)applyIdentity(); },
+    async discardHistoryPending(clearRestored=false): Promise<void> {
+      if(!view.webContents.isDestroyed()&&isChatGPTOrigin(view.webContents.getURL()))
+        await view.webContents.executeJavaScriptInIsolatedWorld(1002,[{code:"window.__equinoxRunTimeline?.discardPending("+JSON.stringify(clearRestored)+")"}]).catch(()=>{});
+    },
+    setComposition(value: HomeComposition): void { composition = value; if (chatVisible) applyIdentity(); },
     setLanguage(value: "en" | "tr"): void { language = value; if (chatVisible) applyIdentity(); },
     setIdentity(value: ChatIdentity): void { identity = value; if (chatVisible) applyIdentity(); },
     setAccent(value: string): void { accent = value; if (chatVisible) applyIdentity(); },

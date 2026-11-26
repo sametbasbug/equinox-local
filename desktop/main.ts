@@ -20,6 +20,8 @@ import { createCompanionController } from "./companion.js";
 import type { CompanionController } from "./companion.js";
 import { openShellPreferences } from "./shell-preferences.js";
 import { createEmbeddedChat } from "./embedded-chat.js";
+import { createNativeActivityHistory } from "./native-activity-history.js";
+import type { NativeActivityHistory } from "./native-activity-history.js";
 import type { ShellPreferences, ShellPreferenceStore } from "./shell-preferences.js";
 
 registerControlScheme();
@@ -56,6 +58,7 @@ let pickerPending = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let language = "en";
 let shellPreferences: ShellPreferenceStore | null = null;
+let activityHistory: NativeActivityHistory | undefined;
 let companion: CompanionController | null = null;
 let status: Record<string, any> | null = null;
 let runtimeOwner: ReturnType<typeof createRuntimeOwner> | null = null;
@@ -788,12 +791,12 @@ ipcMain.handle("equinox-shell:embedded-chat-layout", (event, value: unknown) => 
   const bottom = Math.min(height, Math.round((Number(rect.y) + Number(rect.height)) * scale));
   if (right <= x || bottom <= y) { embeddedChat?.setBounds(null); return; }
   const host = window.webContents;
-  const composition = development && process.env.EQUINOX_LOCAL_ASSISTANT_PREVIEW === "type" ? "type" : "portrait";
+  const composition = shellPreferences?.read().assistantHome ?? (development && process.env.EQUINOX_LOCAL_ASSISTANT_PREVIEW === "type" ? "type" : "portrait");
   embeddedChat ??= createEmbeddedChat(window, language === "tr" ? "tr" : "en", chatIdentity(), chatAccent, composition, value => {
     if (!host.isDestroyed() && isControlDocument(host.getURL())) host.send("equinox-shell:embedded-chat-status", value);
   }, remainingMs => {
     if (!host.isDestroyed() && isControlDocument(host.getURL())) host.send("equinox-shell:native-turn-budget", remainingMs);
-  }, runtimeRole === "source");
+  }, runtimeRole === "source", activityHistory);
   return embeddedChat.setBounds({ x, y, width: right - x, height: bottom - y });
 });
 ipcMain.handle("equinox-shell:embedded-chat-retry", (event) => {
@@ -881,6 +884,45 @@ ipcMain.handle("equinox-shell:pick-folder", async (event) => {
     return { cancelled: false, path: selected };
   } finally { pickerPending = false; }
 });
+ipcMain.handle("equinox-shell:command-history-status", async event => {
+  if(!trustedSender(event)||quitting||!activityHistory)throw new Error("Command history is unavailable.");
+  await activityHistory.ready();
+  return activityHistory.status();
+});
+ipcMain.handle("equinox-shell:command-history-enable", async (event,value:unknown) => {
+  if(!trustedSender(event)||quitting||!activityHistory||!shellPreferences||typeof value!=="boolean")throw new Error("Command history is unavailable.");
+  await embeddedChat?.discardHistoryPending(!value);
+  if(value){
+    await activityHistory.setEnabled(true);
+    if(!shellPreferences.write({commandHistory:true})){
+      await activityHistory.setEnabled(false);
+      throw new Error("Could not save command history preference.");
+    }
+  }else{
+    // Turn off the preference first so a failed deletion cannot re-enable
+    // recording on restart. Report the failure instead of claiming a wipe.
+    if(!shellPreferences.write({commandHistory:false}))throw new Error("Could not save command history preference.");
+    await activityHistory.setEnabled(false);
+  }
+  embeddedChat?.refreshHistory();
+  return activityHistory.status();
+});
+ipcMain.handle("equinox-shell:command-history-clear", async event => {
+  if(!trustedSender(event)||quitting||!activityHistory)throw new Error("Command history is unavailable.");
+  await embeddedChat?.discardHistoryPending(true);
+  await activityHistory.clear();
+  embeddedChat?.refreshHistory();
+  return activityHistory.status();
+});
+ipcMain.handle("equinox-shell:assistant-home", (event, value: unknown) => {
+  if (!trustedSender(event) || quitting || (value !== "portrait" && value !== "type")) throw new Error("Unsupported Assistant home.");
+  if (!shellPreferences?.write({assistantHome:value})) throw new Error("Could not save Assistant home.");
+  embeddedChat?.setComposition(value);
+  return value;
+});
+ipcMain.on("equinox-shell:assistant-home-snapshot", event => {
+  event.returnValue = trustedSender(event) ? shellPreferences?.read().assistantHome ?? (development && process.env.EQUINOX_LOCAL_ASSISTANT_PREVIEW === "type" ? "type" : "portrait") : null;
+});
 ipcMain.handle("equinox-shell:language", (event, value: unknown) => {
   if (!trustedSender(event) || (value !== "en" && value !== "tr")) return;
   language = value;
@@ -961,6 +1003,8 @@ if (installerProfile) {
     language = app.getLocale().toLowerCase().startsWith("tr") ? "tr" : "en";
     shellPreferences = openShellPreferences(path.join(app.getPath("userData"), "private-shell"));
     language = shellPreferences.read().language ?? language;
+    activityHistory=createNativeActivityHistory(path.join(app.getPath("userData"),"private-shell"),shellPreferences.read().commandHistory===true);
+    void activityHistory.ready().then(()=>embeddedChat?.refreshHistory());
     loadChatAvatar();
     if (process.platform === "win32") app.setAppUserModelId(development ? "dev.equinox.local.development" : "dev.equinox.local");
     if (!development && process.platform === "darwin" && app.getLoginItemSettings().wasOpenedAtLogin) {

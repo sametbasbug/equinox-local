@@ -46,6 +46,7 @@
         <button id="agent-control-button" class="button danger compact" type="button" disabled>Emergency stop</button>
         <button id="settings-open-button" type="button" class="rail-button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3h4l.6 2.7 2 .9 2.4-1.5 2 3.4-1.9 2v2.2l1.9 2-2 3.4-2.4-1.5-2 .9L14 21h-4l-.6-2.7-2-.9L5 18.9l-2-3.4 1.9-2v-2.2L3 9.3l2-3.4 2.4 1.5 2-.9L10 3Z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span class="settings-button-label">Settings</span>
           <span id="settings-update-dot" class="settings-update-dot" hidden aria-hidden="true"></span>
         </button>
       </div>
@@ -114,6 +115,18 @@
                 <span>Custom</span>
               </label>
             </div>
+          </div>
+          <label class="preference-row language-control">
+            <span>Assistant home</span>
+            <select id="assistant-home-select" aria-label="Assistant home">
+              <option value="portrait">Portrait</option>
+              <option value="type">Typography</option>
+            </select>
+          </label>
+          <div class="command-history-preference">
+            <label><input id="command-history-enabled" type="checkbox"> <span>Keep local command history</span></label>
+            <p>Commands and outputs may contain sensitive data. Saved encrypted on this device for up to 30 days.</p>
+            <div class="command-history-actions"><small id="command-history-status" role="status"></small><button id="command-history-clear" class="button secondary compact" type="button">Clear saved history</button></div>
           </div>
           <label class="preference-row language-control">
             <span>Companion</span>

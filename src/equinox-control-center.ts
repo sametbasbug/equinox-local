@@ -15,7 +15,7 @@ type ChatLoadState = "loading" | "ready" | "offline" | "failed";
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -227,7 +227,7 @@ function localizeUiText(value: UiRemoteData) {
 
 const DYNAMIC_TEXT_IDS = new Set([
   "sidebar-health-label", "sidebar-version", "sidebar-update-indicator", "section-title", "section-summary", "last-refreshed",
-  "chat-identity-feedback", "native-turn-budget", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
+  "chat-identity-feedback", "command-history-status", "native-turn-budget", "agent-control-button", "restart-runtime-button", "onboarding-copy", "onboarding-badge", "setup-runtime-status",
   "setup-workspace-status", "setup-browser-status", "setup-tunnel-status", "setup-telegram-status", "setup-telegram-detail", "onboarding-connect-button",
   "runtime-health-badge", "overview-copy", "runtime-version", "runtime-uptime", "browser-status", "browser-version",
   "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
@@ -4134,9 +4134,42 @@ function bindEvents() {
       setText("chat-identity-feedback", error instanceof Error ? error.message : String(error));
     }
   }
+  async function renderCommandHistory(action?:()=>Promise<{enabled:boolean;available:boolean;count:number}>) {
+    const shell=window.equinoxShell;if(!shell)return;
+    const checkbox=$("command-history-enabled") as HTMLInputElement;
+    const clear=$("command-history-clear");
+    checkbox.disabled=true;clear.disabled=true;
+    const apply=(status:{enabled:boolean;available:boolean;count:number})=>{
+      checkbox.checked=status.enabled;
+      checkbox.disabled=!status.available&&!status.enabled;
+      clear.disabled=status.available&&!status.count&&!status.enabled;
+      setText("command-history-status",status.available ? (status.enabled ? "Local history enabled" : "Not saved") : "Encryption or storage unavailable");
+    };
+    try{apply(await (action??shell.getCommandHistory)());}
+    catch(error){showError(error);try{apply(await shell.getCommandHistory());}catch{/* unavailable */}}
+  }
+  $("command-history-enabled").addEventListener("change",()=>{
+    const shell=window.equinoxShell;if(shell)void renderCommandHistory(()=>shell.setCommandHistory(($("command-history-enabled") as HTMLInputElement).checked));
+  });
+  $("command-history-clear").addEventListener("click",()=>{
+    const shell=window.equinoxShell;if(shell&&window.confirm(localizeUiText("Clear locally saved commands and outputs?")))void renderCommandHistory(()=>shell.clearCommandHistory());
+  });
   $("settings-open-button").addEventListener("click", () => {
+    void renderCommandHistory();
+    if (window.equinoxShell) $("assistant-home-select").value = window.equinoxShell.getAssistantHome();
     settingsDialog.showModal();
     if (window.equinoxShell) void changeChatIdentity(() => window.equinoxShell!.getChatIdentity());
+  });
+  $("assistant-home-select").addEventListener("change", async () => {
+    const shell = window.equinoxShell;
+    if (!shell) return;
+    const select = $("assistant-home-select");
+    const value = select.value;
+    if (value !== "portrait" && value !== "type") return;
+    select.disabled = true;
+    try { select.value = await shell.setAssistantHome(value); }
+    catch (error) { select.value = shell.getAssistantHome(); showError(error); }
+    finally { select.disabled = false; }
   });
   $("chat-agent-name").addEventListener("change", () => {
     if (window.equinoxShell) void changeChatIdentity(() => window.equinoxShell!.setChatAgentName($("chat-agent-name").value));
