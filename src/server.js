@@ -1393,33 +1393,50 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         recordEvent: recordRuntimeEvent,
     });
     const nativeChatChannel = createNativeChatChannel({ assertMutationAllowed: () => agentControl.assertMutationAllowed("native_chat_delivery") });
-    // A bounded, process-local observation ledger. Never persist provider IDs or
-    // read the prompt. The hook only prepares the local index after generation is
-    // observed; it cannot mutate a provider conversation or deliver memory text.
-    const brainNativeTurns = new Set();
-    const brainNativeSessions = new Set();
-    let brainNativeSyncBusy = false;
+    // The two explicitly enabled scopes share one bounded, in-memory observation
+    // ledger and one optional indexing worker. No prompt content or provider IDs
+    // enter the vault, diagnostics or logs. Never resolve a different browser.
+    const brainObservedTurns = new Set();
+    const brainObservedSessions = new Set();
+    let brainLifecycleBusy = false;
+    function observeBrainTurn(scope, sessionId, userEpoch) {
+        const session = JSON.stringify([scope, sessionId]), turn = JSON.stringify([session, userEpoch]);
+        if (brainObservedTurns.has(turn) || brainLifecycleBusy)
+            return;
+        brainObservedTurns.add(turn);
+        if (brainObservedTurns.size > 256)
+            brainObservedTurns.delete(brainObservedTurns.values().next().value);
+        const event = brainObservedSessions.has(session) ? "UserPromptSubmit" : "SessionStart";
+        brainLifecycleBusy = true;
+        void withMutationLocks(["plugins"], async () => {
+            agentControl.assertMutationAllowed("brain_lifecycle_sync");
+            const result = await pluginCatalog.lifecycleSync(event, scope);
+            if (result.status !== "disabled") {
+                brainObservedSessions.add(session);
+                if (brainObservedSessions.size > 128)
+                    brainObservedSessions.delete(brainObservedSessions.values().next().value);
+            }
+        }).catch(() => { }).finally(() => { brainLifecycleBusy = false; });
+    }
     function observeBrainNativeTurn(view) {
         if (!view?.viewVisible || !view.state.generationActive || !view.state.userEpoch)
             return;
-        const session = view.instanceId + ":" + view.state.conversationId;
-        const turn = session + ":" + view.state.userEpoch;
-        if (brainNativeTurns.has(turn) || brainNativeSyncBusy)
+        observeBrainTurn("native", JSON.stringify([view.instanceId, view.state.conversationId]), view.state.userEpoch);
+    }
+    function observeBrainBrowserTurn(browserContext, target) {
+        if (browserContext !== "user" || target?.generationActive !== true || !Number.isSafeInteger(target.tabId) || target.tabId < 0 || typeof target.conversationId !== "string" || !/^[A-Za-z0-9_-]{8,160}$/u.test(target.conversationId) || typeof target.userEpoch !== "string" || !/^[A-Za-z0-9_:-]{1,200}$/u.test(target.userEpoch))
             return;
-        brainNativeTurns.add(turn);
-        if (brainNativeTurns.size > 256)
-            brainNativeTurns.delete(brainNativeTurns.values().next().value);
-        const event = brainNativeSessions.has(session) ? "UserPromptSubmit" : "SessionStart";
-        brainNativeSyncBusy = true;
-        void withMutationLocks(["plugins"], async () => {
-            agentControl.assertMutationAllowed("brain_lifecycle_sync");
-            const result = await pluginCatalog.lifecycleSync(event);
-            if (result.status !== "disabled") {
-                brainNativeSessions.add(session);
-                if (brainNativeSessions.size > 128)
-                    brainNativeSessions.delete(brainNativeSessions.values().next().value);
-            }
-        }).catch(() => { }).finally(() => { brainNativeSyncBusy = false; });
+        // The existing resolver returns a canonical, exact ChatGPT conversation
+        // identity. Recheck its origin and conversation ID before using it.
+        try {
+            const url = new URL(target.canonicalUrl);
+            if (url.origin !== "https://chatgpt.com" || url.username || url.password || url.search || url.hash || !new RegExp("^/(?:g/[A-Za-z0-9_-]{8,160}/)?c/" + target.conversationId + "/?$", "u").test(url.pathname))
+                return;
+        }
+        catch {
+            return;
+        }
+        observeBrainTurn("user", target.conversationId, target.userEpoch);
     }
     const continuityBridge = nativeChatChannel.adapt(equinoxBrowserBridge);
     async function resolveTurnBudgetIdentity() {
@@ -1466,6 +1483,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
             const target = resolved?.target;
             if (resolved?.status === "ready" && target?.generationActive
                 && (target.userEpoch || target.assistantTurnKey)) {
+                observeBrainBrowserTurn(browserContext, target);
                 return {
                     browserContext,
                     conversationId: target.conversationId ?? null,
@@ -1491,6 +1509,8 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
                 ? { status: "idle", idleContexts }
                 : null;
         }
+        if (!browserProbeUncertain)
+            observeBrainBrowserTurn(selected.browserContext, selected.target);
         return {
             browserContext: selected.browserContext,
             conversationId: selected.target.conversationId ?? null,
@@ -2568,6 +2588,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         setBrainSearch: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setSearchEnabled(enabled)),
         setBrainWrite: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setWriteEnabled(enabled)),
         setBrainLifecycle: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setLifecycleEnabled(enabled)),
+        setBrainBrowserLifecycle: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setLifecycleEnabled(enabled, "user")),
         syncBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.sync()),
         brainPreferences: async (profile) => withMutationLocks(["plugins"], () => pluginCatalog.preferences(profile)),
         brainDiagnostics: async () => withMutationLocks(["plugins"], () => pluginCatalog.diagnostics()),

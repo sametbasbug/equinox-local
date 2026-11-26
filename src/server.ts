@@ -2166,29 +2166,38 @@ equinoxAgentBrowser = createEquinoxAgentBrowser({
 });
 
 const nativeChatChannel = createNativeChatChannel({assertMutationAllowed: () => agentControl.assertMutationAllowed("native_chat_delivery")});
-// A bounded, process-local observation ledger. Never persist provider IDs or
-// read the prompt. The hook only prepares the local index after generation is
-// observed; it cannot mutate a provider conversation or deliver memory text.
-const brainNativeTurns = new Set<string>();
-const brainNativeSessions = new Set<string>();
-let brainNativeSyncBusy=false;
-function observeBrainNativeTurn(view:ReturnType<typeof nativeChatChannel.current>) {
-  if(!view?.viewVisible||!view.state.generationActive||!view.state.userEpoch)return;
-  const session=view.instanceId+":"+view.state.conversationId;
-  const turn=session+":"+view.state.userEpoch;
-  if(brainNativeTurns.has(turn)||brainNativeSyncBusy)return;
-  brainNativeTurns.add(turn);
-  if(brainNativeTurns.size>256)brainNativeTurns.delete(brainNativeTurns.values().next().value!);
-  const event=brainNativeSessions.has(session)?"UserPromptSubmit":"SessionStart";
-  brainNativeSyncBusy=true;
+// The two explicitly enabled scopes share one bounded, in-memory observation
+// ledger and one optional indexing worker. No prompt content or provider IDs
+// enter the vault, diagnostics or logs. Never resolve a different browser.
+const brainObservedTurns = new Set<string>();
+const brainObservedSessions = new Set<string>();
+let brainLifecycleBusy=false;
+function observeBrainTurn(scope:"native"|"user",sessionId:string,userEpoch:string) {
+  const session=JSON.stringify([scope,sessionId]),turn=JSON.stringify([session,userEpoch]);
+  if(brainObservedTurns.has(turn)||brainLifecycleBusy)return;
+  brainObservedTurns.add(turn);
+  if(brainObservedTurns.size>256)brainObservedTurns.delete(brainObservedTurns.values().next().value!);
+  const event=brainObservedSessions.has(session)?"UserPromptSubmit":"SessionStart";
+  brainLifecycleBusy=true;
   void withMutationLocks(["plugins"],async()=>{
     agentControl.assertMutationAllowed("brain_lifecycle_sync");
-    const result=await pluginCatalog.lifecycleSync(event);
+    const result=await pluginCatalog.lifecycleSync(event,scope);
     if(result.status!=="disabled"){
-      brainNativeSessions.add(session);
-      if(brainNativeSessions.size>128)brainNativeSessions.delete(brainNativeSessions.values().next().value!);
+      brainObservedSessions.add(session);
+      if(brainObservedSessions.size>128)brainObservedSessions.delete(brainObservedSessions.values().next().value!);
     }
-  }).catch(()=>{/* Optional feature must never block provider or continuity exchange. */}).finally(()=>{brainNativeSyncBusy=false;});
+  }).catch(()=>{/* Optional feature must never block provider or continuity exchange. */}).finally(()=>{brainLifecycleBusy=false;});
+}
+function observeBrainNativeTurn(view:ReturnType<typeof nativeChatChannel.current>) {
+  if(!view?.viewVisible||!view.state.generationActive||!view.state.userEpoch)return;
+  observeBrainTurn("native",JSON.stringify([view.instanceId,view.state.conversationId]),view.state.userEpoch);
+}
+function observeBrainBrowserTurn(browserContext:string,target:RuntimeBoundary) {
+  if(browserContext!=="user"||target?.generationActive!==true||!Number.isSafeInteger(target.tabId)||target.tabId<0||typeof target.conversationId!=="string"||! /^[A-Za-z0-9_-]{8,160}$/u.test(target.conversationId)||typeof target.userEpoch!=="string"||! /^[A-Za-z0-9_:-]{1,200}$/u.test(target.userEpoch))return;
+  // The existing resolver returns a canonical, exact ChatGPT conversation
+  // identity. Recheck its origin and conversation ID before using it.
+  try {const url=new URL(target.canonicalUrl);if(url.origin!=="https://chatgpt.com"||url.username||url.password||url.search||url.hash||!new RegExp("^/(?:g/[A-Za-z0-9_-]{8,160}/)?c/"+target.conversationId+"/?$","u").test(url.pathname))return;}catch{return;}
+  observeBrainTurn("user",target.conversationId,target.userEpoch);
 }
 
 const continuityBridge = nativeChatChannel.adapt(equinoxBrowserBridge);
@@ -2230,6 +2239,7 @@ async function resolveTurnBudgetIdentity() {
     const target = resolved?.target;
     if (resolved?.status === "ready" && target?.generationActive
       && (target.userEpoch || target.assistantTurnKey)) {
+      observeBrainBrowserTurn(browserContext,target);
       return {
         browserContext,
         conversationId: target.conversationId ?? null,
@@ -2253,6 +2263,7 @@ async function resolveTurnBudgetIdentity() {
       ? { status: "idle", idleContexts }
       : null;
   }
+  if(!browserProbeUncertain)observeBrainBrowserTurn(selected.browserContext,selected.target);
   return {
     browserContext: selected.browserContext,
     conversationId: selected.target.conversationId ?? null,
@@ -3462,6 +3473,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   setBrainSearch: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setSearchEnabled(enabled)),
   setBrainWrite: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setWriteEnabled(enabled)),
   setBrainLifecycle: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setLifecycleEnabled(enabled)),
+  setBrainBrowserLifecycle: async (enabled) => withMutationLocks(["plugins"], () => pluginCatalog.setLifecycleEnabled(enabled,"user")),
   syncBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.sync()),
   brainPreferences: async (profile) => withMutationLocks(["plugins"], () => pluginCatalog.preferences(profile)),
   brainDiagnostics: async () => withMutationLocks(["plugins"], () => pluginCatalog.diagnostics()),

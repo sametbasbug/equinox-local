@@ -2927,9 +2927,10 @@ function renderPlugins() {
         setText("brain-diag-binding", diag.binding ? "Valid" : "Unavailable");
         setText("brain-diag-index", diag.index === "healthy" ? "Healthy" : diag.index === "attention" ? "Attention" : "Not checked");
         setText("brain-diag-preferences", diag.preferences === "valid" ? "Valid" : diag.preferences === "attention" ? "Attention" : "Not checked");
-        const lifecycle = diag.lastLifecycle;
-        const label = lifecycle?.status === "succeeded" ? "Healthy" : lifecycle?.status === "skipped" ? "Skipped" : "Attention";
-        setText("brain-diag-lifecycle", lifecycle ? `${localizeUiText(label)} · ${new Date(lifecycle.at).toLocaleString()}` : "Not checked");
+        for (const [id, lifecycle] of [["brain-diag-lifecycle", diag.lastLifecycle], ["brain-diag-browser-lifecycle", diag.lastBrowserLifecycle]]) {
+            const label = lifecycle?.status === "succeeded" ? "Healthy" : lifecycle?.status === "skipped" ? "Skipped" : "Attention";
+            setText(id, lifecycle ? `${localizeUiText(label)} · ${new Date(lifecycle.at).toLocaleString()}` : "Not checked");
+        }
     }
     $("brain-diagnose").disabled = !brain?.searchCompatible || busy;
     $("brain-preferences").hidden = !brain || !state.brainPreferences;
@@ -2940,6 +2941,8 @@ function renderPlugins() {
     $("brain-sync").disabled = !brain?.searchEnabled || busy || !brain.searchCompatible;
     $("brain-lifecycle").disabled = busy || !brain?.searchEnabled || (!brain.lifecycleEnabled && !brain.searchCompatible);
     setText("brain-lifecycle", state.brainLifecycleBusy ? "Working…" : brain?.lifecycleEnabled ? "Disable automatic refresh" : "Enable automatic refresh");
+    $("brain-browser-lifecycle").disabled = busy || !brain?.searchEnabled || (!brain.browserLifecycleEnabled && !brain.searchCompatible);
+    setText("brain-browser-lifecycle", state.brainBrowserLifecycleBusy ? "Working…" : brain?.browserLifecycleEnabled ? "Disable automatic refresh" : "Enable automatic refresh");
     $("brain-write").disabled = busy || !brain?.searchEnabled || (!brain.writeEnabled && !brain.searchCompatible);
     setText("brain-write", state.brainWriteBusy ? "Working…" : brain?.writeEnabled ? "Disable writing" : "Enable writing");
     $("brain-compatibility").hidden = !brain || brain.searchCompatible;
@@ -3138,6 +3141,11 @@ function toggleBrainReview() {
     $("brain-review-query").focus();
     syncEmbeddedChatLayout();
 }
+function brainReviewError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const known = ["Assistant memory review is unavailable.", "Invalid memory topic.", "Open an idle signed-in Assistant conversation without attachments first.", "The memory review expired.", "Memory context is unavailable. Check Brain permissions and the index.", "Memory review is unavailable. Search again.", "Memory review expired or selection invalid. Search again.", "Memory changed or permission was revoked. Search again.", "Draft insertion was not confirmed. Check the conversation and draft before trying again."];
+    return known.find(value => message === value || message.endsWith(": Error: " + value)) ?? "Memory review could not be confirmed. Check the draft and search again.";
+}
 async function findBrainReview(event) {
     event.preventDefault();
     if (brainReviewBusy || $("brain-review-panel").hidden)
@@ -3180,7 +3188,7 @@ async function findBrainReview(event) {
     }
     catch (error) {
         if (revision === brainReviewRevision)
-            setText("brain-review-status", error instanceof Error ? error.message : String(error));
+            setText("brain-review-status", brainReviewError(error));
     }
     finally {
         if (revision === brainReviewRevision) {
@@ -3216,7 +3224,7 @@ async function appendBrainReview() {
     }
     catch (error) {
         if (revision === brainReviewRevision)
-            setText("brain-review-status", error instanceof Error ? error.message : String(error));
+            setText("brain-review-status", brainReviewError(error));
     }
     finally {
         if (revision === brainReviewRevision) {
@@ -3228,23 +3236,25 @@ async function appendBrainReview() {
         }
     }
 }
-async function changeBrainLifecycle() {
+async function changeBrainLifecycle(browser = false) {
     if (state.pluginsBusy || !state.plugins?.brain?.searchEnabled)
         return;
+    const key = browser ? "browserLifecycleEnabled" : "lifecycleEnabled", busyKey = browser ? "brainBrowserLifecycleBusy" : "brainLifecycleBusy";
     state.pluginsBusy = true;
-    state.brainLifecycleBusy = true;
+    state[busyKey] = true;
     renderPlugins();
     try {
-        const result = await mutationJson("/api/v1/plugins/brain/lifecycle-access", "POST", { enabled: !state.plugins.brain.lifecycleEnabled });
+        const result = await mutationJson(browser ? "/api/v1/plugins/brain/browser-lifecycle-access" : "/api/v1/plugins/brain/lifecycle-access", "POST", { enabled: !state.plugins.brain[key] });
         state.plugins = result.plugins;
-        showToast(state.plugins.brain.lifecycleEnabled ? "Automatic refresh enabled" : "Automatic refresh disabled");
+        state.brainDiagnostics = null;
+        showToast(state.plugins.brain[key] ? "Automatic refresh enabled" : "Automatic refresh disabled");
     }
     catch (error) {
         showError(error);
     }
     finally {
         state.pluginsBusy = false;
-        state.brainLifecycleBusy = false;
+        state[busyKey] = false;
         renderPlugins();
     }
 }
@@ -5052,6 +5062,7 @@ function bindEvents() {
     $("brain-diagnose").addEventListener("click", () => void brainPreferences());
     $("brain-run-diagnostics").addEventListener("click", () => void runBrainDiagnostics());
     $("brain-lifecycle").addEventListener("click", () => void changeBrainLifecycle());
+    $("brain-browser-lifecycle").addEventListener("click", () => void changeBrainLifecycle(true));
     $("brain-profile").addEventListener("change", renderPlugins);
     $("brain-profile-apply").addEventListener("click", () => void brainPreferences(true));
     $("plugins-retry").addEventListener("click", () => { void refreshPlugins(); });

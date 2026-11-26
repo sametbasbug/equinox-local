@@ -5,7 +5,7 @@ import { BRAIN_RELEASE, installBrainVault, prepareBrainEngine, runBrainMemory, b
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 
-type BrainConnection = { vault: string; version: string; searchEnabled?: boolean; writeEnabled?: boolean; lifecycleEnabled?: boolean; indexState?: string };
+type BrainConnection = { vault: string; version: string; searchEnabled?: boolean; writeEnabled?: boolean; lifecycleEnabled?: boolean; browserLifecycleEnabled?: boolean; indexState?: string };
 type VaultMetadata = {vault:string;version:string;indexState:string};
 const MAX_SETTINGS_BYTES = 8192;
 const VERSION = /^\d+\.\d+\.\d+$/u;
@@ -35,7 +35,8 @@ async function inspectVault(vault: string): Promise<VaultMetadata> {
 
 export function createPluginCatalog(stateRoot: string) {
   const file = path.join(stateRoot, "plugins.json");
-  let lastLifecycle:{status:string;at:string}|null=null;
+  type LifecycleResult={status:string;at:string};
+  const lastLifecycle:Record<"native"|"user",LifecycleResult|null>={native:null,user:null};
   async function read(): Promise<BrainConnection | null> {
     const security = await inspectPrivateStatePath(file, {type:"file",mode:"600",verifyWindowsAcl:verifyWindowsPrivateStateAcl});
     if (security.reason === "missing") return null;
@@ -45,7 +46,7 @@ export function createPluginCatalog(stateRoot: string) {
     if (parsed.schema !== 1 || (parsed.brain !== null && (!validPath(parsed.brain?.vault) || !VERSION.test(parsed.brain?.version)))) throw invalid("Plugin settings are invalid.");
     if(parsed.brain && (parsed.brain.searchEnabled!==undefined && typeof parsed.brain.searchEnabled!=="boolean" || parsed.brain.searchEnabled===true && !validPath(parsed.brain.indexState)))throw invalid("Plugin settings are invalid.");
     if(parsed.brain && (parsed.brain.writeEnabled!==undefined && typeof parsed.brain.writeEnabled!=="boolean" || parsed.brain.writeEnabled===true && !parsed.brain.searchEnabled))throw invalid("Plugin settings are invalid.");
-    if(parsed.brain && (parsed.brain.lifecycleEnabled!==undefined && typeof parsed.brain.lifecycleEnabled!=="boolean" || parsed.brain.lifecycleEnabled===true && !parsed.brain.searchEnabled))throw invalid("Plugin settings are invalid.");
+    if(parsed.brain && [parsed.brain.lifecycleEnabled,parsed.brain.browserLifecycleEnabled].some(value=>value!==undefined && (typeof value!=="boolean" || value===true && !parsed.brain.searchEnabled)))throw invalid("Plugin settings are invalid.");
     return parsed.brain;
   }
   async function save(brain: BrainConnection | null) {
@@ -60,7 +61,7 @@ export function createPluginCatalog(stateRoot: string) {
   async function status() {
     const brain = await read();
     if (!brain) return {brain:null, offeredVersion:BRAIN_RELEASE.version};
-    const base={vault:brain.vault,version:brain.version,searchEnabled:brain.searchEnabled===true,writeEnabled:brain.writeEnabled===true,lifecycleEnabled:brain.lifecycleEnabled===true};
+    const base={vault:brain.vault,version:brain.version,searchEnabled:brain.searchEnabled===true,writeEnabled:brain.writeEnabled===true,lifecycleEnabled:brain.lifecycleEnabled===true,browserLifecycleEnabled:brain.browserLifecycleEnabled===true};
     try {
       const actual=await inspectVault(brain.vault);
       return {brain:{...base,version:actual.version,available:true,searchCompatible:actual.version===BRAIN_RELEASE.version && (!brain.searchEnabled || actual.indexState===brain.indexState)},offeredVersion:BRAIN_RELEASE.version};
@@ -91,7 +92,7 @@ export function createPluginCatalog(stateRoot: string) {
   }, async setSearchEnabled(enabled:unknown) {
     if(typeof enabled!=="boolean")throw invalid("Choose whether agent memory search is enabled.");
     const brain=await read(); if(!brain)throw invalid("Connect a memory vault first.");
-    if(!enabled) { await save({vault:brain.vault,version:brain.version,searchEnabled:false}); return status(); }
+    if(!enabled) { await save({vault:brain.vault,version:brain.version,searchEnabled:false}); lastLifecycle.native=null;lastLifecycle.user=null;return status(); }
     const connection=await engineConnection(brain);
     await prepareBrainEngine(stateRoot);
     // Explicit human opt-in prepares the engine and syncs the source-backed index.
@@ -105,18 +106,20 @@ export function createPluginCatalog(stateRoot: string) {
     if(enabled)await engineConnection(brain);
     await save({...brain,writeEnabled:enabled});
     return status();
-  }, async setLifecycleEnabled(enabled:unknown) {
-    if(typeof enabled!=="boolean")throw invalid("Choose whether native memory assistance is enabled.");
+  }, async setLifecycleEnabled(enabled:unknown,scope:"native"|"user"="native") {
+    if(typeof enabled!=="boolean" || !["native","user"].includes(scope))throw invalid("Choose whether memory refresh is enabled.");
     const brain=await read();if(!brain?.searchEnabled)throw invalid("Enable agent memory search first.");
     if(enabled)await engineConnection(brain);
-    await save({...brain,lifecycleEnabled:enabled});lastLifecycle=null;return status();
-  }, async lifecycleSync(event:"SessionStart"|"UserPromptSubmit") {
-    const brain=await read();if(!brain?.searchEnabled||!brain.lifecycleEnabled)return {status:"disabled"};
+    const key=scope==="native"?"lifecycleEnabled":"browserLifecycleEnabled";
+    await save({...brain,[key]:enabled});lastLifecycle[scope]=null;return status();
+  }, async lifecycleSync(event:"SessionStart"|"UserPromptSubmit",scope:"native"|"user"="native") {
+    if(!["native","user"].includes(scope))throw invalid("Invalid memory refresh scope.");
+    const brain=await read();if(!brain?.searchEnabled||!(scope==="native"?brain.lifecycleEnabled:brain.browserLifecycleEnabled))return {status:"disabled"};
     try {
       const result=await runBrainMemory(stateRoot,{action:"lifecycle_sync",...await engineConnection(brain),event});
-      lastLifecycle={status:["succeeded","degraded","skipped"].includes(result.status)?result.status:"attention",at:new Date().toISOString()};
+      lastLifecycle[scope]={status:["succeeded","degraded","skipped"].includes(result.status)?result.status:"attention",at:new Date().toISOString()};
       return result;
-    }catch(error){lastLifecycle={status:"attention",at:new Date().toISOString()};throw error;}
+    }catch(error){lastLifecycle[scope]={status:"attention",at:new Date().toISOString()};throw error;}
   }, async sync() {
     const brain=await read(); if(!brain?.searchEnabled)throw invalid("Enable agent memory search first.");
     const connection=await engineConnection(brain);
@@ -152,7 +155,7 @@ export function createPluginCatalog(stateRoot: string) {
       try { const result=await runBrainMemory(stateRoot,{action:"diagnostics",...connection});index=result.indexHealthy?"healthy":"attention";preferences=result.preferencesValid?"valid":"attention"; }
       catch { index="attention";preferences="attention"; }
     }
-    return {plugins,diagnostics:{...engine,binding,index,preferences,lastLifecycle:brain.lifecycleEnabled?lastLifecycle:null,reviewedVersion:BRAIN_RELEASE.version,versionStatus:!plugins.brain?.available?"unavailable":plugins.brain.version===BRAIN_RELEASE.version?"supported":"unsupported"}};
+    return {plugins,diagnostics:{...engine,binding,index,preferences,lastLifecycle:brain.lifecycleEnabled?lastLifecycle.native:null,lastBrowserLifecycle:brain.browserLifecycleEnabled?lastLifecycle.user:null,reviewedVersion:BRAIN_RELEASE.version,versionStatus:!plugins.brain?.available?"unavailable":plugins.brain.version===BRAIN_RELEASE.version?"supported":"unsupported"}};
   }, async preferences(profile?:unknown) {
     const brain=await read(); if(!brain)throw invalid("Connect a memory vault first.");
     if(profile!==undefined && (typeof profile!=="string" || !["normal","economical","manual"].includes(profile)))throw invalid("Choose a supported memory profile.");
@@ -178,5 +181,5 @@ export function createPluginCatalog(stateRoot: string) {
     if(action==="receipt" && key(input.key) && text(input.summary,4000) && Array.isArray(input.refs) && input.refs.length>=1 && input.refs.length<=10 && input.refs.every(ref=>text(ref,200)) && new Set(input.refs).size===input.refs.length)
       return runBrainMemory(stateRoot,{...connection,action,key:input.key,summary:input.summary,refs:input.refs,...scoped} as Parameters<typeof runBrainMemory>[1]);
     throw invalid("Invalid bounded Brain workflow request.");
-  }, async disconnect() { await save(null);lastLifecycle=null; return status(); }};
+  }, async disconnect() { await save(null);lastLifecycle.native=null;lastLifecycle.user=null; return status(); }};
 }
