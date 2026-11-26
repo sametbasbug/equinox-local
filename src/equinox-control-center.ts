@@ -2929,12 +2929,30 @@ function renderPlugins() {
   $("brain-settings").hidden = !brain;
   $("brain-disconnect").disabled = !brain || busy;
   $("brain-open-vault").disabled = !brain?.available || busy;
+  $("brain-run-diagnostics").disabled = !brain || busy;
+  setText("brain-run-diagnostics",state.brainDiagnosticsBusy?"Checking…":"Run diagnostics");
+  if(!brain)state.brainDiagnostics=null;
+  const diag=state.brainDiagnostics;
+  $("brain-diagnostic-results").hidden=!brain||!diag;
+  if(diag){
+    setText("brain-diag-version",`${diag.reviewedVersion} · ${localizeUiText(diag.versionStatus==="supported"?"Compatible":diag.versionStatus==="unsupported"?"Version mismatch":"Unavailable")}`);
+    setText("brain-diag-python",diag.python||"Not found");
+    setText("brain-diag-package",diag.archive==="verified"?"Verified":diag.archive==="not-prepared"?"Not prepared":"Integrity check failed");
+    setText("brain-diag-binding",diag.binding?"Valid":"Unavailable");
+    setText("brain-diag-index",diag.index==="healthy"?"Healthy":diag.index==="attention"?"Attention":"Not checked");
+    setText("brain-diag-preferences",diag.preferences==="valid"?"Valid":diag.preferences==="attention"?"Attention":"Not checked");
+    const lifecycle=diag.lastLifecycle;
+    const label=lifecycle?.status==="succeeded"?"Healthy":lifecycle?.status==="skipped"?"Skipped":"Attention";
+    setText("brain-diag-lifecycle",lifecycle?`${localizeUiText(label)} · ${new Date(lifecycle.at).toLocaleString()}`:"Not checked");
+  }
   $("brain-diagnose").disabled = !brain?.searchCompatible || busy;
   $("brain-preferences").hidden = !brain || !state.brainPreferences;
   $("brain-profile-apply").disabled = busy || !brain?.searchCompatible || !state.brainPreferences || $("brain-profile").value==="custom" || $("brain-profile").value===state.brainPreferences?.profile;
   if (!brain) state.brainPreferences=null;
   $("brain-access").disabled = !brain || busy || (!brain.searchEnabled && !brain.searchCompatible);
   $("brain-sync").disabled = !brain?.searchEnabled || busy || !brain.searchCompatible;
+  $("brain-lifecycle").disabled=busy||!brain?.searchEnabled||(!brain.lifecycleEnabled&&!brain.searchCompatible);
+  setText("brain-lifecycle",state.brainLifecycleBusy?"Working…":brain?.lifecycleEnabled?"Disable automatic refresh":"Enable automatic refresh");
   $("brain-write").disabled = busy || !brain?.searchEnabled || (!brain.writeEnabled && !brain.searchCompatible);
   setText("brain-write", state.brainWriteBusy ? "Working…" : brain?.writeEnabled ? "Disable writing" : "Enable writing");
   $("brain-compatibility").hidden = !brain || brain.searchCompatible;
@@ -3019,6 +3037,20 @@ async function refreshBrainIndex() {
   try { const result=await mutationJson("/api/v1/plugins/brain/sync","POST",{});state.plugins=result.plugins;showToast(result.indexStatus==="degraded"?"Index refreshed with warnings":"Index refreshed"); }
   catch(error){showError(error);}
   finally{state.pluginsBusy=false;state.brainSyncBusy=false;renderPlugins();}
+}
+async function changeBrainLifecycle(){
+  if(state.pluginsBusy||!state.plugins?.brain?.searchEnabled)return;
+  state.pluginsBusy=true;state.brainLifecycleBusy=true;renderPlugins();
+  try{const result=await mutationJson("/api/v1/plugins/brain/lifecycle-access","POST",{enabled:!state.plugins.brain.lifecycleEnabled});state.plugins=result.plugins;showToast(state.plugins.brain.lifecycleEnabled?"Automatic refresh enabled":"Automatic refresh disabled");}
+  catch(error){showError(error);}
+  finally{state.pluginsBusy=false;state.brainLifecycleBusy=false;renderPlugins();}
+}
+async function runBrainDiagnostics(){
+  if(state.pluginsBusy||!state.plugins?.brain)return;
+  state.pluginsBusy=true;state.brainDiagnosticsBusy=true;renderPlugins();
+  try{const result=await mutationJson("/api/v1/plugins/brain/diagnostics","POST",{});state.plugins=result.plugins;state.brainDiagnostics=result.diagnostics;}
+  catch(error){state.brainDiagnostics=null;showError(error);}
+  finally{state.pluginsBusy=false;state.brainDiagnosticsBusy=false;renderPlugins();}
 }
 async function brainPreferences(apply=false) {
   if(state.pluginsBusy || !state.plugins?.brain?.searchCompatible)return;
@@ -4571,6 +4603,8 @@ function bindEvents() {
   $("brain-browse").addEventListener("click",async()=>{try{const result=await pickLocalFolder();if(!result.cancelled&&result.path)$("brain-folder-path").value=result.path;}catch(error){showError(error);}});
   $("brain-open-vault").addEventListener("click",async()=>{try{if(!window.equinoxShell?.openBrainVault)throw new Error("Native vault opening is unavailable.");await window.equinoxShell.openBrainVault();}catch(error){showError(error);}});
   $("brain-diagnose").addEventListener("click",()=>void brainPreferences());
+  $("brain-run-diagnostics").addEventListener("click",()=>void runBrainDiagnostics());
+  $("brain-lifecycle").addEventListener("click",()=>void changeBrainLifecycle());
   $("brain-profile").addEventListener("change",renderPlugins);
   $("brain-profile-apply").addEventListener("click",()=>void brainPreferences(true));
   $("plugins-retry").addEventListener("click", () => { void refreshPlugins(); });

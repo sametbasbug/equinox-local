@@ -917,13 +917,25 @@
           <p id="brain-compatibility" class="panel-note" hidden>Agent memory search requires the supported engine version. Your existing vault is unchanged.</p>
           <div class="brain-settings-actions"><button id="brain-sync" class="button secondary" type="button" disabled>Refresh index</button></div>
           <div class="brain-access-panel"><div><h4>Agent memory writing</h4><p>Allow authorized agents to create and deliberately edit memory notes, update tasks and record completed work. Changes require current source hashes or revisions where applicable. Agent writes are screened by the upstream secret filter.</p></div><button id="brain-write" class="button secondary" type="button" disabled>Enable writing</button></div>
-          <div class="brain-access-panel"><div><h4>Shared memory preferences</h4><p>These upstream settings affect other agents using this vault. Automatic ChatGPT context is not available yet.</p></div><button id="brain-diagnose" class="button secondary" type="button">Load preferences</button></div>
+          <div class="brain-access-panel"><div><h4>Shared memory preferences</h4><p>These upstream settings affect other agents using this vault, including the context budget.</p></div><button id="brain-diagnose" class="button secondary" type="button">Load preferences</button></div>
           <div id="brain-preferences" hidden>
             <label class="field"><span>Memory profile</span><select id="brain-profile"><option value="normal">Normal</option><option value="economical">Economical</option><option value="manual">Manual</option><option value="custom" disabled>Custom</option></select></label>
             <p id="brain-preference-summary" class="panel-note"></p>
             <div class="brain-settings-actions"><button id="brain-profile-apply" class="button secondary" type="button">Apply profile</button></div>
           </div>
-          <p class="card-copy">Automatic context is in development. Nothing is sent to ChatGPT unless an authorized memory tool is used.</p>
+          <div class="brain-access-panel"><div><h4>Engine diagnostics</h4><p>Check Python, the verified package and the local index without changing your vault. The supported version follows reviewed Equinox Local releases.</p></div><button id="brain-run-diagnostics" class="button secondary" type="button">Run diagnostics</button></div>
+          <dl id="brain-diagnostic-results" class="brain-settings-details" hidden>
+            <div><dt>Supported engine version</dt><dd id="brain-diag-version">—</dd></div>
+            <div><dt>Python runtime</dt><dd id="brain-diag-python">—</dd></div>
+            <div><dt>Verified engine package</dt><dd id="brain-diag-package">—</dd></div>
+            <div><dt>Vault binding</dt><dd id="brain-diag-binding">—</dd></div>
+            <div><dt>Local index</dt><dd id="brain-diag-index">—</dd></div>
+            <div><dt>Shared preferences</dt><dd id="brain-diag-preferences">—</dd></div>
+            <div><dt>Last automatic refresh</dt><dd id="brain-diag-lifecycle">—</dd></div>
+          </dl>
+          <p class="panel-note">For a different upstream version, use its official upgrade instructions, then reconnect. Equinox Local never silently upgrades a shared vault.</p>
+          <div class="brain-access-panel"><div><h4>Native Assistant index refresh</h4><p>Prepare the local index when a new generation is observed in Assistant, respecting the shared profile. No prompt or transcript is collected and no memory is inserted automatically.</p></div><button id="brain-lifecycle" class="button secondary" type="button" disabled>Enable automatic refresh</button></div>
+          <p class="card-copy">Use brain_context to request profile-aware memory context. ChatGPT does not expose a native system hook; context delivery still requires a memory tool invocation.</p>
           <div class="brain-settings-actions"><button class="button secondary" type="button" data-jump-section="plugins">Back to Plugins</button><button id="brain-open-vault" class="button secondary" type="button">Open vault</button><button id="brain-disconnect" class="button secondary" type="button" disabled>Disconnect</button></div>
           <p class="panel-note">Disconnecting preserves your vault and existing agent integrations.</p>
         </article>
