@@ -2288,7 +2288,10 @@ let turnBudgetObservationBusy = false;
 setInterval(() => {
   if (turnBudgetObservationBusy) return;
   turnBudgetObservationBusy = true;
-  void turnBudgetController.refreshSnapshot().catch(() => {}).finally(() => {
+  void (async()=>{
+    if(turnBudgetController.snapshot().enabled)await turnBudgetController.refreshSnapshot();
+    else if(await pluginCatalog.shouldObserveBrowser())await resolveTurnBudgetIdentity();
+  })().catch(() => {}).finally(() => {
     turnBudgetObservationBusy = false;
   });
 }, 3_000).unref?.();

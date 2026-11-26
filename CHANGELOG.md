@@ -2,6 +2,7 @@
 
 - Introduce a native Plugins workspace and connected-only Control Center settings, beginning with Equinox Brain (Powered by Avenox Beyin). Connect existing V3 vaults or install the pinned SHA-256-verified V3.17.0 upstream release into an empty folder, without deleting vault data on disconnect.
 - Add explicit opt-in local Brain indexing and bounded `brain_search` retrieval through the integrations capability. Keep private/untrusted notes excluded, preserve source citations, and discover Python 3.11+ on macOS and Windows including modern Python Install Manager installations. No automatic context injection.
+- Keep the opt-in Your Browser Brain observer active independently of Turn Budget, without extra browser polling when both features are disabled.
 - Add separately enabled Your Browser local Brain index refresh through the existing exact ChatGPT turn resolver, separate refresh diagnostics and localized native context review errors. No extension changes or automatic prompt submission.
 - Add native Assistant Brain context review with source selection and explicit draft insertion, guarded by the exact conversation, unchanged draft, current source revisions and access permissions. Never auto-submits.
 - Add on-demand Brain engine diagnostics and compatibility status, profile-aware `brain_context`, and optional native Assistant lifecycle-triggered local indexing. No automatic prompt modification or transcript collection; contextual delivery remains an explicit tool invocation.

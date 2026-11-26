@@ -36,6 +36,9 @@ async function inspectVault(vault: string): Promise<VaultMetadata> {
 export function createPluginCatalog(stateRoot: string) {
   const file = path.join(stateRoot, "plugins.json");
   type LifecycleResult={status:string;at:string};
+  // Observation admission only; every actual refresh still revalidates the
+  // protected persisted permission and vault binding inside the mutation lock.
+  let browserObservationEnabled:boolean|undefined;
   const lastLifecycle:Record<"native"|"user",LifecycleResult|null>={native:null,user:null};
   async function read(): Promise<BrainConnection | null> {
     const security = await inspectPrivateStatePath(file, {type:"file",mode:"600",verifyWindowsAcl:verifyWindowsPrivateStateAcl});
@@ -56,6 +59,7 @@ export function createPluginCatalog(stateRoot: string) {
       await fs.writeFile(temp, JSON.stringify({schema:1,brain})+"\n", {flag:"wx",mode:0o600});
       if (process.platform === "win32") await protectWindowsPrivateStatePath({target:temp,type:"file"});
       await fs.rename(temp,file);
+      browserObservationEnabled=brain?.searchEnabled===true&&brain.browserLifecycleEnabled===true;
     } finally { await fs.rm(temp,{force:true}).catch(()=>{}); }
   }
   async function status() {
@@ -75,7 +79,12 @@ export function createPluginCatalog(stateRoot: string) {
     if(brain.searchEnabled && brain.indexState!==canonicalState)throw invalid("The vault's local index binding changed. Disable and re-enable memory access in Control Center.");
     return {vault:actual.vault,state:canonicalState};
   }
-  return {status, async connect(value: unknown) {
+  return {status, async shouldObserveBrowser() {
+    if(browserObservationEnabled!==undefined)return browserObservationEnabled;
+    const brain=await read();
+    // Preserve a concurrent successful save while the initial read is pending.
+    return browserObservationEnabled??=(brain?.searchEnabled===true&&brain.browserLifecycleEnabled===true);
+  }, async connect(value: unknown) {
     if (!validPath(value)) throw invalid("Choose an absolute vault folder.");
     if (await read()) throw invalid("Disconnect the current vault before connecting another.");
     const brain = await inspectVault(value);

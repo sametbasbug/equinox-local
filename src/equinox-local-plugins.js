@@ -38,6 +38,9 @@ async function inspectVault(vault) {
 }
 export function createPluginCatalog(stateRoot) {
     const file = path.join(stateRoot, "plugins.json");
+    // Observation admission only; every actual refresh still revalidates the
+    // protected persisted permission and vault binding inside the mutation lock.
+    let browserObservationEnabled;
     const lastLifecycle = { native: null, user: null };
     async function read() {
         const security = await inspectPrivateStatePath(file, { type: "file", mode: "600", verifyWindowsAcl: verifyWindowsPrivateStateAcl });
@@ -65,6 +68,7 @@ export function createPluginCatalog(stateRoot) {
             if (process.platform === "win32")
                 await protectWindowsPrivateStatePath({ target: temp, type: "file" });
             await fs.rename(temp, file);
+            browserObservationEnabled = brain?.searchEnabled === true && brain.browserLifecycleEnabled === true;
         }
         finally {
             await fs.rm(temp, { force: true }).catch(() => { });
@@ -94,7 +98,13 @@ export function createPluginCatalog(stateRoot) {
             throw invalid("The vault's local index binding changed. Disable and re-enable memory access in Control Center.");
         return { vault: actual.vault, state: canonicalState };
     }
-    return { status, async connect(value) {
+    return { status, async shouldObserveBrowser() {
+            if (browserObservationEnabled !== undefined)
+                return browserObservationEnabled;
+            const brain = await read();
+            // Preserve a concurrent successful save while the initial read is pending.
+            return browserObservationEnabled ??= (brain?.searchEnabled === true && brain.browserLifecycleEnabled === true);
+        }, async connect(value) {
             if (!validPath(value))
                 throw invalid("Choose an absolute vault folder.");
             if (await read())
