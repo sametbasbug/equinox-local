@@ -376,7 +376,7 @@ export async function runManagedSupervisor({
         maxBuffer: 4 * 1024 * 1024,
       });
       log(`Starting Equinox Local ${release.version}${managedSource ? " managed-source" : ""} through the OpenAI tunnel transport.`);
-      const result = await runChildImpl(tunnelBinary, ["run", "--profile", PROFILE_NAME, "--profile-dir", paths.profileDir], {
+      const result = await runChildImpl(tunnelBinary, ["run", "--profile", PROFILE_NAME, "--profile-dir", paths.profileDir, "--mcp.stdio-send-initialized-notification"], {
         cwd: sourceRoot,
         env: tunnelEnv,
         stdio: ["ignore", "inherit", "inherit"],

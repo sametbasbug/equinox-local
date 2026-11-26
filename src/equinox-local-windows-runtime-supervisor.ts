@@ -219,7 +219,7 @@ export async function runWindowsShellRuntimeSupervisor({
       // A child failure exits this foreground tunnel; the existing bounded
       // local-only fallback keeps Control Center available for diagnostics.
       const result = await runChildImpl(tunnel, ["run", "--profile", PROFILE,
-        "--profile-dir", paths.profileDir, "--mcp.stdio-failure-policy", "exit"], {
+        "--profile-dir", paths.profileDir, "--mcp.stdio-failure-policy", "exit", "--mcp.stdio-send-initialized-notification"], {
         cwd, env: childEnv(env, "tunnel"), stdin: "ignore",
       });
       if (result.terminatingSignal) return { mode: "tunnel", ...result };

@@ -77,4 +77,4 @@ TUNNEL_ID="$("$TUNNEL_CLIENT" runtimes list 2>/dev/null | /usr/bin/awk -v alias=
 # The tunnel process stays in the wrapper's own process tree. Failure exits
 # to Electron's bounded runtime owner, not another daemon or a polling watcher.
 exec "$TUNNEL_CLIENT" run --profile "$ALIAS" --profile-dir "$PROFILE_DIR" \
-  --mcp.stdio-failure-policy exit
+  --mcp.stdio-failure-policy exit --mcp.stdio-send-initialized-notification
