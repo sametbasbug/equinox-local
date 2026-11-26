@@ -8,7 +8,7 @@ type Probe = {
   generationActive: boolean; composerReady: boolean; composerEmpty: boolean;
   lastUserMatches: boolean; performed: boolean;
 };
-type Expected = { canonicalUrl?: string; home?: string; userEpoch: string | null; assistantTurnKey: string | null; prompt: string; expiresAt: number; freshUrl?: string; returnUrl?:string };
+type Expected = { canonicalUrl?: string; home?: string; userEpoch: string | null; assistantTurnKey: string | null; prompt: string; expiresAt: number; freshUrl?: string; returnUrl?:string; reviewId?:string; appendText?:string };
 type Request = {
   id: string; instanceId: string; method: "continuation.deliver" | "resume.create"; expiresAt: number;
   args: { tabId: number; conversationId: string; canonicalUrl: string; userEpoch: string; assistantTurnKey: string; prompt: string };
@@ -20,7 +20,7 @@ const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 
 /** Fixed isolated-world DOM operation, never a script or selector supplied by
  * the runtime, provider, renderer or MCP caller. Returns only identity/booleans. */
-function providerProbe(action: "inspect" | "focus" | "submit" | "fresh" | "return", expected?: Expected): Probe {
+function providerProbe(action: "inspect" | "focus" | "submit" | "fresh" | "return" | "brainCapture" | "brainAppend", expected?: Expected): Probe {
   const last = (items: Element[]) => items.at(-1) ?? null;
   const id = (value: string | null | undefined) => {
     const token = String(value || "").trim().split(/\s+/u)[0] || "";
@@ -72,7 +72,31 @@ function providerProbe(action: "inspect" | "focus" | "submit" | "fresh" | "retur
   if (action === "inspect" || !expected || Date.now() >= expected.expiresAt || !composer || generationActive || attachments
     || (expected.home ? home !== expected.home || canonicalUrl !== null : canonicalUrl !== expected.canonicalUrl)
     || userEpoch !== expected.userEpoch || assistantTurnKey !== expected.assistantTurnKey) return result;
-  if(action==="return"&&result.composerEmpty&&expected.returnUrl){
+  if(action==="brainCapture"||action==="brainAppend"){
+    // The exact draft stays in this isolated world only. Never return its
+    // contents to the local renderer, runtime or an agent.
+    const scope=window as unknown as {__equinoxBrainReview?:{id:string;html:string;expiresAt:number}};
+    if(!expected.reviewId||composer.closest('form')?.hasAttribute('data-logged-out'))return result;
+    if(action==="brainCapture"){
+      if(composer.innerHTML.length>64000)return result;
+      const captured={id:expected.reviewId,html:composer.innerHTML,expiresAt:expected.expiresAt};
+      scope.__equinoxBrainReview=captured;
+      setTimeout(()=>{if(scope.__equinoxBrainReview===captured)delete scope.__equinoxBrainReview;},Math.max(0,captured.expiresAt-Date.now()));
+      result.performed=true;return result;
+    }
+    const captured=scope.__equinoxBrainReview;
+    delete scope.__equinoxBrainReview;
+    if(!captured||captured.id!==expected.reviewId||Date.now()>=captured.expiresAt||captured.html!==composer.innerHTML||!expected.appendText||expected.appendText.length>12000)return result;
+    // Synchronous compare-and-insert in the same DOM operation; never submit.
+    const before=composer.innerText;
+    composer.focus();
+    const selection=getSelection();if(!selection||document.activeElement!==composer||captured.html!==composer.innerHTML)return result;
+    const range=document.createRange();range.selectNodeContents(composer);range.collapse(false);selection.removeAllRanges();selection.addRange(range);
+    const suffix=(before.trim()?"\n\n":"")+expected.appendText;
+    const accepted=document.execCommand("insertText",false,suffix);
+    const normalized=(value:string)=>value.replace(/\s+/gu," ").trim();
+    result.performed=accepted&&normalized(composer.innerText)===normalized(before+suffix);
+  } else if(action==="return"&&result.composerEmpty&&expected.returnUrl){
     const destination=new URL(expected.returnUrl);
     if(destination.origin===url.origin&&!destination.username&&!destination.password&&!destination.search&&!destination.hash&&
       /^\/(?:g\/[A-Za-z0-9_-]{8,160}\/)?c\/[A-Za-z0-9-]{8,160}\/?$/u.test(destination.pathname)){
@@ -119,7 +143,7 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
   const inspectable = () => alive() && !contents.isLoadingMainFrame()
     && (() => { try {return new URL(contents.getURL()).origin === ORIGIN;} catch {return false;} })();
   const usable = () => aliveVisible() && inspectable();
-  async function probe(action: "inspect" | "focus" | "submit" | "fresh" | "return" = "inspect", expected?: Expected): Promise<Probe | null> {
+  async function probe(action: "inspect" | "focus" | "submit" | "fresh" | "return" | "brainCapture" | "brainAppend" = "inspect", expected?: Expected): Promise<Probe | null> {
     const available = action === "inspect" || action==="return" ? inspectable : usable;
     if (!available()) return null;
     const before = contents.getURL();
@@ -219,6 +243,17 @@ export function createNativeChatContinuity(win: BrowserWindow, contents: WebCont
   }
   void tick();
   return {
+    async captureBrainReview(reviewId:string):Promise<Expected|null>{
+      if(!usable())return null;
+      const current=await probe();
+      if(!current||current.generationActive||!current.composerReady||(!current.canonicalUrl&&!current.home))return null;
+      const expected:Expected={...(current.canonicalUrl?{canonicalUrl:current.canonicalUrl}:{home:current.home!}),userEpoch:current.userEpoch,assistantTurnKey:current.assistantTurnKey,prompt:"",expiresAt:Date.now()+180000,reviewId};
+      return (await probe("brainCapture",expected))?.performed?expected:null;
+    },
+    async appendBrainReview(expected:Expected,text:string):Promise<boolean>{
+      if(!usable()||!expected.reviewId||Date.now()>=expected.expiresAt)return false;
+      return (await probe("brainAppend",{...expected,appendText:text}))?.performed===true;
+    },
     async returnToConversation(canonicalUrl:string,conversationId:string):Promise<boolean>{
       const destination=routeIdentity(canonicalUrl);
       if(!destination||destination.conversationId!==conversationId||!inspectable())return false;

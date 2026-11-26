@@ -3465,6 +3465,7 @@ equinoxLocalControlApi = createEquinoxLocalControlApi({
   syncBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.sync()),
   brainPreferences: async (profile) => withMutationLocks(["plugins"], () => pluginCatalog.preferences(profile)),
   brainDiagnostics: async () => withMutationLocks(["plugins"], () => pluginCatalog.diagnostics()),
+  brainContextReview: async (input) => withMutationLocks(["plugins"], () => pluginCatalog.search(input,true)),
   disconnectBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.disconnect()),
   setHttpProfileManagement: async ({ enabled }) => withMutationLocks(["authenticated-http-profiles"], async () => {
     await setAuthenticatedHttpAgentManagement({ enabled });

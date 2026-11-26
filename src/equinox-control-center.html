@@ -649,6 +649,21 @@
       </section>
 
       <section id="section-chat" class="page-section" aria-labelledby="section-title" hidden>
+        <div id="brain-assistant-bar" class="brain-assistant-bar" hidden>
+          <button id="brain-review-toggle" class="brain-review-toggle" type="button" aria-expanded="false" aria-controls="brain-review-panel"><span aria-hidden="true">◈</span> <span>Brain context</span></button>
+          <span class="brain-assistant-hint">Review shared memory before adding it to your draft.</span>
+        </div>
+        <div id="brain-review-panel" class="brain-review-panel" hidden>
+          <div class="brain-review-heading"><div><h3>Review memory context</h3><p>Search a topic locally. Choose the sources you want to include. Nothing is sent automatically.</p></div><button id="brain-review-close" class="button secondary compact" type="button">Close</button></div>
+          <form id="brain-review-form" class="brain-review-form" novalidate>
+            <label class="field"><span>Memory topic</span><input id="brain-review-query" maxlength="2000" autocomplete="off" required placeholder="Search your shared memory"></label>
+            <label class="field"><span>Project (optional)</span><input id="brain-review-project" maxlength="160" autocomplete="off"></label>
+            <button id="brain-review-search" class="button primary" type="submit">Find context</button>
+          </form>
+          <p id="brain-review-status" class="panel-note" role="status"></p>
+          <div id="brain-review-records" class="brain-review-records"></div>
+          <div class="brain-review-actions"><button id="brain-review-append" class="button primary" type="button" disabled>Insert selected into draft</button><span class="panel-note">Review the resulting draft before sending.</span></div>
+        </div>
         <div id="chat-provider-host" class="chat-provider-host">
           <div id="chat-provider-fallback" class="chat-provider-fallback">
             <p id="chat-provider-status" role="status">Loading ChatGPT…</p>
