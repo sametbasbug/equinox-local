@@ -1524,7 +1524,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
   // Only the isolated, verified invocation queue is read. The provider
   // page has no filesystem API. Disabled history never pulls or writes.
   let historyBusy=false;
-  let historyDiagnostic={polls:0,observed:0,owned:0,retained:0,queued:0,recording:false,errors:0};
+  let historyDiagnostic={polls:0,observed:0,owned:0,retained:0,queued:0,recording:false,errors:0,progressHook:0,progressPublic:0,progressSaved:0,progressRestored:0};
   const historyTimer=setInterval(async()=>{
     if(historyBusy||!chatVisible||disposed||!history?.status().enabled||!history.status().available||
        view.webContents.isDestroyed()||!isChatGPTOrigin(view.webContents.getURL()))return;
@@ -1533,6 +1533,15 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
     const epoch=history.epoch();
     try{
       const reply=await view.webContents.executeJavaScriptInIsolatedWorld(1002,[{code:"window.__equinoxRunTimeline?.take() ?? null"}]) as unknown;
+      if(diagnoseActivity)try{
+        const raw=await view.webContents.executeJavaScriptInIsolatedWorld(1002,[{code:'document.documentElement?.getAttribute("data-equinox-progress-counts") ?? null'}]) as unknown;
+        if(typeof raw==="string"&&raw.length<=40){
+          const values=JSON.parse(raw);
+          if(Array.isArray(values)&&values.length===3&&values.every(n=>Number.isSafeInteger(n)&&n>=0&&n<=240)){
+            historyDiagnostic={...historyDiagnostic,progressHook:1,progressPublic:values[0],progressSaved:values[1],progressRestored:values[2]};
+          }
+        }else historyDiagnostic={...historyDiagnostic,progressHook:0,progressPublic:0,progressSaved:0,progressRestored:0};
+      }catch{/* optional counters only */}
       if(typeof reply!=="string"||reply.length>10_000_000)return;
       const value=JSON.parse(reply) as {pathname?:unknown;items?:unknown;recording?:unknown;observed?:unknown;owned?:unknown;retained?:unknown};
       if(value?.pathname===pathname&&isChatGPTOrigin(view.webContents.getURL())&&new URL(view.webContents.getURL()).pathname===pathname){

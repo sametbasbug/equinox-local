@@ -4322,7 +4322,7 @@ function bindEvents() {
             // output, URL or invocation identity is included.
             const diagnostic = status.diagnostics;
             if (diagnostic) {
-                const parts = ["polls", "observed", "owned", "retained", "queued", "received", "valid", "errors"].map(key => key + " " + String(diagnostic[key] ?? 0));
+                const parts = ["polls", "observed", "owned", "retained", "queued", "received", "valid", "errors", "progressHook", "progressPublic", "progressSaved", "progressRestored"].map(key => key + " " + String(diagnostic[key] ?? 0));
                 $("command-history-status").title = parts.join(" · ") + " · recording " + String(diagnostic.recording === true);
             }
         };
