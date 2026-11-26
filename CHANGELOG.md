@@ -1,14 +1,20 @@
-## [7.1.1] - 2026-11-25
+## [7.1.1] - 2026-11-26
 
-### Companion selection hotfix
+### Assistant workspace, continuity and companion fixes
 
 - Fix selecting **Selene** from Control Center Settings. The secure Electron preload bridge had not admitted Selene in its companion snapshot, selection, and change-event paths even though the native menu and persistence accepted it.
 - Keep all four companion IDs under one bounded bridge allowlist, preserve saved choices and the Selene default for first-time profiles.
-- Equinox Browser remains **1.3.0**; no extension change or Chrome Web Store resubmission is required.
+- Prepare **Equinox Browser 1.3.1** (Chat Bridge v13) for separate Chrome Web Store review, retaining the same extension ID and permissions.
 - Route Pet menu **New Chat** to the built-in Chat tab and **Control Center** to the existing Control Center workspace instead of opening ChatGPT in a browser or merely focusing the last open tab.
 - Surface the existing version and update-check entry directly in **Control Center → Overview** beside live runtime metadata, keeping the exact signed Main/Factory update dialog and status rules intact. The Settings modal retains runtime diagnostics and restart controls.
 - Restore full-chat speaker avatars and author styling after provider SPA navigation: recognize genuine conversation message content even when the composer is still hydrating, re-evaluate the active surface as messages mount, and prevent a previous route observer from disposing the current one. Keep the signed-in account picture on the RIGHT and Selene on the LEFT without changing provider data.
 - Keep Assistant styling through the first turn, transcript remounts and in-page frame navigation. Remove the portrait orbits and the divider below the workspace header in Assistant.
+
+- Unify Assistant and Control Center workspace styling, add Portrait and Typography home choices, improve Settings access and display the verified turn budget.
+- Present tool activity in its original conversation turn and retain bounded, default-enabled local command history (240 entries, 3 MiB, 30 days), with clear and disable controls and no OS credential prompts.
+- Improve Task Capsule draft conflict recovery, return-to-conversation and copy-continuation controls. Support explicit native Assistant Auto Continue and verified same-conversation transfers between Your Browser and native Assistant.
+- Retain actually observed public commentary across completion and reload in native Assistant and Chrome, with bounded local storage (240 rows, 512 KiB, 30 days). Unseen commentary is not reconstructed; private reasoning is excluded.
+- Enable the tunnel client initialized-notification compatibility option to improve MCP connection initialization.
 
 ## [7.1.0] - 2026-11-25
 
