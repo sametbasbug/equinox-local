@@ -68,7 +68,7 @@ const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
     "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
     "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
     "/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install", "/api/v1/plugins/brain/disconnect",
-    "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access", "/api/v1/plugins/brain/preferences", "/api/v1/plugins/brain/diagnostics", "/api/v1/plugins/brain/lifecycle-access",
+    "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access", "/api/v1/plugins/brain/preferences", "/api/v1/plugins/brain/diagnostics", "/api/v1/plugins/brain/lifecycle-access", "/api/v1/plugins/brain/context-review",
   ]),
   PUT: new Set([
     "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",

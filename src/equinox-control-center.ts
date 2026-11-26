@@ -15,7 +15,7 @@ type ChatLoadState = "loading" | "ready" | "offline" | "failed";
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {returnToTask:(taskId:string,checkpointRevision:number)=>Promise<boolean>;getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;openBrainVault:()=>Promise<boolean>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {returnToTask:(taskId:string,checkpointRevision:number)=>Promise<boolean>;getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;openBrainVault:()=>Promise<boolean>;prepareBrainReview:(value:{query:string;project?:string})=>Promise<{id:string;records:Array<{id:string;source:string;title:string;text:string}>;contextMode:string}>;appendBrainReview:(value:{id:string;records:string[]})=>Promise<boolean>;cancelBrainReview:()=>Promise<void>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -592,6 +592,7 @@ function switchSection(section: UiRemoteData, { remember = false } = {}) {
   if (section === "brain" && state.pluginsLoaded && !state.plugins?.brain) return;
   const changed = state.activeSection !== section;
   state.activeSection = section;
+  if(section!=="chat")closeBrainReview();
   const chatActive = section === "chat";
   const pluginsActive = section === "plugins";
   const localActive = !chatActive && !pluginsActive && section !== "setup";
@@ -2919,6 +2920,9 @@ function renderPlugins() {
   const brain = state.plugins?.brain;
   const loaded = state.pluginsLoaded;
   const busy = state.pluginsBusy;
+  const reviewAvailable=brain?.searchEnabled===true&&brain?.searchCompatible===true&&!!window.equinoxShell?.prepareBrainReview;
+  $("brain-assistant-bar").hidden=!reviewAvailable;
+  if(!reviewAvailable&&!$("brain-review-panel").hidden)closeBrainReview();
   $("plugin-navigation").hidden = !brain;
   $("brain-connect").hidden = !!brain;
   $("brain-connect").disabled = !loaded || busy || !!state.pluginsError;
@@ -3037,6 +3041,61 @@ async function refreshBrainIndex() {
   try { const result=await mutationJson("/api/v1/plugins/brain/sync","POST",{});state.plugins=result.plugins;showToast(result.indexStatus==="degraded"?"Index refreshed with warnings":"Index refreshed"); }
   catch(error){showError(error);}
   finally{state.pluginsBusy=false;state.brainSyncBusy=false;renderPlugins();}
+}
+let brainReviewId:string|null=null;
+let brainReviewRevision=0;
+let brainReviewBusy=false;
+function renderBrainReviewSelection(){
+  $("brain-review-append").disabled=brainReviewBusy||!brainReviewId||!$("brain-review-records").querySelector('input:checked');
+}
+function closeBrainReview(){
+  if($("brain-review-panel").hidden&&!brainReviewId&&!brainReviewBusy)return;
+  ++brainReviewRevision;brainReviewId=null;brainReviewBusy=false;
+  $("brain-review-panel").hidden=true;$("brain-review-toggle").setAttribute("aria-expanded","false");
+  $("brain-review-query").value="";$("brain-review-project").value="";$("brain-review-records").replaceChildren();setText("brain-review-status","");
+  $("brain-review-search").disabled=false;$("brain-review-query").disabled=false;$("brain-review-project").disabled=false;renderBrainReviewSelection();
+  void window.equinoxShell?.cancelBrainReview().catch(()=>{});syncEmbeddedChatLayout();
+}
+function invalidateBrainReview(){
+  if(!brainReviewId&&!brainReviewBusy)return;
+  ++brainReviewRevision;brainReviewId=null;brainReviewBusy=false;
+  $("brain-review-records").replaceChildren();setText("brain-review-status","Search again after changing the topic.");
+  $("brain-review-search").disabled=false;$("brain-review-query").disabled=false;$("brain-review-project").disabled=false;renderBrainReviewSelection();
+  void window.equinoxShell?.cancelBrainReview().catch(()=>{});syncEmbeddedChatLayout();
+}
+function toggleBrainReview(){
+  if(!$("brain-review-panel").hidden){closeBrainReview();return;}
+  if($("brain-assistant-bar").hidden)return;
+  $("brain-review-panel").hidden=false;$("brain-review-toggle").setAttribute("aria-expanded","true");
+  $("brain-review-query").focus();syncEmbeddedChatLayout();
+}
+async function findBrainReview(event:Event){
+  event.preventDefault();if(brainReviewBusy||$("brain-review-panel").hidden)return;
+  const query=$("brain-review-query").value.trim(),project=$("brain-review-project").value.trim();
+  if(!query){setText("brain-review-status","Enter a memory topic.");return;}
+  const revision=++brainReviewRevision;brainReviewId=null;brainReviewBusy=true;
+  $("brain-review-records").replaceChildren();$("brain-review-search").disabled=true;$("brain-review-query").disabled=true;$("brain-review-project").disabled=true;renderBrainReviewSelection();setText("brain-review-status","Searching local memory…");
+  try{
+    const result=await window.equinoxShell!.prepareBrainReview({query,...(project?{project}:{})});
+    if(revision!==brainReviewRevision||$("brain-review-panel").hidden)return;
+    brainReviewId=result.id;
+    for(const record of result.records){
+      const row=document.createElement("label");row.className="brain-review-record";
+      const input=document.createElement("input");input.type="checkbox";input.value=record.id;input.addEventListener("change",renderBrainReviewSelection);
+      const copy=document.createElement("div"),title=document.createElement("strong"),source=document.createElement("small"),excerpt=document.createElement("p");
+      title.textContent=record.title;source.textContent=record.source;excerpt.textContent=record.text;copy.append(title,source,excerpt);row.append(input,copy);$("brain-review-records").append(row);
+    }
+    setText("brain-review-status",result.contextMode==="off"?"Manual profile disables contextual assistance.":result.records.length?"Select the memory sources you want to add.":"No matching memory sources.");
+  }catch(error){if(revision===brainReviewRevision)setText("brain-review-status",error instanceof Error?error.message:String(error));}
+  finally{if(revision===brainReviewRevision){brainReviewBusy=false;$("brain-review-search").disabled=false;$("brain-review-query").disabled=false;$("brain-review-project").disabled=false;renderBrainReviewSelection();syncEmbeddedChatLayout();}}
+}
+async function appendBrainReview(){
+  if(brainReviewBusy||!brainReviewId)return;
+  const records=[...$("brain-review-records").querySelectorAll<HTMLInputElement>('input:checked')].map(input=>input.value);if(!records.length)return;
+  const id=brainReviewId,revision=++brainReviewRevision;brainReviewId=null;brainReviewBusy=true;$("brain-review-search").disabled=true;$("brain-review-query").disabled=true;$("brain-review-project").disabled=true;renderBrainReviewSelection();setText("brain-review-status","Checking selected sources…");
+  try{await window.equinoxShell!.appendBrainReview({id,records});if(revision===brainReviewRevision){closeBrainReview();showToast("Memory added to draft. Review before sending.");}}
+  catch(error){if(revision===brainReviewRevision)setText("brain-review-status",error instanceof Error?error.message:String(error));}
+  finally{if(revision===brainReviewRevision){brainReviewBusy=false;$("brain-review-search").disabled=false;$("brain-review-query").disabled=false;$("brain-review-project").disabled=false;renderBrainReviewSelection();}}
 }
 async function changeBrainLifecycle(){
   if(state.pluginsBusy||!state.plugins?.brain?.searchEnabled)return;
@@ -4599,6 +4658,12 @@ function bindEvents() {
   $("brain-sync").addEventListener("click", () => { void refreshBrainIndex(); });
   $("brain-write").addEventListener("click", () => { void changeBrainWrite(); });
   $("brain-vault-form").addEventListener("submit",submitBrainVault);
+  $("brain-review-toggle").addEventListener("click",toggleBrainReview);
+  $("brain-review-close").addEventListener("click",closeBrainReview);
+  $("brain-review-form").addEventListener("submit",findBrainReview);
+  $("brain-review-query").addEventListener("input",invalidateBrainReview);
+  $("brain-review-project").addEventListener("input",invalidateBrainReview);
+  $("brain-review-append").addEventListener("click",()=>void appendBrainReview());
   $("brain-vault-cancel").addEventListener("click",()=>$("brain-vault-dialog").close());
   $("brain-browse").addEventListener("click",async()=>{try{const result=await pickLocalFolder();if(!result.cancelled&&result.path)$("brain-folder-path").value=result.path;}catch(error){showError(error);}});
   $("brain-open-vault").addEventListener("click",async()=>{try{if(!window.equinoxShell?.openBrainVault)throw new Error("Native vault opening is unavailable.");await window.equinoxShell.openBrainVault();}catch(error){showError(error);}});

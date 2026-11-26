@@ -1884,6 +1884,8 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
       openProvider();
     },
     returnToConversation:continuity.returnToConversation,
+    captureBrainReview:continuity.captureBrainReview,
+    appendBrainReview:continuity.appendBrainReview,
     historyDiagnostics(): typeof historyDiagnostic { return {...historyDiagnostic}; },
     refreshHistory(): void { if(chatVisible)applyIdentity(); },
     async discardHistoryPending(clearRestored=false): Promise<void> {

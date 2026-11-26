@@ -63,7 +63,43 @@ function providerProbe(action, expected) {
         || (expected.home ? home !== expected.home || canonicalUrl !== null : canonicalUrl !== expected.canonicalUrl)
         || userEpoch !== expected.userEpoch || assistantTurnKey !== expected.assistantTurnKey)
         return result;
-    if (action === "return" && result.composerEmpty && expected.returnUrl) {
+    if (action === "brainCapture" || action === "brainAppend") {
+        // The exact draft stays in this isolated world only. Never return its
+        // contents to the local renderer, runtime or an agent.
+        const scope = window;
+        if (!expected.reviewId || composer.closest('form')?.hasAttribute('data-logged-out'))
+            return result;
+        if (action === "brainCapture") {
+            if (composer.innerHTML.length > 64000)
+                return result;
+            const captured = { id: expected.reviewId, html: composer.innerHTML, expiresAt: expected.expiresAt };
+            scope.__equinoxBrainReview = captured;
+            setTimeout(() => { if (scope.__equinoxBrainReview === captured)
+                delete scope.__equinoxBrainReview; }, Math.max(0, captured.expiresAt - Date.now()));
+            result.performed = true;
+            return result;
+        }
+        const captured = scope.__equinoxBrainReview;
+        delete scope.__equinoxBrainReview;
+        if (!captured || captured.id !== expected.reviewId || Date.now() >= captured.expiresAt || captured.html !== composer.innerHTML || !expected.appendText || expected.appendText.length > 12000)
+            return result;
+        // Synchronous compare-and-insert in the same DOM operation; never submit.
+        const before = composer.innerText;
+        composer.focus();
+        const selection = getSelection();
+        if (!selection || document.activeElement !== composer || captured.html !== composer.innerHTML)
+            return result;
+        const range = document.createRange();
+        range.selectNodeContents(composer);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const suffix = (before.trim() ? "\n\n" : "") + expected.appendText;
+        const accepted = document.execCommand("insertText", false, suffix);
+        const normalized = (value) => value.replace(/\s+/gu, " ").trim();
+        result.performed = accepted && normalized(composer.innerText) === normalized(before + suffix);
+    }
+    else if (action === "return" && result.composerEmpty && expected.returnUrl) {
         const destination = new URL(expected.returnUrl);
         if (destination.origin === url.origin && !destination.username && !destination.password && !destination.search && !destination.hash &&
             /^\/(?:g\/[A-Za-z0-9_-]{8,160}\/)?c\/[A-Za-z0-9-]{8,160}\/?$/u.test(destination.pathname)) {
@@ -272,6 +308,20 @@ export function createNativeChatContinuity(win, contents, isVisible, onBudget = 
     }
     void tick();
     return {
+        async captureBrainReview(reviewId) {
+            if (!usable())
+                return null;
+            const current = await probe();
+            if (!current || current.generationActive || !current.composerReady || (!current.canonicalUrl && !current.home))
+                return null;
+            const expected = { ...(current.canonicalUrl ? { canonicalUrl: current.canonicalUrl } : { home: current.home }), userEpoch: current.userEpoch, assistantTurnKey: current.assistantTurnKey, prompt: "", expiresAt: Date.now() + 180000, reviewId };
+            return (await probe("brainCapture", expected))?.performed ? expected : null;
+        },
+        async appendBrainReview(expected, text) {
+            if (!usable() || !expected.reviewId || Date.now() >= expected.expiresAt)
+                return false;
+            return (await probe("brainAppend", { ...expected, appendText: text }))?.performed === true;
+        },
         async returnToConversation(canonicalUrl, conversationId) {
             const destination = routeIdentity(canonicalUrl);
             if (!destination || destination.conversationId !== conversationId || !inspectable())

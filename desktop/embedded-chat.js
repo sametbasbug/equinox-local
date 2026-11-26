@@ -2055,6 +2055,8 @@ export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity 
             openProvider();
         },
         returnToConversation: continuity.returnToConversation,
+        captureBrainReview: continuity.captureBrainReview,
+        appendBrainReview: continuity.appendBrainReview,
         historyDiagnostics() { return { ...historyDiagnostic }; },
         refreshHistory() { if (chatVisible)
             applyIdentity(); },

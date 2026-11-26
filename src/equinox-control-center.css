@@ -704,6 +704,25 @@ body.chat-workspace-active { overflow: hidden; }
 .chat-workspace-active .topbar { display: none; }
 .chat-workspace-active .main-panel > :is(.pause-banner,.restart-banner,.error-banner) { flex: none; margin: 0; border-radius: 0; }
 .chat-workspace-active #section-chat { min-height: 0; flex: 1; display: flex; flex-direction: column; margin: 0; }
+.brain-assistant-bar { flex:none; min-height:36px; padding:5px 20px; display:flex; gap:12px; align-items:center; background:var(--surface); border-bottom:1px solid var(--line); }
+.brain-review-toggle { display:inline-flex; gap:7px; align-items:center; background:transparent; border:0; color:var(--accent); font:inherit; font-weight:650; cursor:pointer; padding:4px 6px; border-radius:6px; }
+.brain-review-toggle:hover,.brain-review-toggle[aria-expanded="true"] { background:var(--accent-soft); }
+.brain-assistant-hint { color:var(--muted); font-size:12px; }
+.brain-review-panel { flex:none; max-height:48%; overflow:auto; padding:16px 20px; background:var(--surface); border-bottom:1px solid var(--line); display:grid; gap:12px; }
+.brain-review-heading,.brain-review-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.brain-review-heading h3 { margin:0; font-size:15px; }
+.brain-review-heading p { color:var(--muted); font-size:12px; margin:4px 0 0; }
+.brain-review-form { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto; align-items:end; gap:10px; }
+.brain-review-form .field { min-width:0; }
+.brain-review-records { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:10px; }
+.brain-review-record { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:start; gap:9px; padding:10px; border:1px solid var(--line); border-radius:9px; background:var(--bg); }
+.brain-review-record input { margin-top:3px; accent-color:var(--accent); }
+.brain-review-record strong,.brain-review-record small { overflow-wrap:anywhere; display:block; }
+.brain-review-record small { color:var(--muted); margin-top:3px; font-size:11px; }
+.brain-review-record p { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; font-size:12px; max-height:130px; overflow:auto; }
+.brain-review-panel .panel-note { margin:0; }
+.brain-review-actions { justify-content:flex-start; flex-wrap:wrap; }
+@media(max-width:760px){.brain-assistant-hint{display:none}.brain-review-form{grid-template-columns:1fr 1fr}.brain-review-form button{grid-column:1/-1}.brain-review-panel{padding:12px;}}
 .chat-provider-host { min-width: 0; min-height: 0; flex: 1; display: grid; place-items: center; margin: 0; background: var(--bg); color: var(--muted); }
 .chat-provider-fallback { padding: 16px; text-align: center; }
 .chat-provider-fallback p { margin: 0; }
