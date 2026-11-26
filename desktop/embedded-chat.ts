@@ -67,12 +67,12 @@ function permittedExternalLink(value: string): string | null {
 // semantic class names; no provider action is replaced or programmatically invoked.
 const STYLE = String.raw`
 html:root[data-equinox-surface] {
-  --eq-canvas: #f9fbff;
-  --eq-sidebar: #f0f3f9;
-  --eq-chrome: #f9fbff;
+  --eq-canvas: #f8faff;
+  --eq-sidebar: #f1f4fa;
+  --eq-chrome: var(--eq-canvas);
   --eq-paper: #ffffff;
   --eq-editor: #ffffff;
-  --eq-border: #e1e6f0;
+  --eq-border: #e2e6ef;
   --eq-text: #181a29;
   --eq-secondary: #4d536a;
   --eq-muted: #61677b;
@@ -81,6 +81,7 @@ html:root[data-equinox-surface] {
   --eq-active: color-mix(in srgb, var(--eq-accent) 10%, var(--eq-sidebar));
   --eq-bubble: color-mix(in srgb, var(--eq-accent) 7%, var(--eq-canvas));
   --eq-bubble-text: var(--eq-text);
+  /* Match the native Control Center workspace sidebar. */
   --eq-sidebar-width: 256px;
   --eq-home-width: 42rem;
   --eq-editor-shadow: 0 2px 5px #19264a09, 0 12px 30px #19264a08;
@@ -111,7 +112,7 @@ html:root[data-equinox-surface] {
     --eq-chrome: #161822;
     --eq-paper: #1e2130;
     --eq-editor: #212435;
-    --eq-border: #303548;
+    --eq-border: #2c3041;
     --eq-text: #eeeff8;
     --eq-secondary: #bdc3d8;
     --eq-muted: #a1a9c1;
@@ -235,16 +236,43 @@ html:root[data-equinox-surface] main[data-app-shell-main-surface] {
   --thread-content-compact-max-width: 48rem !important;
   --thread-content-expanded-max-width: 52rem !important;
   border-radius: 0 !important;
+  border: 0 !important;
+  --app-shell-main-content-border-width: 0px !important;
   background: var(--eq-canvas) !important;
 }
 html:root[data-equinox-surface] [data-app-shell-titlebar] {
   background: var(--eq-chrome);
+  border-block-end: 0 !important;
+}
+/* The genuine home mode control belongs to the main reader, not its center
+   or the conversation sidebar. Keep the provider's own checked states. */
+html:root[data-equinox-surface="home"] [aria-label="Composer mode"] {
+  position: fixed !important;
+  inset-inline-start: max(58px, calc(var(--app-shell-left-panel-width, 0px) + 16px)) !important;
+  inset-inline-end: auto !important;
+  inset-block-start: 10px !important;
+  inset-block-end: auto !important;
+  width: max-content !important;
+  min-width: 0 !important;
+  height: 32px !important;
+  transform: none !important;
+  pointer-events: auto;
+  z-index: 31;
+}
+html:root[data-equinox-surface="home"] [aria-label="Composer mode"] :is(button,[role="checkbox"],[role="radio"]) {
+  width: auto !important;
+  min-width: 0 !important;
+  min-height: 28px !important;
+  height: 30px !important;
+  padding: 0 13px !important;
+  font-size: 13px !important;
+  flex: 0 0 auto !important;
 }
 html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation {
   --height-token-row: 30px;
   --height-token-nav-row: 30px;
   background: var(--eq-sidebar) !important;
-  font-size: 13px;
+  font-size: 14px;
 }
 html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav {
   padding-inline: 10px;
@@ -269,9 +297,25 @@ html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href="/
 html:root[data-equinox-surface]:lang(tr) #app-shell-sidebar .sidebar-navigation a[href="/"] > span::after {
   content: "Sohbetler";
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation a[href*="/c/"] {
-  font-size: 13px;
-  line-height: 1.4;
+/* The provider uses outer interactive rows plus nested title links.
+   Apply typography at the same level for conversations and projects;
+   never add padding to a nested conversation link. */
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation :is(.sidebar-item,[data-thread-title-trigger],[data-thread-title],a[href*="/c/"],a[href*="/g/"]) {
+  font-size: 14px !important;
+  line-height: 20px !important;
+  letter-spacing: normal;
+}
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation :is(.sidebar-item,[data-thread-title-trigger],a[href*="/g/"]) :is([class~="text-base"],[class~="text-sm"],[data-marquee-content]) {
+  font-size: inherit !important;
+  line-height: inherit;
+}
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation [data-thread-title-trigger] a[href*="/c/"] {
+  padding-inline: 0 !important;
+  min-height: 0;
+  align-items: center;
+}
+html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation [data-sidebar-archive-chatgpt-id] {
+  min-height: 32px;
 }
 html:root[data-equinox-surface] :is([data-markdown-text-style="assistant-message"],[data-virtualized-turn-content] .markdown) {
   font-size: 15px;
@@ -341,8 +385,8 @@ html:root[data-equinox-surface] .bg-user-message.text-user-message {
    message container to the task column, without moving any React-owned nodes. */
 html:root[data-equinox-surface] :is([data-virtualized-turn-content], [class~="group/user-message"]) :is(div,section):has(> .bg-user-message.text-user-message),
 html:root[data-equinox-surface] [class~="group/user-message"]:has(> [data-user-message-bubble="true"]) {
-  justify-content: flex-start !important;
-  align-items: flex-start !important;
+  justify-content: flex-end !important;
+  align-items: flex-end !important;
 }
 html:root[data-equinox-surface] [data-message-author-role="user"] {
   align-self: stretch !important;
@@ -531,10 +575,10 @@ html:root[data-equinox-surface="thread"] [data-equinox-role] {
   position: relative;
   box-sizing: border-box;
   min-width: 0;
-  --eq-avatar-size: 30px;
-  --eq-author-offset: 43px;
-  margin-block: 9px 18px;
-  padding-block-start: 24px !important;
+  --eq-avatar-size: 42px;
+  --eq-author-offset: 56px;
+  margin-block: 12px 20px;
+  padding-block-start: 32px !important;
   width: 100%;
   max-width: 100%;
 }
@@ -549,7 +593,7 @@ html:root[data-equinox-surface="thread"] [data-equinox-role]::before {
   height: var(--eq-avatar-size);
   border: 1px solid var(--eq-border);
   color: var(--eq-secondary);
-  font-size: 12px;
+  font-size: 17px;
   font-weight: 650;
   border-radius: 50%;
   background: var(--eq-active) center / cover no-repeat;
@@ -559,10 +603,10 @@ html:root[data-equinox-surface="thread"] [data-equinox-role]::after {
   position: absolute;
   inset-inline-start: var(--eq-author-offset);
   top: 3px;
-  font-size: 12px;
-  line-height: 20px;
-  font-weight: 680;
-  letter-spacing: .012em;
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 660;
+  letter-spacing: -.01em;
   color: var(--eq-secondary);
 }
 html:root[data-equinox-surface="thread"] [data-equinox-role="user"] {
@@ -594,7 +638,7 @@ html:root[data-equinox-surface="thread"] [data-equinox-role="user"] :is([data-us
   max-width: min(34rem, 100%) !important;
   min-width: 0;
   margin-inline-start: auto !important;
-  padding: 9px 13px !important;
+  padding: 12px 15px !important;
   border: 1px solid color-mix(in srgb, var(--eq-accent) 12%, var(--eq-border)) !important;
   border-radius: 15px 6px 15px 15px !important;
   background: var(--eq-bubble) !important;
@@ -618,21 +662,28 @@ html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"]::after 
   inset-inline-start: var(--eq-author-offset);
   color: var(--eq-text);
 }
-/* Plain agent prose, like the approved reference. Only genuine tool
-   results receive framed surfaces inside the original assistant turn. */
-html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-response-body] {
+/* Symmetric message surfaces; the answer, streaming nodes and genuine
+   tool cards remain provider-owned. Older transcript variants without an
+   answer body use their outer Markdown region instead, never both. */
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] :is(
+  [data-response-body]:not([data-response-body] *),
+  [data-markdown-text-style="assistant-message"]:not([data-response-body] *, [data-markdown-text-style="assistant-message"] *),
+  .markdown:not([data-response-body] *, [data-markdown-text-style="assistant-message"] *, .markdown *)
+) {
+  box-sizing: border-box;
   max-width: 100%;
   min-width: 0;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 0;
-  background: transparent !important;
+  padding: 12px 15px !important;
+  border: 1px solid var(--eq-border) !important;
+  border-radius: 6px 15px 15px 15px !important;
+  background: var(--eq-paper) !important;
   box-shadow: none !important;
 }
-html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] {
-  max-width: 72ch;
+html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] :is([data-markdown-text-style="assistant-message"],.markdown) {
+  max-width: 100%;
   line-height: 1.67;
   font-size: 15px;
+  overflow-wrap: anywhere;
 }
 html:root[data-equinox-surface="thread"] [data-equinox-role="assistant"] [data-markdown-text-style="assistant-message"] :is(h1,h2,h3) {
   letter-spacing: -.024em;
@@ -687,10 +738,6 @@ html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation [role="he
   letter-spacing: .02em;
   color: var(--eq-secondary);
 }
-html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav a[href*="/c/"] {
-  min-height: 29px;
-  padding-inline: 9px;
-}
 html:root[data-equinox-surface] #app-shell-sidebar .sidebar-navigation nav :is(a,button):focus-visible {
   outline: 2px solid var(--eq-accent);
   outline-offset: -1px;
@@ -699,7 +746,7 @@ html:root[data-equinox-surface] form[data-chatgpt-composer]:focus-within [class*
   border-color: color-mix(in srgb, var(--eq-accent) 58%, var(--eq-border)) !important;
 }
 @media (max-width: 700px) {
-  html:root[data-equinox-surface="thread"] [data-equinox-role] { --eq-avatar-size: 26px; --eq-author-offset: 35px; }
+  html:root[data-equinox-surface="thread"] [data-equinox-role] { --eq-avatar-size: 36px; --eq-author-offset: 47px; }
 }
 /* Home suggestions remain real, selectable provider controls. Compact
    only the ordinary small button lists below the composer; never restyle
@@ -1141,7 +1188,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
       spellcheck: true, devTools: false,
     },
   });
-  view.setBorderRadius(15);
+  view.setBorderRadius(0);
   // Only this exact provider view can request a basic clipboard write or an
   // audio-only microphone grant. No camera, screen capture, clipboard read,
   // notifications, or arbitrary-origin permission escalation is permitted.
@@ -1245,7 +1292,7 @@ export function createEmbeddedChat(win: BrowserWindow, initialLanguage: "en" | "
   let attached = false;
   const continuity = createNativeChatContinuity(win, view.webContents, () => chatVisible);
   const syncViewBackground = () => {
-    if (!view.webContents.isDestroyed()) view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#161822" : "#f9fbff");
+    if (!view.webContents.isDestroyed()) view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#161822" : "#f8faff");
   };
   syncViewBackground();
   nativeTheme.on("updated", syncViewBackground);

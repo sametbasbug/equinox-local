@@ -2,6 +2,7 @@
 :root {
   color-scheme: light;
   --navigation-height: 58px;
+  --workspace-sidebar-width: 256px;
   --content-gap: 20px;
   --panel-padding: 20px;
   --modal-backdrop: #10182756;
@@ -588,9 +589,15 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 
 /* Chat and the Control Center each have a single navigation column. */
-.app-shell { display: grid; min-height: 100dvh; grid-template-columns: 202px minmax(0, 1fr); grid-template-rows: var(--navigation-height) minmax(0, 1fr); align-items: start; }
+.app-shell { display: grid; height: 100dvh; min-height: 0; grid-template-columns: var(--workspace-sidebar-width) minmax(0, 1fr); grid-template-rows: var(--navigation-height) minmax(0, 1fr); align-items: stretch; }
 body:is(.chat-workspace-active, .setup-mode) .app-shell { grid-template-columns: minmax(0, 1fr); }
-.workspace-navigation { position: sticky; top: 0; z-index: 12; grid-column: 1 / -1; height: var(--navigation-height); padding-inline: 18px 13px; display: grid; grid-template-columns: minmax(114px, 1fr) auto minmax(114px, 1fr); align-items: center; gap: 14px; background: var(--workspace-chrome); border-bottom: 1px solid var(--line); }
+/* The outer workspace is fixed; only the local reader scrolls. */
+body:not(.chat-workspace-active, .setup-mode) { overflow: hidden; }
+body:not(.chat-workspace-active, .setup-mode) .main-panel { height: 100%; min-height: 0; max-width: none; overflow: auto; scroll-padding-top: 82px; background: var(--bg); }
+body:not(.chat-workspace-active, .setup-mode) .main-panel > * { max-width: 1220px; margin-inline: auto; }
+body:not(.chat-workspace-active, .setup-mode) .topbar { top: 0; }
+body.setup-mode .app-shell { height: auto; min-height: 100dvh; align-items: start; }
+.workspace-navigation { position: sticky; top: 0; z-index: 12; grid-column: 1 / -1; height: var(--navigation-height); padding-inline: 18px 13px; display: grid; grid-template-columns: minmax(114px, 1fr) auto minmax(114px, 1fr); align-items: center; gap: 14px; background: var(--workspace-chrome); border-bottom: 0; }
 .brand-block { display: flex; align-items: center; gap: 8px; }
 .brand-logo { display: block; width: 28px; height: 28px; border-radius: 8px; }
 .brand-block h1 { margin: 0; font-size: 13px; font-weight: 660; letter-spacing: -.02em; white-space: nowrap; }
@@ -600,8 +607,8 @@ body:is(.chat-workspace-active, .setup-mode) .app-shell { grid-template-columns:
 .workspace-tab { justify-content: center; gap: 6px; min-height: 31px; padding: 0 11px; border-radius: 9px; font-size: 12px; }
 .workspace-tab.is-active { color: var(--text); background: var(--surface); box-shadow: 0 1px 3px #141c351c; font-weight: 660; }
 .workspace-tab:hover:not(.is-active), .rail-button:hover { background: var(--workspace-hover); color: var(--text); }
-.local-navigation { display: grid; align-content: start; gap: 4px; position: sticky; top: var(--navigation-height); min-height: calc(100dvh - var(--navigation-height)); padding: 24px 13px; background: var(--sidebar); border-inline-end: 1px solid var(--line); }
-.local-navigation .nav-item { padding-inline: 11px; border-radius: 9px; }
+.local-navigation { display: grid; align-content: start; gap: 4px; min-height: 0; height: 100%; overflow-y: auto; padding: 14px 12px; background: var(--sidebar); }
+.local-navigation .nav-item { min-height: 32px; padding-inline: 10px; border-radius: 7px; font-size: 14px; }
 .local-navigation .nav-item:hover { background: var(--surface-hover); color: var(--text); }
 .local-navigation .nav-item.is-active { color: var(--accent); background: var(--accent-soft); font-weight: 650; }
 .nav-hotkey { display: none; }
@@ -638,8 +645,11 @@ body:is(.chat-workspace-active, .setup-mode) .app-shell { grid-template-columns:
   .settings-profile { border-inline-start: 0; border-top: 1px solid var(--line); padding: 15px 0 0; }
 }
 
-@media (max-width: 1080px) {
-  .app-shell { grid-template-columns: 166px minmax(0, 1fr); }
+@media (max-width: 768px) {
+  :root { --workspace-sidebar-width: 52px; }
+  .local-navigation { padding-inline: 4px; }
+  .local-navigation .nav-item { justify-content: center; padding-inline: 0; }
+  .local-navigation .nav-item > span { display: none; }
 }
 @media (max-width: 720px) {
   .rail-bottom #agent-control-button { font-size: 0; padding-inline: 0; width: 34px; justify-content: center; }
@@ -648,22 +658,17 @@ body:is(.chat-workspace-active, .setup-mode) .app-shell { grid-template-columns:
   .workspace-navigation { grid-template-columns: minmax(32px, 1fr) auto minmax(72px, 1fr); padding-inline: 7px; gap: 4px; }
   .brand-block h1 { display: none; }
   .workspace-tab { padding-inline: 7px; }
-  .app-shell { grid-template-columns: 52px minmax(0, 1fr); }
-  .local-navigation { padding-inline: 4px; }
-  .local-navigation .nav-item { justify-content: center; padding-inline: 0; }
-  .local-navigation .nav-item > span { display: none; }
 }
 
 /* The actual provider owns the chat host and per-turn MCP tool cards.
    No separate global run history panel or second navigation column. */
 body.chat-workspace-active { overflow: hidden; }
-.chat-workspace-active .workspace-navigation { border-bottom: 0; }
 .chat-workspace-active .app-shell { height: 100dvh; min-height: 0; grid-template-rows: var(--navigation-height) minmax(0, 1fr); }
 .chat-workspace-active .main-panel { max-width: none; min-height: 0; height: 100%; padding: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--workspace-chrome); }
 .chat-workspace-active .topbar { display: none; }
 .chat-workspace-active .main-panel > :is(.pause-banner,.restart-banner,.error-banner) { flex: none; margin: 0; border-radius: 0; }
 .chat-workspace-active #section-chat { min-height: 0; flex: 1; display: flex; flex-direction: column; margin: 0; }
-.chat-provider-host { min-width: 0; min-height: 0; flex: 1; display: grid; place-items: center; margin: 10px 12px 12px; border-radius: 15px; background: var(--bg); color: var(--muted); }
+.chat-provider-host { min-width: 0; min-height: 0; flex: 1; display: grid; place-items: center; margin: 0; background: var(--bg); color: var(--muted); }
 .chat-provider-fallback { padding: 16px; text-align: center; }
 .chat-provider-fallback p { margin: 0; }
 .chat-provider-fallback button { margin-top: 13px; }

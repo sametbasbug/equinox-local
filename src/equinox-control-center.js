@@ -596,7 +596,9 @@ function switchSection(section, { remember = false } = {}) {
     $("last-refreshed").hidden = section !== "dashboard" && section !== "activity";
     syncEmbeddedChatLayout();
     if (changed) {
-        $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
+        $("main-content").scrollTop = 0;
+        if (state.setupMode)
+            $("main-content").scrollIntoView({ block: "start", behavior: "instant" });
         if (state.config) {
             // Hidden sections hold cached data. Render them when the user returns,
             // rather than continuously recreating their DOM during live polling.
