@@ -477,6 +477,23 @@ html:root[data-equinox-surface="home"] [data-equinox-greeting]::after {
   letter-spacing: -.054em;
   font-weight: 630;
 }
+html:root[data-equinox-surface="home"] [data-equinox-greeting-heading] {
+  row-gap: 0;
+}
+html:root[data-equinox-surface="home"] [data-equinox-greeting-heading],
+html:root[data-equinox-surface="home"] [data-equinox-greeting-heading] > * {
+  font-size: 0 !important;
+  line-height: 0 !important;
+}
+html:root[data-equinox-surface="home"] [data-equinox-greeting-heading]::before {
+  grid-column: 1;
+  grid-row: 1;
+  line-height: 1;
+}
+html:root[data-equinox-surface="home"] [data-equinox-greeting-heading]::after {
+  grid-column: 2;
+  grid-row: 1;
+}
 html:root[data-equinox-surface="home"][data-equinox-home-style="type"] [data-equinox-greeting] {
   grid-template-columns: minmax(0, 1fr) max-content;
   min-height: 112px;
@@ -776,6 +793,8 @@ function decorateProviderIdentity(update, generation) {
     const responseBody = '[data-response-body],[data-markdown-text-style="assistant-message"]';
     const messageSelector = [userUnit, userMessage, assistantMessage, responseBody].join(",");
     const greetingSelector = '[class*="Greeting-"]';
+    const headingSelector = 'h1,[role="heading"][aria-level="1"]';
+    const homeChangeSelector = [greetingSelector, headingSelector, "form", "[data-homepage-takeover]"].join(",");
     // Provider conversation routes sometimes replace the app-shell main with
     // an ordinary <main>. Keep route/identity guards in syncSurface instead of
     // losing all avatars and message styling when that attribute is absent.
@@ -795,7 +814,7 @@ function decorateProviderIdentity(update, generation) {
     let greeting = null;
     let greetingRegion = null;
     function clearMark(element) {
-        for (const attribute of ["role", "author", "initial", "greeting", "home"])
+        for (const attribute of ["role", "author", "initial", "greeting", "greeting-heading", "home"])
             element.removeAttribute("data-equinox-" + attribute);
         marks.delete(element);
     }
@@ -877,7 +896,21 @@ function decorateProviderIdentity(update, generation) {
         const form = forms?.length === 1 ? forms[0] : null;
         const home = profile && form?.matches('[data-composer-placement="home"]')
             && !main?.querySelector('[data-homepage-takeover]');
-        if (main?.querySelector(messageSelector)) {
+        const temporary = new URLSearchParams(location.search).get("temporary-chat") === "true";
+        const visible = (element) => element.getClientRects().length > 0 &&
+            getComputedStyle(element).visibility === "visible" &&
+            !element.closest('[hidden],[aria-hidden="true"],dialog,[role="dialog"]');
+        const interactive = 'button,a,input,textarea,select,[role="button"],[contenteditable="true"]';
+        const isPlainGreeting = (element) => visible(element) && !element.querySelector(interactive);
+        const greetingScope = home && !temporary ? form?.closest('[class~="group/home-composer-layout"]') ?? main : null;
+        const primaryHeadings = greetingScope ? [...greetingScope.querySelectorAll(greetingSelector)].filter(element => Boolean(element.closest('[class*="GreetingRegion-"]') && isPlainGreeting(element))) : [];
+        const alternateHeadings = primaryHeadings.length !== 1 && greetingScope
+            ? [...greetingScope.querySelectorAll(headingSelector)].filter(isPlainGreeting) : [];
+        const candidate = primaryHeadings.length === 1 ? primaryHeadings[0]
+            : alternateHeadings.length === 1 ? alternateHeadings[0] : null;
+        // A visible home form and heading are stronger evidence than old turns
+        // that the provider leaves mounted during the transition back to home.
+        if (!candidate && main?.querySelector(messageSelector)) {
             if (!threadRecognized) {
                 threadRecognized = true;
                 changed.add(main);
@@ -897,24 +930,22 @@ function decorateProviderIdentity(update, generation) {
         if (greetingRegion)
             clearMark(greetingRegion);
         greeting = greetingRegion = null;
-        if (!home || !main)
+        if (!candidate)
             return;
-        const greetings = main.querySelectorAll(greetingSelector);
-        if (greetings.length !== 1)
-            return;
-        const candidate = greetings[0];
         const region = candidate.closest('[class*="GreetingRegion-"]');
-        if (!region || candidate.querySelector('button,a,input,textarea,select,[role="button"],[contenteditable="true"]'))
-            return;
         greeting = candidate;
         greetingRegion = region;
+        if (primaryHeadings.length !== 1)
+            candidate.setAttribute("data-equinox-greeting-heading", "");
         candidate.setAttribute("data-equinox-initial", agentInitial);
         candidate.setAttribute("data-equinox-greeting", agent
             ? (language === "tr" ? agent + " ile çalış" : "Work with " + agent)
             : (language === "tr" ? "Nasıl yardımcı olabilirim?" : "How can I help?"));
-        region.setAttribute("data-equinox-home", "");
         marks.add(candidate);
-        marks.add(region);
+        if (region) {
+            region.setAttribute("data-equinox-home", "");
+            marks.add(region);
+        }
     }
     function flush() {
         frame = 0;
@@ -975,8 +1006,7 @@ function decorateProviderIdentity(update, generation) {
                     continue;
                 if (node.matches(messageSelector) || !node.closest("[data-equinox-role]"))
                     changed.add(node);
-                if (homeRoute && (node.matches('form,[data-homepage-takeover]') || node.querySelector('form[data-chatgpt-composer],[data-homepage-takeover]') ||
-                    node.matches(greetingSelector) || node.querySelector(greetingSelector)))
+                if (homeRoute && (node.matches(homeChangeSelector) || node.querySelector(homeChangeSelector)))
                     homeChanged = true;
             }
             for (const node of record.removedNodes) {
@@ -991,8 +1021,7 @@ function decorateProviderIdentity(update, generation) {
                     clearMark(wrapper);
                     changed.add(wrapper);
                 }
-                if (homeRoute && (node.matches('form,[data-homepage-takeover]') || node.querySelector('form[data-chatgpt-composer],[data-homepage-takeover]') ||
-                    node.matches(greetingSelector) || node.querySelector(greetingSelector)))
+                if (homeRoute && (node.matches(homeChangeSelector) || node.querySelector(homeChangeSelector)))
                     homeChanged = true;
             }
             const wrapper = target.closest('[data-chatgpt-search-unit-key$=":user"],[data-content-search-unit-key],[data-message-author-role]');
