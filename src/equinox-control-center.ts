@@ -233,7 +233,7 @@ const DYNAMIC_TEXT_IDS = new Set([
   "peekaboo-status", "peekaboo-detail", "api-status", "api-detail", "project-count", "folder-count",
   "default-project", "health-event-count",
   "health-evaluated-at", "doctor-title", "doctor-badge", "doctor-copy", "doctor-list", "doctor-summary",
-  "doctor-checked-at", "doctor-fix-title", "doctor-fix-summary", "doctor-fix-copy", "doctor-repair-list", "doctor-repair-result", "update-title", "update-badge", "update-copy", "update-version", "update-checked-at",
+  "doctor-checked-at", "doctor-fix-title", "doctor-fix-summary", "doctor-fix-copy", "doctor-repair-list", "doctor-repair-result", "update-title", "update-badge", "update-copy", "update-version", "update-target-version", "update-checked-at",
   "update-main-current", "update-main-target", "update-main-distance", "update-main-summaries",
   "check-update-button", "install-update-button", "root-count-label", "dirty-state", "project-list",
   "default-project-select", "workspace-project-select", "downloads-root-select",
@@ -1073,6 +1073,21 @@ function renderSidebarUpdateNotice(update: UiRemoteData, main: UiRemoteData, mai
   }
 }
 
+// Only the optional details panel waits for the initial update/service reads.
+let startupDetailsPending = true;
+let startupUpdatePending = true;
+let startupUpdateRequested = false;
+
+function renderTargetUpdateVersion(version: UiRemoteData, sha: UiRemoteData, visible: boolean) {
+  const target = $("update-target-version");
+  const shortSha = shortUpdateSha(sha);
+  const verifiedVersion = typeof version === "string" && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(version) ? version : null;
+  target.hidden = !visible || (!verifiedVersion && !shortSha);
+  if (!target.hidden) setText(target.id, verifiedVersion
+    ? `Target version ${verifiedVersion}${shortSha ? ` - ${shortSha}` : ""}`
+    : `Target SHA ${shortSha}`);
+}
+
 function renderUpdate() {
   const update = state.update || {};
   const main = update.main || {};
@@ -1085,6 +1100,20 @@ function renderUpdate() {
   const current = update.currentVersion || state.status?.server?.version || null;
 
   renderSidebarUpdateNotice(update, main, mainChannel);
+  renderTargetUpdateVersion(null, null, false);
+  if (!state.update) {
+    mainMeta.hidden = true;
+    setText("update-version", current ? `Current version ${current}` : "Current version —");
+    setText("update-checked-at", "Not checked yet");
+    setText("update-title", startupUpdatePending ? "Loading update status…" : "Unable to check for updates");
+    setText("update-copy", startupUpdatePending ? "Looking for updates." : "Please try again later.");
+    setBadge("update-badge", startupUpdatePending ? "Checking" : "Check unavailable", "neutral");
+    checkButton.disabled = startupUpdatePending || state.updateBusy;
+    checkButton.textContent = localizeUiText(startupUpdatePending || state.updateBusy ? "Checking…" : "Check for updates");
+    installButton.hidden = true;
+    installButton.disabled = true;
+    return;
+  }
   const factory = update.factory?.mode === "factory-source" ? update.factory : null;
   if (factory) {
     const busy = state.updateBusy || state.updateApplyBusy || factory.applying;
@@ -1093,7 +1122,8 @@ function renderUpdate() {
     const currentSha = shortUpdateSha(factory.currentSha);
     const targetSha = shortUpdateSha(factory.targetSha);
     mainMeta.hidden = true;
-    setText("update-version", `Factory · ${currentSha || "unknown"}`);
+    setText("update-version", `Factory · ${current || "unknown"}${currentSha ? ` - ${currentSha}` : ""}`);
+    renderTargetUpdateVersion(factory.targetVersion, factory.targetSha, available || pending || Boolean(factory.applying));
     setText("update-checked-at", "Local Source checkout · no public update channel");
     if (pending || state.updateApplyBusy) {
       setText("update-title", "Updating Factory");
@@ -1129,6 +1159,7 @@ function renderUpdate() {
     const updateAvailable = main.state === "behind" && main.applyAvailable === true && !main.applyError;
     if (runningVersion) setText("sidebar-version", `${runningVersion}${runningSha ? ` - ${runningSha}` : ""}`);
     mainMeta.hidden = true;
+    renderTargetUpdateVersion(main.version, main.targetSha, main.state === "behind" || pending);
     setText("update-version", current ? `Equinox Local ${current}${runningSha ? ` - ${runningSha}` : ""}` : "Version unavailable");
     setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
     if (pending) {
@@ -1176,6 +1207,7 @@ function renderUpdate() {
     setText("update-checked-at", main.checkedAt ? `Checked ${formatDate(main.checkedAt)}` : "Not checked yet");
     setText("update-main-current", currentSha ? `Current SHA ${currentSha}` : "Current SHA —");
     setText("update-main-target", targetSha ? `Target SHA ${targetSha}` : "Target SHA —");
+    renderTargetUpdateVersion(main.version || main.targetVersion, main.targetSha, main.state === "behind" || Boolean(main.restartScheduledFor));
     // GitHub compares enumerate *every* ancestor commit, including docs-only
     // commits that never produced an admitted snapshot. They are not separate
     // available updates. Present only the exact tested/published snapshot SHA.
@@ -2045,6 +2077,11 @@ function createWebFileTransferCard() {
 function renderIntegrations() {
   const serviceList = $("local-service-list");
   const connectionList = $("integration-list");
+  if (startupDetailsPending) {
+    serviceList.textContent = localizeUiText("Loading service details…");
+    connectionList.replaceChildren();
+    return;
+  }
   const browser = state.status?.browser || {};
   const peekaboo = state.status?.peekaboo || {};
   const agentBrowser = browser.contexts?.agent || {};
@@ -2918,8 +2955,8 @@ async function runFullDoctorChecks() {
 // The packaged Electron window can be ready before its owned runtime has
 // published the private CLI socket. Retry only the initial read-only hydration,
 // never a mutation, and leave manual Refresh available after the bounded wait.
-const INITIAL_IPC_RETRY_DELAY_MS = 1_500;
-const INITIAL_IPC_MAX_RETRIES = 40;
+const INITIAL_IPC_RETRY_DELAY_MS = 500;
+const INITIAL_IPC_MAX_RETRIES = 120;
 function isTransientStartupIpcError(error: unknown): boolean {
   return /\b(?:ENOENT|ECONNREFUSED|ECONNRESET)\b/u.test(
     error instanceof Error ? error.message : String(error),
@@ -2940,21 +2977,36 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
     // Probe the authenticated runtime once before initial hydration. Do not
     // fan out thirteen failed socket connections on every startup retry.
     const initialHealth = initial ? await requestJson("/api/v1/health") : null;
-    const [health, status, config, activity, tasks, update, onboarding, doctor, doctorRepairs, peekaboo, telegram, webFileTransfer, httpProfiles] = await Promise.all([
-      initialHealth ?? requestJson("/api/v1/health"),
-      requestJson("/api/v1/status"),
-      requestJson("/api/v1/config"),
-      requestJson("/api/v1/activity").catch(() => ({ events: [] })),
-      requestJson("/api/v1/tasks").catch(() => null),
-      requestJson("/api/v1/update"),
-      requestJson("/api/v1/onboarding"),
+    const readTelegram = () => requestJson("/api/v1/integrations/telegram").catch(() => null);
+    const readUpdate = () => requestJson("/api/v1/update").catch(error => {
+      if (!initial) throw error;
+      return null;
+    });
+    const readDetails = (telegramRead = readTelegram()) => Promise.all([
       initial ? Promise.resolve({ doctor: null }) : requestJson("/api/v1/doctor").catch(() => ({ doctor: null })),
       initial ? Promise.resolve({ repairs: null }) : requestJson("/api/v1/doctor/repairs").catch(() => ({ repairs: null })),
       requestJson("/api/v1/integrations/peekaboo").catch(() => ({ peekaboo: null })),
-      requestJson("/api/v1/integrations/telegram").catch(() => ({ telegram: null })),
+      telegramRead,
       requestJson("/api/v1/files/import-settings").catch(() => ({ webFileTransfer: null })),
       requestJson("/api/v1/integrations/http-profiles").catch(() => ({ httpProfiles: null })),
     ]);
+    // Manual Refresh retains its parallel, full-snapshot behavior. At startup
+    // the optional service/update reads begin only after the workspace paints.
+    const [[health, status, config, activity, tasks], manualDetails] = await Promise.all([
+      Promise.all([
+        initialHealth ?? requestJson("/api/v1/health"),
+        requestJson("/api/v1/status"),
+        requestJson("/api/v1/config"),
+        requestJson("/api/v1/activity").catch(() => ({ events: [] })),
+        requestJson("/api/v1/tasks").catch(() => null),
+      ]),
+      initial ? Promise.resolve(null) : Promise.all([readUpdate(), readDetails()]),
+    ]);
+    // The status endpoint already reconciles onboarding against the exact
+    // browser connection. Only older attached backends need the fallback read.
+    const onboarding = status.status?.onboarding ?? (await requestJson("/api/v1/onboarding")).onboarding;
+    const setupNeedsTelegram = initial && onboarding?.available === true && onboarding.setupComplete !== true;
+    const initialTelegramRead = setupNeedsTelegram ? readTelegram() : undefined;
     state.health = health;
     state.status = status.status;
     state.turnBudget = status.status?.turnBudget || null;
@@ -2970,8 +3022,36 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
     state.revision = config.revision;
     state.activity = Array.isArray(activity.events) ? activity.events : [];
     reconcileLiveTasks(tasks?.tasks, taskReadGeneration);
-    state.update = update.update || null;
-    state.onboarding = onboarding.onboarding || null;
+    state.onboarding = onboarding || null;
+    if (initialTelegramRead) state.telegram = (await initialTelegramRead)?.telegram || null;
+    if (!state.browserSettingsDirty) state.browserDraft = null;
+    state.restartRequired = false;
+    markClean();
+    if (initial) {
+      // The authenticated runtime and onboarding gate are ready. Reveal the
+      // actual workspace before update, desktop and optional service checks.
+      renderAll();
+      document.body.classList.remove("control-loading");
+      state.lastRefreshedAt = new Date();
+      renderLastRefreshed();
+      // Let the browser paint the usable workspace before background work.
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+    }
+    const initialUpdateRead = initial ? readUpdate().then(update => {
+      if (update?.update && !state.updateBusy && !state.updateApplyBusy) state.update = update.update;
+      startupUpdatePending = false;
+      renderUpdate();
+      renderDashboard();
+      if (startupUpdateRequested) {
+        startupUpdateRequested = false;
+        if ($("update-dialog").open) void checkForUpdates();
+      }
+    }) : null;
+    const [doctor, doctorRepairs, peekaboo, telegram, webFileTransfer, httpProfiles] = manualDetails
+      ? manualDetails[1] : await readDetails(initialTelegramRead);
+    if (manualDetails && !state.updateBusy && !state.updateApplyBusy) state.update = manualDetails[0]?.update || null;
+    // Do not overwrite live first-time pairing state with its earlier read.
+    if (!initialTelegramRead && !state.integrationBusy && !state.telegramPairingPollBusy) state.telegram = telegram?.telegram || null;
     state.doctor = doctor.doctor || null;
     state.doctorRepairs = doctorRepairs.repairs || null;
     if (peekaboo.peekaboo) {
@@ -2980,13 +3060,18 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
         peekaboo: peekaboo.peekaboo,
       };
     }
-    state.telegram = telegram.telegram || null;
     state.webFileTransfer = webFileTransfer.webFileTransfer || null;
     state.httpProfiles = httpProfiles.httpProfiles || null;
-    if (!state.browserSettingsDirty) state.browserDraft = null;
-    state.restartRequired = false;
-    markClean();
-    renderAll();
+    startupDetailsPending = false;
+    if (initial) {
+      // Do not rebuild unrelated editable forms after the user can interact.
+      renderDashboard();
+      renderUpdate();
+      renderIntegrations();
+      renderDoctor();
+      renderUninstall();
+      await initialUpdateRead;
+    } else renderAll();
     document.body.classList.remove("control-loading");
     state.lastRefreshedAt = new Date();
     renderLastRefreshed();
@@ -3010,9 +3095,10 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
   }
 }
 
-function autoRefreshAllowed() {
+function autoRefreshAllowed(live = false) {
   return !document.hidden && !document.body.classList.contains("control-loading")
-    && !state.restartRequired && !state.restartBusy && !state.refreshAllBusy;
+    && !state.restartRequired && !state.restartBusy
+    && (!state.refreshAllBusy || (live && (startupDetailsPending || startupUpdatePending)));
 }
 
 function reconcileLiveTasks(nextTasks: UiRemoteData, readGeneration: number) {
@@ -3026,17 +3112,17 @@ function reconcileLiveTasks(nextTasks: UiRemoteData, readGeneration: number) {
 }
 
 async function refreshLiveState() {
-  if (!autoRefreshAllowed() || state.autoRefreshLiveBusy || state.onboardingBusy) return;
+  if (!autoRefreshAllowed(true) || state.autoRefreshLiveBusy || state.onboardingBusy) return;
   state.autoRefreshLiveBusy = true;
   const taskReadGeneration = state.taskReadGeneration;
   try {
-    const [health, status, activity, tasks, onboarding] = await Promise.all([
+    const [health, status, activity, tasks] = await Promise.all([
       requestJson("/api/v1/health", { backgroundRefresh: true }),
       requestJson("/api/v1/status", { backgroundRefresh: true }),
       requestJson("/api/v1/activity", { backgroundRefresh: true }).catch(() => null),
       requestJson("/api/v1/tasks", { backgroundRefresh: true }).catch(() => null),
-      requestJson("/api/v1/onboarding", { backgroundRefresh: true }).catch(() => null),
     ]);
+    const onboarding = status.status?.onboarding ?? (await requestJson("/api/v1/onboarding", { backgroundRefresh: true }).catch(() => null))?.onboarding;
     state.health = health;
     const previousStatus = state.status || {};
     state.status = {
@@ -3060,7 +3146,7 @@ async function refreshLiveState() {
     }
     if (activity?.events) state.activity = activity.events;
     if (tasks?.tasks) reconcileLiveTasks(tasks.tasks, taskReadGeneration);
-    if (onboarding?.onboarding) state.onboarding = onboarding.onboarding;
+    if (onboarding) state.onboarding = onboarding;
     renderDashboard();
     if (state.activeSection === "setup" || state.activeSection === "dashboard") renderOnboarding();
     if (state.activeSection === "tasks") renderTasks();
@@ -3729,6 +3815,16 @@ async function deleteHttpProfileFromControlCenter(profile: UiRemoteData) {
 
 
 async function checkForUpdates() {
+  if (startupUpdatePending) { startupUpdateRequested = true; return; }
+  if (state.updateBusy) return;
+  if (!state.update) {
+    state.updateBusy = true;
+    renderUpdate();
+    try { state.update = (await requestJson("/api/v1/update")).update || null; }
+    catch (error) { showError(error); }
+    finally { state.updateBusy = false; renderUpdate(); }
+    if (!state.update) return;
+  }
   const factoryMode = state.update?.factory?.mode === "factory-source";
   const mainChannel = (["source", "managed-source"].includes(state.update?.installationKind) ||
     (state.update?.installationKind === "managed-main" && state.update?.main?.mode === "signed-native")) &&
