@@ -111,16 +111,40 @@ if(process.isMainFrame&&location.origin==="https://chatgpt.com"){
             getComputedStyle(node).visibility === "visible" &&
             node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
     }
-    function ownerOf(node) {
+    const localRoutes = new Map();
+    function ownerOf(node, admitLocal = false) {
         const conversation = /\/c\/([a-f0-9-]{36})\/?$/iu.exec(location.pathname)?.[1];
         const turn = node.closest("[data-turn-key]"), scope = node.closest("[data-content-search-turn-key]");
         const transcript = node.closest("[data-chatgpt-conversation-selection-target]");
         const user = turn?.querySelectorAll('[data-chatgpt-search-unit-key$=":user"]');
         const turnId = turn?.getAttribute("data-turn-key"), scopeId = scope?.getAttribute("data-content-search-turn-key");
-        if (!conversation || transcript?.getAttribute("data-chatgpt-conversation-selection-target") !== conversation ||
-            !turnId || !scopeId || !messageId.test(turnId) || !messageId.test(scopeId) || !turn?.contains(scope ?? null) ||
-            user?.length !== 1 || user[0]?.getAttribute("data-chatgpt-search-message-ids") !== turnId)
+        if (!conversation || !transcript || !turnId || !scopeId || !messageId.test(turnId) || !messageId.test(scopeId) ||
+            !turn?.contains(scope ?? null) || user?.length !== 1 ||
+            user[0]?.getAttribute("data-chatgpt-search-message-ids") !== turnId)
             return null;
+        const transcriptId = transcript.getAttribute("data-chatgpt-conversation-selection-target");
+        if (transcriptId !== conversation) {
+            // Newly created ChatGPT conversations can keep their local render
+            // identity for the lifetime of the document, even after the canonical
+            // route is assigned. Accept only the observed local UUID namespace
+            // in a unique transcript with consistent selection ownership.
+            if (!transcriptId?.startsWith("local-chatgpt:") ||
+                !messageId.test(transcriptId.slice("local-chatgpt:".length)) ||
+                document.querySelectorAll("[data-chatgpt-conversation-selection-target]").length !== 1 ||
+                !transcript.contains(turn))
+                return null;
+            const selections = turn.querySelectorAll("[data-chatgpt-selection-conversation-id]");
+            if (!selections.length || [...selections].some(e => e.getAttribute("data-chatgpt-selection-conversation-id") !== transcriptId))
+                return null;
+            const previous = localRoutes.get(transcriptId);
+            if (previous !== undefined && previous !== conversation)
+                return null;
+            if (previous === undefined) {
+                if (!admitLocal || localRoutes.size >= 240)
+                    return null;
+                localRoutes.set(transcriptId, conversation);
+            }
+        }
         return JSON.stringify([conversation, turnId, scopeId]);
     }
     const nodeRows = new WeakMap();
@@ -130,23 +154,28 @@ if(process.isMainFrame&&location.origin==="https://chatgpt.com"){
             const used = new Set();
             const nodes = turn.querySelectorAll('[data-spacing="activity"] ' + proseSelector);
             for (const node of nodes) {
-                // The observed public live commentary roots have no final-message
-                // selection identity. Ignore actual final responses, tool portals,
-                // activity summary headers, hidden roots and nested markdown.
-                if (node.closest(retainedSelector + ', [data-chatgpt-selection-message-id], [data-response-body] > [data-mcp-app-portal-target], [class~="group/activity-header"]') ||
+                // Some public commentary roots gain a selection identity; accept
+                // it only when the same message was explicitly classified public.
+                // Ignore final responses, tool portals, headers and hidden roots.
+                if (node.closest(retainedSelector + ', [data-response-body] > [data-mcp-app-portal-target], [class~="group/activity-header"]') ||
                     node.parentElement?.closest(proseSelector) || !visible(node))
                     continue;
                 const unit = node.closest("[data-chatgpt-search-message-ids]");
-                const rawId = unit?.getAttribute("data-chatgpt-search-message-ids") ?? "";
+                const selection = node.closest("[data-chatgpt-selection-message-id]");
+                const rawId = selection?.getAttribute("data-chatgpt-selection-message-id") ??
+                    unit?.getAttribute("data-chatgpt-search-message-ids") ?? "";
                 const providerId = publicIds.has(rawId) && !revoked.has(rawId) ? rawId : undefined;
+                if (selection && !providerId)
+                    continue;
                 // The provider alternates between a live message unit and a direct
                 // public prose child of its activity stack. No arbitrary DOM text.
                 if (!node.parentElement?.matches('[data-spacing="activity"]') &&
+                    !(providerId && selection && selection.querySelectorAll(proseSelector).length === 1) &&
                     !(unit && unit.querySelectorAll(proseSelector).length === 1 && messageId.test(rawId)))
                     continue;
                 if (rawId && revoked.has(rawId))
                     continue;
-                const owner = ownerOf(node), text = node.innerText.trim();
+                const owner = ownerOf(node, true), text = node.innerText.trim();
                 if (!owner || !text || text.length > 12000)
                     continue;
                 const rows = [...saved.values()].filter(r => r.owner === owner).sort((a, b) => a.order - b.order);
@@ -270,7 +299,7 @@ if(process.isMainFrame&&location.origin==="https://chatgpt.com"){
     }
     const progressObserver = new MutationObserver(scheduleProgress);
     progressObserver.observe(document, { subtree: true, childList: true, characterData: true, attributes: true,
-        attributeFilter: ["data-chatgpt-search-message-ids", "data-turn-key", "data-content-search-turn-key", "data-chatgpt-conversation-selection-target", "data-talvt-turn-state", "data-spacing", "data-markdown-text-style", "aria-expanded", "aria-hidden", "hidden"] });
+        attributeFilter: ["data-chatgpt-search-message-ids", "data-turn-key", "data-content-search-turn-key", "data-chatgpt-conversation-selection-target", "data-chatgpt-selection-conversation-id", "data-chatgpt-selection-message-id", "data-talvt-turn-state", "data-spacing", "data-markdown-text-style", "aria-expanded", "aria-hidden", "hidden"] });
     window.addEventListener("pagehide", flush);
     window.addEventListener("storage", event => {
         if (event.key !== STORAGE_KEY && event.key !== null)
