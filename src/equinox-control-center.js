@@ -159,6 +159,7 @@ const state = {
     taskDraft: null,
     taskDraftDirty: false,
     taskBusy: false,
+    taskReadGeneration: 0, // Reject list reads spanning an explicit task action.
     update: null,
     updateBusy: false,
     updateApplyBusy: false,
@@ -2527,8 +2528,16 @@ function renderTasks() {
     setText("task-detail-meta", `Checkpoint ${task.checkpointRevision} · Updated ${formatDate(task.updatedAt)}`);
     setText("task-continuation-state", continuation.label);
     setText("task-continuation-target", taskTargetLabel(current?.continuation ?? task.continuation));
-    $("task-draft-note").hidden = Boolean(current) || !state.taskDraftDirty;
-    setText("task-draft-note", "This task is no longer in the list. You can copy your draft or switch to another task.");
+    const revisionChanged = Boolean(current && current.checkpointRevision !== task.checkpointRevision);
+    $("task-draft-panel").hidden = !state.taskDraftDirty;
+    $("task-discard-draft").disabled = state.taskBusy;
+    setText("task-draft-note", !current
+        ? "This task is no longer in the list. You can copy your draft or switch to another task."
+        : revisionChanged
+            ? "A newer checkpoint is available. Copy any edits you want to keep, then discard the draft to load the latest checkpoint."
+            : current.status !== "active"
+                ? "This task has ended. Your unsaved draft is still here."
+                : "Unsaved changes are kept here until you save or discard them.");
     const recoveryPanel = $("task-recovery-panel");
     recoveryPanel.hidden = !recovery;
     if (recovery) {
@@ -2556,7 +2565,7 @@ function renderTasks() {
     const editable = current?.status === "active" && !state.taskBusy && !recovery?.blocking;
     for (const id of ["task-title-input", "task-objective-input", "task-completed-input", "task-next-input", "task-references-input"])
         $(id).readOnly = !editable;
-    $("task-save-button").disabled = !editable;
+    $("task-save-button").disabled = !editable || revisionChanged;
     $("task-complete-button").disabled = !editable || state.taskDraftDirty;
     $("task-cancel-button").disabled = !editable || state.taskDraftDirty;
     const deletable = task.status === "completed" || task.status === "cancelled";
@@ -2581,7 +2590,20 @@ async function selectTask(taskId) {
         if (choice === "save" && !await saveSelectedTask())
             return;
     }
+    await loadSelectedTask(taskId);
+}
+async function discardSelectedTaskDraft() {
+    if (!state.taskDraftDirty || state.taskBusy || !state.selectedTaskId)
+        return;
+    const taskId = state.selectedTaskId;
+    const choice = await chooseDraftAction("Discard this draft and load the latest saved checkpoint?", "Save and switch", false);
+    if (choice !== "discard" || state.taskBusy || state.selectedTaskId !== taskId)
+        return;
+    await loadSelectedTask(taskId);
+}
+async function loadSelectedTask(taskId) {
     state.taskBusy = true;
+    state.taskReadGeneration += 1;
     let loaded = false;
     renderTasks();
     try {
@@ -2597,6 +2619,7 @@ async function selectTask(taskId) {
     }
     finally {
         state.taskBusy = false;
+        state.taskReadGeneration += 1;
         renderTasks();
         if (loaded)
             showTaskDetail(true);
@@ -2608,6 +2631,10 @@ async function saveSelectedTask(event) {
     const current = currentTaskRecord();
     if (!task || current?.status !== "active" || state.taskBusy || freshResumeRecoveryPresentation(current.freshResume)?.blocking)
         return false;
+    if (current.checkpointRevision !== task.checkpointRevision) {
+        renderTasks();
+        return false;
+    }
     let references;
     try {
         references = parseTaskReferences($("task-references-input").value);
@@ -2625,6 +2652,7 @@ async function saveSelectedTask(event) {
         references,
     };
     state.taskBusy = true;
+    state.taskReadGeneration += 1;
     renderTasks();
     try {
         const result = await mutationJson(`/api/v1/tasks/${encodeURIComponent(task.taskId)}`, "PUT", payload);
@@ -2639,6 +2667,7 @@ async function saveSelectedTask(event) {
     }
     finally {
         state.taskBusy = false;
+        state.taskReadGeneration += 1;
         renderTasks();
     }
 }
@@ -2649,6 +2678,7 @@ async function deleteSelectedTask() {
     if (!window.confirm(localizeUiText("Delete this task permanently? This cannot be undone.")))
         return;
     state.taskBusy = true;
+    state.taskReadGeneration += 1;
     renderTasks();
     try {
         await mutationJson(`/api/v1/tasks/${encodeURIComponent(task.taskId)}/delete`, "POST", {});
@@ -2667,6 +2697,7 @@ async function deleteSelectedTask() {
     }
     finally {
         state.taskBusy = false;
+        state.taskReadGeneration += 1;
         renderTasks();
     }
 }
@@ -2694,6 +2725,7 @@ async function runTaskAction(action) {
     if (!paths[action])
         return;
     state.taskBusy = true;
+    state.taskReadGeneration += 1;
     renderTasks();
     try {
         const result = await mutationJson(`/api/v1/tasks/${encodeURIComponent(task.taskId)}/${paths[action]}`, "POST", {});
@@ -2711,6 +2743,7 @@ async function runTaskAction(action) {
     }
     finally {
         state.taskBusy = false;
+        state.taskReadGeneration += 1;
         renderTasks();
     }
 }
@@ -2770,6 +2803,7 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
     if (state.restartRequired || state.refreshAllBusy)
         return;
     state.refreshAllBusy = true;
+    const taskReadGeneration = state.taskReadGeneration;
     clearError();
     $("refresh-button").disabled = true;
     try {
@@ -2802,7 +2836,7 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
         state.config = clone(config.config);
         state.revision = config.revision;
         state.activity = Array.isArray(activity.events) ? activity.events : [];
-        reconcileLiveTasks(tasks?.tasks);
+        reconcileLiveTasks(tasks?.tasks, taskReadGeneration);
         state.update = update.update || null;
         state.onboarding = onboarding.onboarding || null;
         state.doctor = doctor.doctor || null;
@@ -2844,8 +2878,8 @@ async function refreshAll({ initial = false, startupRetry = 0 } = {}) {
 function autoRefreshAllowed() {
     return !document.hidden && !state.restartRequired && !state.restartBusy && !state.refreshAllBusy;
 }
-function reconcileLiveTasks(nextTasks) {
-    if (state.taskBusy || !Array.isArray(nextTasks))
+function reconcileLiveTasks(nextTasks, readGeneration) {
+    if (state.taskBusy || readGeneration !== state.taskReadGeneration || !Array.isArray(nextTasks))
         return;
     state.tasks = clone(nextTasks);
     if (state.taskDraftDirty)
@@ -2859,6 +2893,7 @@ async function refreshLiveState() {
     if (!autoRefreshAllowed() || state.autoRefreshLiveBusy || state.onboardingBusy)
         return;
     state.autoRefreshLiveBusy = true;
+    const taskReadGeneration = state.taskReadGeneration;
     try {
         const [health, status, activity, tasks, onboarding] = await Promise.all([
             requestJson("/api/v1/health", { backgroundRefresh: true }),
@@ -2891,7 +2926,7 @@ async function refreshLiveState() {
         if (activity?.events)
             state.activity = activity.events;
         if (tasks?.tasks)
-            reconcileLiveTasks(tasks.tasks);
+            reconcileLiveTasks(tasks.tasks, taskReadGeneration);
         if (onboarding?.onboarding)
             state.onboarding = onboarding.onboarding;
         renderDashboard();
@@ -3965,8 +4000,9 @@ async function toggleAgentControl() {
         const activity = await requestJson("/api/v1/activity").catch(() => null);
         if (activity?.events)
             state.activity = activity.events;
+        const taskReadGeneration = state.taskReadGeneration;
         const tasks = await requestJson("/api/v1/tasks").catch(() => null);
-        reconcileLiveTasks(tasks?.tasks);
+        reconcileLiveTasks(tasks?.tasks, taskReadGeneration);
     }
     catch (error) {
         showError(error);
@@ -4306,11 +4342,13 @@ function bindEvents() {
         }
     });
     $("task-form").addEventListener("submit", saveSelectedTask);
+    $("task-discard-draft").addEventListener("click", () => void discardSelectedTaskDraft());
     for (const id of ["task-title-input", "task-objective-input", "task-completed-input", "task-next-input", "task-references-input"]) {
         $(id).addEventListener("input", () => {
+            if (state.taskDraftDirty)
+                return;
             state.taskDraftDirty = true;
-            $("task-complete-button").disabled = true;
-            $("task-cancel-button").disabled = true;
+            renderTasks();
         });
     }
     $("task-cancel-continuation-button").addEventListener("click", () => void runTaskAction("continuation"));

@@ -420,6 +420,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .task-recovery-panel > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .task-recovery-code { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .task-recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.task-draft-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-top: 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
+.task-draft-panel[hidden] { display: none; }
+.task-draft-panel p { flex: 1 1 200px; margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; }
 .task-editor-fields { display: grid; gap: 15px; padding-top: 17px; }
 .task-editor-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .task-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }

@@ -565,7 +565,6 @@
               <p>Tasks appear here after an agent saves a checkpoint.</p>
             </div>
             <form id="task-form" hidden>
-              <p id="task-draft-note" class="readonly-note" role="status" hidden></p>
               <div class="task-detail-heading">
                 <div><div class="task-heading-line"><h3 id="task-detail-title" tabindex="-1">Task</h3><span id="task-status-badge" class="badge neutral">Active</span></div><code id="task-detail-id" class="task-detail-id">task—</code><p id="task-detail-meta" class="task-detail-meta">Checkpoint — · Updated —</p></div>
                 <div class="task-continuation-summary"><span>Auto Continue</span><strong id="task-continuation-state">Not armed</strong><small id="task-continuation-target">No browser target</small></div>
@@ -580,6 +579,10 @@
                   <button id="task-abandon-fresh-resume-button" class="button secondary" type="button">Clear blocked transition</button>
                 </div>
               </section>
+              <div id="task-draft-panel" class="task-draft-panel" hidden>
+                <p id="task-draft-note" role="status"></p>
+                <button id="task-discard-draft" class="button secondary compact" type="button">Discard draft</button>
+              </div>
               <div class="task-editor-fields">
                 <label class="field"><span>Title</span><input id="task-title-input" type="text" maxlength="160" autocomplete="off"></label>
                 <label class="field"><span>Objective</span><textarea id="task-objective-input" rows="5"></textarea></label>
