@@ -794,6 +794,8 @@ function decorateProviderIdentity(update, generation) {
     const messageSelector = [userUnit, userMessage, assistantMessage, responseBody].join(",");
     const greetingSelector = '[class*="Greeting-"]';
     const headingSelector = 'h1,[role="heading"][aria-level="1"]';
+    const formSelector = "form[data-chatgpt-composer]";
+    const homeLayoutSelector = '[class~="group/home-composer-layout"]';
     const homeChangeSelector = [greetingSelector, headingSelector, "form", "[data-homepage-takeover]"].join(",");
     // Provider conversation routes sometimes replace the app-shell main with
     // an ordinary <main>. Keep route/identity guards in syncSurface instead of
@@ -813,6 +815,7 @@ function decorateProviderIdentity(update, generation) {
     let homeChanged = true;
     let greeting = null;
     let greetingRegion = null;
+    const homeRetries = [];
     function clearMark(element) {
         for (const attribute of ["role", "author", "initial", "greeting", "greeting-heading", "home"])
             element.removeAttribute("data-equinox-" + attribute);
@@ -891,18 +894,19 @@ function decorateProviderIdentity(update, generation) {
         // and can stay on / for temporary chats. Trust the actual transcript.
         if (!homeChanged && (threadRecognized || changed.size === 0))
             return;
-        const formSelector = 'form[data-chatgpt-composer]';
-        const forms = main?.querySelectorAll(formSelector);
-        const form = forms?.length === 1 ? forms[0] : null;
-        const home = profile && form?.matches('[data-composer-placement="home"]')
-            && !main?.querySelector('[data-homepage-takeover]');
         const temporary = new URLSearchParams(location.search).get("temporary-chat") === "true";
         const visible = (element) => element.getClientRects().length > 0 &&
             getComputedStyle(element).visibility === "visible" &&
-            !element.closest('[hidden],[aria-hidden="true"],dialog,[role="dialog"]');
+            !element.closest('[hidden],[aria-hidden="true"],dialog,[role="dialog"],nav,aside');
+        // Home can keep the last transcript mounted and render the greeting
+        // as a sibling of the composer. Resolve the active form and heading
+        // from the visible signed-in surface instead of the transcript's root.
+        const forms = [...document.querySelectorAll(formSelector)].filter(element => visible(element) && !element.closest("[data-homepage-takeover]") &&
+            (element.matches('[data-composer-placement="home"]') || element.closest(homeLayoutSelector)));
+        const home = Boolean(profile && forms.length === 1);
         const interactive = 'button,a,input,textarea,select,[role="button"],[contenteditable="true"]';
         const isPlainGreeting = (element) => visible(element) && !element.querySelector(interactive);
-        const greetingScope = home && !temporary ? form?.closest('[class~="group/home-composer-layout"]') ?? main : null;
+        const greetingScope = home && !temporary ? document : null;
         const primaryHeadings = greetingScope ? [...greetingScope.querySelectorAll(greetingSelector)].filter(element => Boolean(element.closest('[class*="GreetingRegion-"]') && isPlainGreeting(element))) : [];
         const alternateHeadings = primaryHeadings.length !== 1 && greetingScope
             ? [...greetingScope.querySelectorAll(headingSelector)].filter(isPlainGreeting) : [];
@@ -1089,6 +1093,8 @@ function decorateProviderIdentity(update, generation) {
         observer.disconnect();
         if (frame)
             cancelAnimationFrame(frame);
+        for (const timer of homeRetries)
+            window.clearTimeout(timer);
         for (const element of marks)
             clearMark(element);
         for (const name of ["surface", "home-style", "agent-photo", "human-photo"])
@@ -1097,6 +1103,19 @@ function decorateProviderIdentity(update, generation) {
             root.style.removeProperty("--eq-" + name);
     };
     flush();
+    if (homeRoute && !greeting) {
+        // The first DOM commit may still be showing the previous page. These
+        // bounded retries cover provider hydration that changes visibility only.
+        for (const delay of [150, 600, 1_500, 3_000]) {
+            homeRetries.push(window.setTimeout(() => {
+                if (greeting || world.__equinoxDecoration !== decoration)
+                    return;
+                homeChanged = shellChanged = true;
+                if (!frame)
+                    frame = requestAnimationFrame(flush);
+            }, delay));
+        }
+    }
 }
 export function createEmbeddedChat(win, initialLanguage = "en", initialIdentity = { name: "", avatar: null }, initialAccent = "#8B6CF0", composition = "portrait", onLoadState = () => { }) {
     let language = initialLanguage;
