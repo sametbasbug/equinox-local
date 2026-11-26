@@ -8,6 +8,17 @@ export function localeForLanguage(language) {
 }
 const TR_UI = Object.freeze({
     "Plugins": "Eklentiler",
+    "Agent memory search": "Ajan hafıza araması",
+    "Allow ChatGPT through Equinox Local to receive public and internal memory matches. Private and untrusted notes are excluded. Enabling prepares the verified local engine and refreshes the index.": "ChatGPT'nin Equinox Local üzerinden açık ve dahili hafıza eşleşmelerini almasına izin ver. Özel ve güvenilmeyen notlar hariç tutulur. Etkinleştirme doğrulanmış yerel motoru hazırlar ve indeksi yeniler.",
+    "Agent memory search requires the supported engine version. Your existing vault is unchanged.": "Ajan hafıza araması desteklenen motor sürümünü gerektirir. Mevcut kasan değiştirilmedi.",
+    "Enable search": "Aramayı etkinleştir",
+    "Disable search": "Aramayı kapat",
+    "Refresh index": "İndeksi yenile",
+    "Memory search enabled": "Hafıza araması etkin",
+    "Memory search disabled": "Hafıza araması kapalı",
+    "Index refreshed": "İndeks yenilendi",
+    "Index refreshed with warnings": "İndeks uyarılarla yenilendi",
+    "Automatic context and memory writing are in development. Nothing is sent to ChatGPT unless an authorized memory tool is used.": "Otomatik bağlam ve hafıza yazımı geliştiriliyor. Yetkili bir hafıza aracı kullanılmadıkça ChatGPT'ye veri gönderilmez.",
     "Extend your workspace": "Çalışma alanını genişlet",
     "Optional integrations, curated for Equinox Local. Connect only what you need.": "Equinox Local için seçilmiş isteğe bağlı entegrasyonlar. Yalnızca ihtiyacın olanları bağla.",
     "Persistent memory, shared knowledge and continuity across your AI agents.": "Yapay zekâ ajanların arasında kalıcı hafıza, ortak bilgi ve süreklilik.",

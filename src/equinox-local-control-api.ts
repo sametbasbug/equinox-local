@@ -34,7 +34,7 @@ type ControlApiOptions={
   confirmTelegramPairing?:Callback|null;cancelTelegramPairing?:Callback|null;testTelegram?:Callback|null;
   disconnectTelegram?:Callback|null;getHttpProfiles?:Callback|null;setHttpProfileManagement?:Callback|null;
   upsertHttpProfile?:Callback|null;testHttpProfile?:Callback|null;deleteHttpProfile?:Callback|null;
-  getPlugins?:Callback|null;connectBrain?:Callback|null;installBrain?:Callback|null;disconnectBrain?:Callback|null;
+  getPlugins?:Callback|null;connectBrain?:Callback|null;installBrain?:Callback|null;disconnectBrain?:Callback|null;setBrainSearch?:Callback|null;syncBrain?:Callback|null;
   recordInternalError?:Callback|null;
 };
 type MutableControlState={
@@ -345,7 +345,7 @@ export function createEquinoxLocalControlApi({
   testTelegram = null,
   disconnectTelegram = null,
   getHttpProfiles = null,
-  getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null,
+  getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null, setBrainSearch = null, syncBrain = null,
   setHttpProfileManagement = null,
   upsertHttpProfile = null,
   testHttpProfile = null,
@@ -728,6 +728,15 @@ export function createEquinoxLocalControlApi({
         state.mutationCount += 1;
         send(200, {ok:true, plugins}); return;
       }
+      if (method === "POST" && pathname === "/api/v1/plugins/brain/search-access") {
+        authorizeMutation(); const body=await readBody();
+        if(!setBrainSearch || !body || Object.keys(body).length!==1 || typeof body.enabled!=="boolean")throw badRequest("Invalid memory search preference.");
+        const plugins=await setBrainSearch(body.enabled); state.mutationCount+=1; send(200,{ok:true,plugins}); return;
+      }
+      if (method === "POST" && pathname === "/api/v1/plugins/brain/sync") {
+        authorizeMutation(); if(!syncBrain)throw badRequest("Brain index refresh is unavailable.");
+        const result=await syncBrain(); state.mutationCount+=1; send(200,{ok:true,...result}); return;
+      }
       if (method === "POST" && pathname === "/api/v1/plugins/brain/disconnect") {
         authorizeMutation();
         if (!disconnectBrain) throw badRequest("Plugin catalog is unavailable.");
@@ -1006,6 +1015,7 @@ const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
     "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
     "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
     "/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install", "/api/v1/plugins/brain/disconnect",
+    "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync",
   ]),
   PUT: new Set([
     "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",

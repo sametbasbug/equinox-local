@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+- Introduce a native Plugins workspace and connected-only Control Center settings, beginning with Equinox Brain (Powered by Avenox Beyin). Connect existing V3 vaults or install the pinned SHA-256-verified V3.17.0 upstream release into an empty folder, without deleting vault data on disconnect.
+- Add explicit opt-in local Brain indexing and bounded `brain_search` retrieval through the integrations capability. Keep private/untrusted notes excluded, preserve source citations, and discover Python 3.11+ on macOS and Windows including modern Python Install Manager installations. No automatic context or memory writing yet.
+
 - Reduce Windows cold-start work by verifying the production-signed ZIP and deriving the native-store fingerprint from the same authenticated physical file scan. All archive, path, inventory, mode, digest and selector checks remain mandatory.
 - Show a clear startup status and retry action in Control Center, and avoid repeated parallel IPC requests before the local runtime is available.
 - Accelerate native release verification on Windows and macOS using a bounded shared filesystem work queue. New Windows packages include a SHA-256 content index generated from the exact archived bytes and authenticated by the existing production-signed ZIP; startup verifies every installed file against it without decompressing the full archive again. Older archives retain exact parallel ZIP entry verification.

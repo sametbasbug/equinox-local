@@ -913,7 +913,10 @@
         <article class="panel-card brain-settings-card">
           <div class="plugin-card-header"><div class="plugin-identity"><h3>Equinox Brain</h3><p>Powered by Avenox Beyin</p></div><span id="brain-settings-status" class="badge neutral">Checking</span></div>
           <dl class="brain-settings-details"><div><dt>Memory vault</dt><dd id="brain-vault-path">—</dd></div><div><dt>Installed engine version</dt><dd id="brain-engine-version">—</dd></div></dl>
-          <p class="card-copy">Vault registration does not execute the memory engine or change other agents. Memory tools and engine management are in development.</p>
+          <div class="brain-access-panel"><div><h4>Agent memory search</h4><p>Allow ChatGPT through Equinox Local to receive public and internal memory matches. Private and untrusted notes are excluded. Enabling prepares the verified local engine and refreshes the index.</p></div><button id="brain-access" class="button secondary" type="button" disabled>Enable search</button></div>
+          <p id="brain-compatibility" class="panel-note" hidden>Agent memory search requires the supported engine version. Your existing vault is unchanged.</p>
+          <div class="brain-settings-actions"><button id="brain-sync" class="button secondary" type="button" disabled>Refresh index</button></div>
+          <p class="card-copy">Automatic context and memory writing are in development. Nothing is sent to ChatGPT unless an authorized memory tool is used.</p>
           <div class="brain-settings-actions"><button class="button secondary" type="button" data-jump-section="plugins">Back to Plugins</button><button id="brain-disconnect" class="button secondary" type="button" disabled>Disconnect</button></div>
           <p class="panel-note">Disconnecting preserves your vault and existing agent integrations.</p>
         </article>

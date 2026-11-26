@@ -24,3 +24,12 @@ Maintainer-approved direction (2026-11-27). This is the implementation plan, not
 - Each phase is independently usable or clearly identified as incomplete; do not expose unfinished actions as available. Record status here as phases land, keep README and architecture in sync.
 - Follow existing source/Factory and signed public release workflows. Native build/typecheck/static validation; no new automated tests. Inspect real UI and validate existing/new vault workflows with disposable synthetic data before touching a real shared vault.
 - Keep existing startup performance and security admission intact; no network requests or Python processes for the catalog during startup. Do not auto-publish public packages without maintainer authorization.
+
+## Implementation checkpoint (2026-11-27)
+
+- Phase 1: implemented the native catalog, top-level navigation, persistent connection state, and connected-only Brain settings navigation.
+- Phase 2: implemented existing V3 vault connection, new empty-folder installation from a pinned V3.17.0 release, Python discovery, and data-preserving disconnection. Upgrade workflow remains open.
+- Phase 3: implemented opt-in, source-backed read-only `brain_search` and manual local index refresh. Direct note reading/writing, receipts and task operations remain open. Retrieval compatibility is currently limited to V3.17.0; connecting other valid V3 vaults does not execute their code.
+- Phase 4: basic status, version, location, opt-in and refresh settings implemented. Richer upstream preferences, diagnostics, open-folder and version-update workflows remain open.
+- Phase 5: automatic lifecycle integration and controlled memory import remain open.
+- Disposable local backend exercises succeeded on macOS and Windows (including Python 3.15 discovery, install, search privacy filtering, disconnect and reconnect). Static checks, generated runtime/desktop parity and typecheck passed. Installed native UI and live MCP integration still require verification; no existing personal vault has been changed.

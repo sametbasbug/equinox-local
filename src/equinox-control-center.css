@@ -762,3 +762,9 @@ body.plugins-workspace-active .main-panel > * { max-width: 1100px; }
 .brain-settings-details dd { margin: 0; font-weight: 550; overflow-wrap: anywhere; }
 .brain-settings-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-block: 18px; }
 @media(max-width: 640px) { .plugin-navigation > p { display:none; } .plugin-card-header { flex-wrap: wrap; } }
+
+.brain-access-panel { display:flex; align-items:center; gap:18px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding-block:18px; }
+.brain-access-panel > div { flex:1; }
+.brain-access-panel h4 { margin:0 0 6px; font-size:14px; }
+.brain-access-panel p { margin:0; color:var(--muted); line-height:1.6; font-size:13px; }
+@media(max-width:640px){.brain-access-panel{flex-wrap:wrap}}

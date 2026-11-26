@@ -2928,6 +2928,11 @@ function renderPlugins() {
   $("brain-offered-version").textContent = state.plugins?.offeredVersion ? `v${state.plugins.offeredVersion}` : "—";
   $("brain-settings").hidden = !brain;
   $("brain-disconnect").disabled = !brain || busy;
+  $("brain-access").disabled = !brain || busy || (!brain.searchEnabled && !brain.searchCompatible);
+  $("brain-sync").disabled = !brain?.searchEnabled || busy || !brain.searchCompatible;
+  $("brain-compatibility").hidden = !brain || brain.searchCompatible;
+  setText("brain-access", state.brainAccessBusy ? "Working…" : brain?.searchEnabled ? "Disable search" : "Enable search");
+  setText("brain-sync", state.brainSyncBusy ? "Refreshing…" : "Refresh index");
   $("brain-install-note").hidden = !!brain;
   $("plugin-catalog-error").hidden = !state.pluginsError;
   $("plugin-catalog-error").textContent = state.pluginsError;
@@ -2971,6 +2976,23 @@ async function connectBrain(install = false) {
     showToast("Vault linked");
   } catch (error) { showError(error); }
   finally { state.pluginsBusy = false; state.brainInstalling = false; renderPlugins(); }
+}
+async function changeBrainSearch() {
+  if(state.pluginsBusy || !state.plugins?.brain)return;
+  state.pluginsBusy=true; state.brainAccessBusy=true; renderPlugins();
+  try {
+    const result=await mutationJson("/api/v1/plugins/brain/search-access","POST",{enabled:!state.plugins.brain.searchEnabled});
+    state.plugins=result.plugins; state.pluginsError="";
+    showToast(state.plugins.brain.searchEnabled ? "Memory search enabled" : "Memory search disabled");
+  } catch(error){showError(error);}
+  finally{state.pluginsBusy=false;state.brainAccessBusy=false;renderPlugins();}
+}
+async function refreshBrainIndex() {
+  if(state.pluginsBusy || !state.plugins?.brain?.searchEnabled)return;
+  state.pluginsBusy=true;state.brainSyncBusy=true;renderPlugins();
+  try { const result=await mutationJson("/api/v1/plugins/brain/sync","POST",{});state.plugins=result.plugins;showToast(result.indexStatus==="degraded"?"Index refreshed with warnings":"Index refreshed"); }
+  catch(error){showError(error);}
+  finally{state.pluginsBusy=false;state.brainSyncBusy=false;renderPlugins();}
 }
 async function disconnectBrain() {
   if (state.pluginsBusy || !state.plugins?.brain) return;
@@ -4503,6 +4525,8 @@ function bindEvents() {
   $("brain-connect").addEventListener("click", () => { void connectBrain(); });
   $("brain-install").addEventListener("click", () => { void connectBrain(true); });
   $("brain-disconnect").addEventListener("click", () => { void disconnectBrain(); });
+  $("brain-access").addEventListener("click", () => { void changeBrainSearch(); });
+  $("brain-sync").addEventListener("click", () => { void refreshBrainIndex(); });
   $("plugins-retry").addEventListener("click", () => { void refreshPlugins(); });
   $("startup-retry").addEventListener("click", () => { void refreshAll({ initial: true }); });
   $("run-doctor-button").addEventListener("click", () => { void runFullDoctorChecks(); });
