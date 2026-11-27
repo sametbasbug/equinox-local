@@ -9,6 +9,10 @@ Powered by [Avenox Beyin](https://github.com/avenoxai/avenoxbeyin), MIT. Equinox
 3. Optionally enable Assistant and/or Your Browser index refresh separately. Your Browser uses the existing Equinox Browser turn observer and honors explicit pinned conversations; Agent Browser is not a fallback. Normal and Economical profiles follow the upstream refresh cadence and context budget; Manual mode skips automatic refresh and context preparation, while explicit search stays available. Shared profile changes affect the other clients using that vault.
 4. Run diagnostics to check compatibility, Python, engine integrity and index health. Disconnecting preserves vault files and other agent integrations. For an unsupported upstream version, use the official upstream upgrade instructions and reconnect; EL does not silently migrate the shared vault.
 
+## Browser observation troubleshooting
+
+Your Browser automatic index refresh is optional and relies on the current Equinox Browser observer identifying an exact generating ChatGPT conversation. An unavailable observer, ambiguous target or idle pin may prevent a refresh; the diagnostic row reports the last observed refresh, not a guarantee that every message was seen. If it remains unchecked, use **Refresh index** and `brain_context` or `brain_search` explicitly. Do not reload a conversation while it is producing a response. Native Assistant refresh has been verified end to end; the current Your Browser implementation has passed backend and settings checks, but positive live Chrome-triggered refresh is not yet confirmed.
+
 ## Agent tools
 
 | Operation | When to use |
