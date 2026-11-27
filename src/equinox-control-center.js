@@ -2930,6 +2930,9 @@ function renderPlugins() {
     $("brain-settings").hidden = !brain;
     $("brain-disconnect").disabled = !brain || busy;
     $("brain-open-vault").disabled = !brain?.available || busy;
+    $("brain-web-open").disabled = !brain?.searchCompatible || busy || !window.equinoxShell?.openBrainWeb;
+    $("brain-web-stop").disabled = !brain?.webRunning || busy || !window.equinoxShell?.stopBrainWeb;
+    setText("brain-web-status", brain?.webRunning ? "Running (read-only)" : "Not running");
     $("brain-run-diagnostics").disabled = !brain || busy;
     setText("brain-run-diagnostics", state.brainDiagnosticsBusy ? "Checking…" : "Run diagnostics");
     if (!brain)
@@ -3271,6 +3274,27 @@ async function changeBrainLifecycle(browser = false) {
     finally {
         state.pluginsBusy = false;
         state[busyKey] = false;
+        renderPlugins();
+    }
+}
+async function changeBrainWeb(open) {
+    if (state.pluginsBusy || !window.equinoxShell)
+        return;
+    state.pluginsBusy = true;
+    renderPlugins();
+    try {
+        if (open)
+            await window.equinoxShell.openBrainWeb();
+        else
+            await window.equinoxShell.stopBrainWeb();
+        showToast(open ? "Brain web view opened" : "Brain web view stopped");
+    }
+    catch {
+        showToast("Brain web view could not be confirmed.");
+    }
+    finally {
+        state.pluginsBusy = false;
+        await refreshPlugins();
         renderPlugins();
     }
 }
@@ -5067,6 +5091,8 @@ function bindEvents() {
     catch (error) {
         showError(error);
     } });
+    $("brain-web-open").addEventListener("click", () => void changeBrainWeb(true));
+    $("brain-web-stop").addEventListener("click", () => void changeBrainWeb(false));
     $("brain-open-vault").addEventListener("click", async () => { try {
         if (!window.equinoxShell?.openBrainVault)
             throw new Error("Native vault opening is unavailable.");

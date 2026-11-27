@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { BRAIN_RELEASE, installBrainVault, prepareBrainEngine, runBrainMemory, brainEngineDiagnostics } from "./equinox-local-brain-install.js";
+import { BRAIN_RELEASE, installBrainVault, prepareBrainEngine, runBrainMemory, brainEngineDiagnostics, startBrainWebView } from "./equinox-local-brain-install.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 import { inspectPrivateStatePath, protectWindowsPrivateStatePath, verifyWindowsPrivateStateAcl } from "./equinox-local-private-state.js";
 
@@ -40,6 +40,9 @@ export function createPluginCatalog(stateRoot: string) {
   // protected persisted permission and vault binding inside the mutation lock.
   let browserObservationEnabled:boolean|undefined;
   const lastLifecycle:Record<"native"|"user",LifecycleResult|null>={native:null,user:null};
+  let webView:Awaited<ReturnType<typeof startBrainWebView>>|null=null;
+  async function stopWeb(){const current=webView;webView=null;if(current)await current.stop();}
+
   async function read(): Promise<BrainConnection | null> {
     const security = await inspectPrivateStatePath(file, {type:"file",mode:"600",verifyWindowsAcl:verifyWindowsPrivateStateAcl});
     if (security.reason === "missing") return null;
@@ -65,7 +68,7 @@ export function createPluginCatalog(stateRoot: string) {
   async function status() {
     const brain = await read();
     if (!brain) return {brain:null, offeredVersion:BRAIN_RELEASE.version};
-    const base={vault:brain.vault,version:brain.version,searchEnabled:brain.searchEnabled===true,writeEnabled:brain.writeEnabled===true,lifecycleEnabled:brain.lifecycleEnabled===true,browserLifecycleEnabled:brain.browserLifecycleEnabled===true};
+    const base={vault:brain.vault,version:brain.version,searchEnabled:brain.searchEnabled===true,writeEnabled:brain.writeEnabled===true,lifecycleEnabled:brain.lifecycleEnabled===true,browserLifecycleEnabled:brain.browserLifecycleEnabled===true,webRunning:webView?.running()===true};
     try {
       const actual=await inspectVault(brain.vault);
       return {brain:{...base,version:actual.version,available:true,searchCompatible:actual.version===BRAIN_RELEASE.version && (!brain.searchEnabled || actual.indexState===brain.indexState)},offeredVersion:BRAIN_RELEASE.version};
@@ -153,7 +156,17 @@ export function createPluginCatalog(stateRoot: string) {
     const {key,title,text,project}=input;
     if(typeof key!=="string" || !/^[a-zA-Z0-9_-]{8,100}$/u.test(key) || typeof title!=="string" || !title.trim() || title.length>160 || typeof text!=="string" || !text.trim() || text.length>12000 || (project!==undefined && (typeof project!=="string" || !project.trim() || project.length>160)))throw invalid("Invalid memory note request.");
     return runBrainMemory(stateRoot,{action:"create",...await engineConnection(brain),key,title,text,...(project===undefined?{}:{project})});
-  }, async diagnostics() {
+  }, async openWeb() {
+    const brain=await read();if(!brain)throw invalid("Connect a memory vault first.");
+    const connection=await engineConnection(brain);
+    if(webView?.running())return {url:await webView.open()};
+    await stopWeb();
+    await prepareBrainEngine(stateRoot);
+    webView=await startBrainWebView(stateRoot,connection);
+    return {url:webView.url};
+  }, async stopWeb() {await stopWeb();return status();},
+  async shutdown() {await stopWeb();},
+  async diagnostics() {
     const brain=await read(); if(!brain)throw invalid("Connect a memory vault first.");
     const plugins=await status();
     const engine=await brainEngineDiagnostics(stateRoot);
@@ -190,5 +203,5 @@ export function createPluginCatalog(stateRoot: string) {
     if(action==="receipt" && key(input.key) && text(input.summary,4000) && Array.isArray(input.refs) && input.refs.length>=1 && input.refs.length<=10 && input.refs.every(ref=>text(ref,200)) && new Set(input.refs).size===input.refs.length)
       return runBrainMemory(stateRoot,{...connection,action,key:input.key,summary:input.summary,refs:input.refs,...scoped} as Parameters<typeof runBrainMemory>[1]);
     throw invalid("Invalid bounded Brain workflow request.");
-  }, async disconnect() { await save(null);lastLifecycle.native=null;lastLifecycle.user=null; return status(); }};
+  }, async disconnect() { await stopWeb();await save(null);lastLifecycle.native=null;lastLifecycle.user=null; return status(); }};
 }

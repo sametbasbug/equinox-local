@@ -2597,6 +2597,8 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         syncBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.sync()),
         brainPreferences: async (profile) => withMutationLocks(["plugins"], () => pluginCatalog.preferences(profile)),
         brainDiagnostics: async () => withMutationLocks(["plugins"], () => pluginCatalog.diagnostics()),
+        openBrainWeb: async () => withMutationLocks(["plugins"], () => pluginCatalog.openWeb()),
+        stopBrainWeb: async () => withMutationLocks(["plugins"], () => pluginCatalog.stopWeb()),
         brainContextReview: async (input) => withMutationLocks(["plugins"], () => pluginCatalog.search(input, true)),
         disconnectBrain: async () => withMutationLocks(["plugins"], () => pluginCatalog.disconnect()),
         setHttpProfileManagement: async ({ enabled }) => withMutationLocks(["authenticated-http-profiles"], async () => {
@@ -2842,6 +2844,7 @@ export async function createEquinoxLocalRuntime({ platform = process.platform, a
         }
         localShutdownStarted = true;
         nativeChatChannel.close();
+        await withMutationLocks(["plugins"], () => pluginCatalog.shutdown()).catch(() => { });
         await recordRuntimeEvent({
             component: "runtime",
             type: "runtime.shutdown_requested",

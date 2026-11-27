@@ -784,6 +784,9 @@ body.plugins-workspace-active .main-panel > * { max-width: 1100px; }
 
 .brain-access-panel { display:flex; align-items:center; gap:18px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding-block:18px; }
 .brain-access-panel > div { flex:1; }
+.brain-access-panel > .brain-settings-actions { flex:0 0 auto; justify-content:flex-end; margin:0; }
+.brain-access-panel #brain-web-status { margin-top:8px; font-size:12px; }
+@media(max-width:760px){.brain-access-panel > .brain-settings-actions{flex:1 1 100%;justify-content:flex-start}}
 .brain-instruction-panel { display:grid; gap:12px; border:1px solid var(--line); border-radius:12px; padding:18px; margin-block:18px; background:var(--surface); }
 .brain-instruction-panel h4 { margin:0; font-size:14px; }
 .brain-instruction-panel p { margin:0; color:var(--muted); font-size:13px; line-height:1.6; }

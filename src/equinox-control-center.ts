@@ -15,7 +15,7 @@ type ChatLoadState = "loading" | "ready" | "offline" | "failed";
 type UiState = Record<string, UiRemoteData>;
 declare global {
   interface Window {
-    equinoxShell?: {returnToTask:(taskId:string,checkpointRevision:number)=>Promise<boolean>;getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;openBrainVault:()=>Promise<boolean>;prepareBrainReview:(value:{query:string;project?:string})=>Promise<{id:string;records:Array<{id:string;source:string;title:string;text:string}>;contextMode:string}>;appendBrainReview:(value:{id:string;records:string[]})=>Promise<boolean>;cancelBrainReview:()=>Promise<void>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
+    equinoxShell?: {returnToTask:(taskId:string,checkpointRevision:number)=>Promise<boolean>;getCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;setCommandHistory:(value:boolean)=>Promise<{enabled:boolean;available:boolean;count:number}>;clearCommandHistory:()=>Promise<{enabled:boolean;available:boolean;count:number}>;getAssistantHome:()=>"portrait"|"type";setAssistantHome:(value:"portrait"|"type")=>Promise<"portrait"|"type">;getChatIdentity:()=>Promise<{name:string;avatar:string|null}>;setChatAgentName:(name:string)=>Promise<{name:string;avatar:string|null}>;chooseChatAvatar:()=>Promise<{name:string;avatar:string|null}>;removeChatAvatar:()=>Promise<{name:string;avatar:string|null}>;copyText:(text:string)=>Promise<boolean>;pickFolder:()=>Promise<{cancelled:boolean;path:string|null}>;openBrainVault:()=>Promise<boolean>;openBrainWeb:()=>Promise<boolean>;stopBrainWeb:()=>Promise<boolean>;prepareBrainReview:(value:{query:string;project?:string})=>Promise<{id:string;records:Array<{id:string;source:string;title:string;text:string}>;contextMode:string}>;appendBrainReview:(value:{id:string;records:string[]})=>Promise<boolean>;cancelBrainReview:()=>Promise<void>;setLanguage:(language:string)=>void;setAppearance:(theme:"system"|"light"|"dark")=>void;setChatAccent:(value:string)=>Promise<boolean>;getLanguage:()=>"en"|"tr"|null;getCompanionId:()=>"nyx"|"hemera"|"asteria"|"selene";setCompanionId:(id:"nyx"|"hemera"|"asteria"|"selene")=>Promise<boolean>;onCompanionChanged:(callback:(id:"nyx"|"hemera"|"asteria"|"selene")=>void)=>()=>void;onCompanionWorkspaceRequest:(callback:(destination:"chat"|"control-center")=>void)=>()=>void;setEmbeddedChatBounds:(bounds:{x:number;y:number;width:number;height:number}|null)=>Promise<ChatLoadState|undefined>;retryEmbeddedChat:()=>Promise<void>;onEmbeddedChatStatus:(callback:(value:ChatLoadState)=>void)=>()=>void;onNativeTurnBudget:(callback:(remainingMs:number|null)=>void)=>()=>void;requestEmbeddedChatMicrophone:()=>Promise<boolean>;requestJson:(request:{path:string;method:string;body?:string;backgroundRefresh:boolean})=>Promise<{status:number;body:UiRemoteData}>};
   }
 }
 const $ = (id:string) => document.getElementById(id) as UiDomControl;
@@ -2949,6 +2949,9 @@ function renderPlugins() {
   $("brain-settings").hidden = !brain;
   $("brain-disconnect").disabled = !brain || busy;
   $("brain-open-vault").disabled = !brain?.available || busy;
+  $("brain-web-open").disabled = !brain?.searchCompatible||busy||!window.equinoxShell?.openBrainWeb;
+  $("brain-web-stop").disabled = !brain?.webRunning||busy||!window.equinoxShell?.stopBrainWeb;
+  setText("brain-web-status",brain?.webRunning?"Running (read-only)":"Not running");
   $("brain-run-diagnostics").disabled = !brain || busy;
   setText("brain-run-diagnostics",state.brainDiagnosticsBusy?"Checking…":"Run diagnostics");
   if(!brain)state.brainDiagnostics=null;
@@ -3128,6 +3131,13 @@ async function changeBrainLifecycle(browser=false){
   try{const result=await mutationJson(browser?"/api/v1/plugins/brain/browser-lifecycle-access":"/api/v1/plugins/brain/lifecycle-access","POST",{enabled:!state.plugins.brain[key]});state.plugins=result.plugins;state.brainDiagnostics=null;showToast(state.plugins.brain[key]?"Automatic refresh enabled":"Automatic refresh disabled");}
   catch(error){showError(error);}
   finally{state.pluginsBusy=false;state[busyKey]=false;renderPlugins();}
+}
+async function changeBrainWeb(open:boolean){
+  if(state.pluginsBusy||!window.equinoxShell)return;
+  state.pluginsBusy=true;renderPlugins();
+  try{if(open)await window.equinoxShell.openBrainWeb();else await window.equinoxShell.stopBrainWeb();showToast(open?"Brain web view opened":"Brain web view stopped");}
+  catch{showToast("Brain web view could not be confirmed.");}
+  finally{state.pluginsBusy=false;await refreshPlugins();renderPlugins();}
 }
 async function runBrainDiagnostics(){
   if(state.pluginsBusy||!state.plugins?.brain)return;
@@ -4691,6 +4701,8 @@ function bindEvents() {
   $("brain-review-append").addEventListener("click",()=>void appendBrainReview());
   $("brain-vault-cancel").addEventListener("click",()=>$("brain-vault-dialog").close());
   $("brain-browse").addEventListener("click",async()=>{try{const result=await pickLocalFolder();if(!result.cancelled&&result.path)$("brain-folder-path").value=result.path;}catch(error){showError(error);}});
+  $("brain-web-open").addEventListener("click",()=>void changeBrainWeb(true));
+  $("brain-web-stop").addEventListener("click",()=>void changeBrainWeb(false));
   $("brain-open-vault").addEventListener("click",async()=>{try{if(!window.equinoxShell?.openBrainVault)throw new Error("Native vault opening is unavailable.");await window.equinoxShell.openBrainVault();}catch(error){showError(error);}});
   $("brain-diagnose").addEventListener("click",()=>void brainPreferences());
   $("brain-run-diagnostics").addEventListener("click",()=>void runBrainDiagnostics());
