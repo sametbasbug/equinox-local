@@ -82,35 +82,49 @@ export function createPluginCatalog(stateRoot: string) {
     if(brain.searchEnabled && brain.indexState!==canonicalState)throw invalid("The vault's local index binding changed. Disable and re-enable memory access in Control Center.");
     return {vault:actual.vault,state:canonicalState};
   }
+  async function prepareSearch(brain:BrainConnection):Promise<BrainConnection> {
+    const connection=await engineConnection(brain);
+    await prepareBrainEngine(stateRoot);
+    const result=await runBrainMemory(stateRoot,{action:"sync",...connection});
+    if(!["succeeded","degraded"].includes(result.status))throw invalid("The Brain index could not be refreshed.");
+    return {vault:brain.vault,version:BRAIN_RELEASE.version,searchEnabled:true,indexState:connection.state};
+  }
+  async function registerBrain(metadata:VaultMetadata,enableMemory:boolean) {
+    const linked:BrainConnection={vault:metadata.vault,version:metadata.version,searchEnabled:false};
+    let selected=linked,setupWarning=false;
+    if(enableMemory) {
+      try {selected={...await prepareSearch(linked),writeEnabled:true,lifecycleEnabled:true,browserLifecycleEnabled:true};}
+      catch {setupWarning=true;}
+    }
+    // A failed preparation never leaves partially granted access. Keep the
+    // user's installed/connected vault available for repair in settings.
+    await save(selected);
+    return {...await status(),setupWarning};
+  }
   return {status, async shouldObserveBrowser() {
     if(browserObservationEnabled!==undefined)return browserObservationEnabled;
     const brain=await read();
     // Preserve a concurrent successful save while the initial read is pending.
     return browserObservationEnabled??=(brain?.searchEnabled===true&&brain.browserLifecycleEnabled===true);
-  }, async connect(value: unknown) {
+  }, async connect(value: unknown,enableMemory:unknown=false) {
+    if(typeof enableMemory!=="boolean")throw invalid("Choose whether to enable recommended memory access.");
     if (!validPath(value)) throw invalid("Choose an absolute vault folder.");
     if (await read()) throw invalid("Disconnect the current vault before connecting another.");
     const brain = await inspectVault(value);
-    await save({vault:brain.vault,version:brain.version,searchEnabled:false});
-    return status();
-  }, async install(value:unknown) {
+    return registerBrain(brain,enableMemory);
+  }, async install(value:unknown,enableMemory:unknown=false) {
+    if(typeof enableMemory!=="boolean")throw invalid("Choose whether to enable recommended memory access.");
     if(!validPath(value))throw invalid("Choose an absolute vault folder.");
     if(await read())throw invalid("Disconnect the current vault before installing another.");
     await installBrainVault(value,stateRoot);
     const brain=await inspectVault(value);
     if(brain.version!==BRAIN_RELEASE.version)throw invalid("Installed vault version could not be confirmed.");
-    await save({vault:brain.vault,version:brain.version,searchEnabled:false});
-    return status();
+    return registerBrain(brain,enableMemory);
   }, async setSearchEnabled(enabled:unknown) {
     if(typeof enabled!=="boolean")throw invalid("Choose whether agent memory search is enabled.");
     const brain=await read(); if(!brain)throw invalid("Connect a memory vault first.");
     if(!enabled) { await save({vault:brain.vault,version:brain.version,searchEnabled:false}); lastLifecycle.native=null;lastLifecycle.user=null;return status(); }
-    const connection=await engineConnection(brain);
-    await prepareBrainEngine(stateRoot);
-    // Explicit human opt-in prepares the engine and syncs the source-backed index.
-    const result=await runBrainMemory(stateRoot,{action:"sync",...connection});
-    if(!["succeeded","degraded"].includes(result.status))throw invalid("The Brain index could not be refreshed.");
-    await save({vault:brain.vault,version:BRAIN_RELEASE.version,searchEnabled:true,indexState:connection.state});
+    await save(await prepareSearch(brain));
     return status();
   }, async setWriteEnabled(enabled:unknown) {
     if(typeof enabled!=="boolean")throw invalid("Choose whether agent memory writing is enabled.");

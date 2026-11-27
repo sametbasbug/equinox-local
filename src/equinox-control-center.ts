@@ -3020,6 +3020,7 @@ function connectBrain(install = false) {
   setText("brain-vault-dialog-copy", install?"Choose a new empty folder. The verified upstream release will be installed there.":"Choose the root folder of your existing Avenox Beyin V3 vault.");
   setText("brain-vault-submit", install?"Install":"Connect existing");
   $("brain-folder-path").value=""; $("brain-vault-error").hidden=true;
+  $("brain-setup-enable-memory").checked=true;
   $("brain-vault-dialog").showModal();
 }
 async function submitBrainVault(event:Event) {
@@ -3031,12 +3032,13 @@ async function submitBrainVault(event:Event) {
   $("brain-vault-dialog").close();
   state.pluginsBusy = true; state.brainInstalling = install; renderPlugins();
   try {
-    const result = await mutationJson(install ? "/api/v1/plugins/brain/install" : "/api/v1/plugins/brain/connect", "POST", {vault});
+    const result = await mutationJson(install ? "/api/v1/plugins/brain/install" : "/api/v1/plugins/brain/connect", "POST", {vault,enableMemory:$("brain-setup-enable-memory").checked===true});
     state.plugins = result.plugins;
     state.pluginsError = "";
     renderPlugins();
     switchSection("brain", {remember:true});
-    showToast("Vault linked");
+    if(result.plugins.setupWarning)showError("Vault linked, but memory features could not be enabled. Check engine compatibility and diagnostics, then enable access in Brain settings.");
+    else showToast("Vault linked");
   } catch (error) { showError(error); }
   finally { state.pluginsBusy = false; state.brainInstalling = false; renderPlugins(); }
 }

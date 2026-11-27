@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Default the explicitly confirmed Brain setup to search, writing and both automatic index refresh scopes, with a clear opt-out and safe recovery if initialization fails. Preserve existing permission choices.
+
 - Open and stop the original Avenox Brain read-only web view through native settings, with a verified engine, loopback-only binding and one-time browser session.
 - Remove the separate check/read race in the Windows native ACL verifier ABI marker using a bounded same-handle read and file identity verification.
 
