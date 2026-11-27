@@ -15,7 +15,7 @@ In **Control Center → Equinox Brain**, select **Open web view** to open the re
 
 ## Browser observation troubleshooting
 
-Your Browser automatic index refresh is optional and relies on the current Equinox Browser observer identifying an exact generating ChatGPT conversation. An unavailable observer, ambiguous target or idle pin may prevent a refresh; the diagnostic row reports the last observed refresh, not a guarantee that every message was seen. If it remains unchecked, use **Refresh index** and `brain_context` or `brain_search` explicitly. Do not reload a conversation while it is producing a response. Native Assistant refresh has been verified end to end; the current Your Browser implementation has passed backend and settings checks, but positive live Chrome-triggered refresh is not yet confirmed.
+Your Browser automatic index refresh is optional and relies on the current Equinox Browser observer identifying an exact generating ChatGPT conversation. An unavailable observer, ambiguous target or idle pin may prevent a refresh; the diagnostic row reports the last observed refresh, not a guarantee that every message was seen. If it remains unchecked, use **Refresh index** and `brain_context` or `brain_search` explicitly. Do not reload a conversation while it is producing a response. Both native Assistant and Your Browser refresh have been verified end to end on the installed macOS Source Factory with a connected vault. If the browser observer is unavailable, reload the intended ChatGPT tab only when idle.
 
 ## Agent tools
 
