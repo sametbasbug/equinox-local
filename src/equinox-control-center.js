@@ -2896,7 +2896,23 @@ async function runTaskAction(action) {
         renderTasks();
     }
 }
+const BRAIN_INSTRUCTIONS = Object.freeze({
+    en: "Use Equinox Brain as shared memory. Before relevant tasks, recall context with brain_context or brain_search. Save or update durable decisions, preferences and verified facts. Never store secrets, duplicates or temporary details.",
+    tr: "Equinox Brain'i ortak hafıza olarak kullan. İlgili görevlerde önce brain_context veya brain_search ile geçmişi kontrol et. Kalıcı kararları, tercihleri ve doğrulanmış bilgileri kaydet veya güncelle. Sırları, tekrarları ve geçici ayrıntıları kaydetme.",
+});
+let brainInstructionLanguage = null;
+function selectedBrainInstructionLanguage() { return brainInstructionLanguage ?? normalizeLanguage(state.language); }
+function renderBrainInstruction() {
+    const language = selectedBrainInstructionLanguage(), instruction = BRAIN_INSTRUCTIONS[language];
+    $("brain-instruction-text").textContent = instruction;
+    $("brain-instruction-text").lang = language;
+    $("brain-instruction-count").textContent = `${instruction.length} ${localizeUiText("characters")}`;
+    for (const choice of ["en", "tr"])
+        $("brain-instruction-" + choice).setAttribute("aria-pressed", String(choice === language));
+    $("brain-instruction-copy").disabled = !window.equinoxShell?.copyText;
+}
 function renderPlugins() {
+    renderBrainInstruction();
     const brain = state.plugins?.brain;
     const loaded = state.pluginsLoaded;
     const busy = state.pluginsBusy;
@@ -5063,6 +5079,9 @@ function bindEvents() {
     $("brain-run-diagnostics").addEventListener("click", () => void runBrainDiagnostics());
     $("brain-lifecycle").addEventListener("click", () => void changeBrainLifecycle());
     $("brain-browser-lifecycle").addEventListener("click", () => void changeBrainLifecycle(true));
+    for (const language of ["en", "tr"])
+        $("brain-instruction-" + language).addEventListener("click", () => { brainInstructionLanguage = language; renderBrainInstruction(); });
+    $("brain-instruction-copy").addEventListener("click", () => void copySetupText(BRAIN_INSTRUCTIONS[selectedBrainInstructionLanguage()], "Instruction copied."));
     $("brain-profile").addEventListener("change", renderPlugins);
     $("brain-profile-apply").addEventListener("click", () => void brainPreferences(true));
     $("plugins-retry").addEventListener("click", () => { void refreshPlugins(); });
