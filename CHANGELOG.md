@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Add bilingual, copyable proactive memory instructions and character counts in Equinox Brain settings, with clear guidance about ChatGPT hook limitations.
+
 - Introduce a native Plugins workspace and connected-only Control Center settings, beginning with Equinox Brain (Powered by Avenox Beyin). Connect existing V3 vaults or install the pinned SHA-256-verified V3.17.0 upstream release into an empty folder, without deleting vault data on disconnect.
 - Add explicit opt-in local Brain indexing and bounded `brain_search` retrieval through the integrations capability. Keep private/untrusted notes excluded, preserve source citations, and discover Python 3.11+ on macOS and Windows including modern Python Install Manager installations. No automatic context injection.
 - Keep the opt-in Your Browser Brain observer active independently of Turn Budget, without extra browser polling when both features are disabled.
