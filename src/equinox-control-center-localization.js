@@ -8,6 +8,9 @@ export function localeForLanguage(language) {
 }
 const TR_UI = Object.freeze({
     "Plugins": "Eklentiler",
+    "Enable recommended memory features": "Önerilen hafıza özelliklerini etkinleştir",
+    "Allow ChatGPT to receive public and internal memory matches, write durable notes and tasks, and refresh the local index in Assistant and Your Browser. Private and untrusted notes are excluded. You can change each permission later in Brain settings.": "ChatGPT'nin açık ve dahili hafıza eşleşmelerini almasına, kalıcı not ve görev yazmasına, Asistan ve Tarayıcın'da yerel indeksi yenilemesine izin ver. Özel ve güvenilmeyen notlar hariç tutulur. Her izni daha sonra Brain ayarlarından değiştirebilirsin.",
+    "Vault linked, but memory features could not be enabled. Check engine compatibility and diagnostics, then enable access in Brain settings.": "Kasa bağlandı ancak hafıza özellikleri etkinleştirilemedi. Motor uyumluluğunu ve tanılamayı kontrol et, ardından Brain ayarlarından erişimi etkinleştir.",
     "Agent memory search": "Ajan hafıza araması",
     "Allow ChatGPT through Equinox Local to receive public and internal memory matches. Private and untrusted notes are excluded. Enabling prepares the verified local engine and refreshes the index.": "ChatGPT'nin Equinox Local üzerinden açık ve dahili hafıza eşleşmelerini almasına izin ver. Özel ve güvenilmeyen notlar hariç tutulur. Etkinleştirme doğrulanmış yerel motoru hazırlar ve indeksi yeniler.",
     "Agent memory search requires the supported engine version. Your existing vault is unchanged.": "Ajan hafıza araması desteklenen motor sürümünü gerektirir. Mevcut kasan değiştirilmedi.",

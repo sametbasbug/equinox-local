@@ -3013,6 +3013,7 @@ function connectBrain(install = false) {
     setText("brain-vault-submit", install ? "Install" : "Connect existing");
     $("brain-folder-path").value = "";
     $("brain-vault-error").hidden = true;
+    $("brain-setup-enable-memory").checked = true;
     $("brain-vault-dialog").showModal();
 }
 async function submitBrainVault(event) {
@@ -3031,12 +3032,15 @@ async function submitBrainVault(event) {
     state.brainInstalling = install;
     renderPlugins();
     try {
-        const result = await mutationJson(install ? "/api/v1/plugins/brain/install" : "/api/v1/plugins/brain/connect", "POST", { vault });
+        const result = await mutationJson(install ? "/api/v1/plugins/brain/install" : "/api/v1/plugins/brain/connect", "POST", { vault, enableMemory: $("brain-setup-enable-memory").checked === true });
         state.plugins = result.plugins;
         state.pluginsError = "";
         renderPlugins();
         switchSection("brain", { remember: true });
-        showToast("Vault linked");
+        if (result.plugins.setupWarning)
+            showError("Vault linked, but memory features could not be enabled. Check engine compatibility and diagnostics, then enable access in Brain settings.");
+        else
+            showToast("Vault linked");
     }
     catch (error) {
         showError(error);

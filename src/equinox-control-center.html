@@ -1012,6 +1012,7 @@
     <form id="brain-vault-form" novalidate>
       <div class="dialog-header"><div><h2 id="brain-vault-dialog-title">Connect existing</h2><p id="brain-vault-dialog-copy" class="muted"></p></div></div>
       <label class="field"><span>Absolute folder path</span><div class="field-inline"><input id="brain-folder-path" autocomplete="off" spellcheck="false" maxlength="1024" required><button id="brain-browse" class="button secondary" type="button">Choose folder…</button></div></label>
+      <label class="toggle-field compact-toggle"><div><span>Enable recommended memory features</span><small>Allow ChatGPT to receive public and internal memory matches, write durable notes and tasks, and refresh the local index in Assistant and Your Browser. Private and untrusted notes are excluded. You can change each permission later in Brain settings.</small></div><input id="brain-setup-enable-memory" type="checkbox" role="switch" checked></label>
       <p id="brain-vault-error" class="form-error" role="alert" hidden></p>
       <div class="dialog-actions"><button id="brain-vault-cancel" class="button secondary" type="button">Cancel</button><button id="brain-vault-submit" class="button primary" type="submit">Connect existing</button></div>
     </form>

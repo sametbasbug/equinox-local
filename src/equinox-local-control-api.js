@@ -637,9 +637,9 @@ export function createEquinoxLocalControlApi({ configManager, getStatus = async 
                 authorizeMutation();
                 const action = pathname.endsWith("/install") ? installBrain : connectBrain;
                 const body = await readBody();
-                if (!action || !body || typeof body !== "object" || Object.keys(body).length !== 1 || typeof body.vault !== "string")
+                if (!action || !body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(k => !["vault", "enableMemory"].includes(k)) || typeof body.vault !== "string" || (body.enableMemory !== undefined && typeof body.enableMemory !== "boolean"))
                     throw badRequest("Choose a vault folder.");
-                const plugins = await action(body.vault);
+                const plugins = await action(body.vault, body.enableMemory === true);
                 state.mutationCount += 1;
                 send(200, { ok: true, plugins });
                 return;
