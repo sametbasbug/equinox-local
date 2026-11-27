@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { execFile as execFileCallback } from "node:child_process";
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { protectWindowsPrivateStatePath } from "./equinox-local-private-state.js";
 import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
@@ -330,4 +330,97 @@ export async function runBrainMemory(stateRoot:string,request: {action:"sync"|"s
     return JSON.parse(stdout);
   } catch { throw invalid("Brain operation could not finish. Check the vault, Python installation and local index in Control Center."); }
   finally { await fs.rm(staging,{recursive:true,force:true}); }
+}
+
+// The optional upstream web view is a separate, read-only, loopback-only
+// child, not an EL management listener. No vault-installed scripts are run.
+// Stdin stays open for ownership; EOF closes the view if its parent exits.
+const WEB_VIEW = `import json, pathlib, sys, threading
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'template/.claude/scripts'))
+import beyin_v3_web as web
+request = json.loads(sys.stdin.readline())
+core = web.Core(request['vault'], request['state'])
+server = web.bind(core, read_only=True)
+stopped = threading.Event()
+def announce(url):
+    print(json.dumps({'url':url}), flush=True)
+def commands():
+    try:
+        for command in sys.stdin:
+            if command.strip() != 'open':
+                break
+            if core.runtime_changed():
+                break
+            announce(web.launch_url({'port':server.port,'token':server.token}))
+    except Exception:
+        pass
+    finally:
+        server.shutdown()
+def watchdog():
+    while not stopped.wait(15):
+        if server.idle_expired() or core.runtime_changed():
+            server.shutdown()
+            return
+try:
+    announce(f'http://127.0.0.1:{server.port}/?token={server.launch_token}')
+    threading.Thread(target=commands, daemon=True).start()
+    threading.Thread(target=watchdog, daemon=True).start()
+    server.serve_forever(poll_interval=0.5)
+finally:
+    stopped.set()
+    server.server_close()
+`;
+export function validBrainWebLaunchUrl(value:unknown):value is string {
+  if(typeof value!=="string"||value.length>200)return false;
+  const match=/^http:\/\/127\.0\.0\.1:(\d{1,5})\/\?token=[A-Za-z0-9_-]{43}$/u.exec(value);
+  return !!match&&Number(match[1])>=1024&&Number(match[1])<=65535;
+}
+export async function startBrainWebView(stateRoot:string,connection:{vault:string;state:string}) {
+  const data=await cachedRelease(stateRoot);
+  const python=await findBrainPython();
+  const staging=await fs.mkdtemp(path.join(stateRoot,".brain-web-"));
+  try {
+    if(process.platform==="win32")await protectWindowsPrivateStatePath({target:staging,type:"directory"});
+    const archive=path.join(staging,"release.zip"),packageRoot=path.join(staging,"package");
+    await fs.writeFile(archive,data,{flag:"wx",mode:0o600});
+    await fs.mkdir(packageRoot,{mode:0o700});
+    await execFile(python,["-I","-X","utf8","-c",EXTRACT,archive,packageRoot],{cwd:staging,env:pythonEnvironment(),windowsHide:true,timeout:15000,maxBuffer:65536});
+    const child=spawn(python,["-I","-X","utf8","-c",WEB_VIEW,packageRoot],{cwd:staging,env:pythonEnvironment(),windowsHide:true,stdio:["pipe","pipe","ignore"]});
+    let running=true, buffer="";
+    let pending:{resolve:(url:string)=>void;reject:(error:Error)=>void;timeout:ReturnType<typeof setTimeout>}|null=null;
+    const fail=()=>{const p=pending;pending=null;if(p){clearTimeout(p.timeout);p.reject(invalid("Brain web view could not open."));}};
+    const closed=new Promise<void>(resolve=>child.once("close",()=>{running=false;fail();void fs.rm(staging,{recursive:true,force:true}).catch(()=>{}).finally(resolve);}));
+    child.on("error",()=>{running=false;fail();});
+    child.stdin.on("error",()=>fail());
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data",(chunk:string)=>{
+      buffer+=chunk;
+      if(buffer.length>2048){fail();child.kill();return;}
+      const newline=buffer.indexOf("\n");if(newline<0)return;
+      const line=buffer.slice(0,newline);buffer=buffer.slice(newline+1);
+      const p=pending;pending=null;
+      if(!p){child.kill();return;}
+      clearTimeout(p.timeout);
+      try{const result=JSON.parse(line);if(!validBrainWebLaunchUrl(result.url))throw Error();p.resolve(result.url);}catch{p.reject(invalid("Brain web view returned an invalid launch address."));child.kill();}
+    });
+    function request(command:string){
+      return new Promise<string>((resolve,reject)=>{
+        if(!running||pending){reject(invalid("Brain web view is unavailable."));return;}
+        pending={resolve,reject,timeout:setTimeout(()=>{fail();child.kill();},20000)};
+        child.stdin.write(command+"\n",error=>{if(error){fail();child.kill();}});
+      });
+    }
+    async function stop(){
+      if(running){child.stdin.end();const timer=setTimeout(()=>child.kill(),3000);try{await closed;}finally{clearTimeout(timer);}}
+      else await closed;
+    }
+    try {
+      const url=await request(JSON.stringify(connection));
+      return {url,running:()=>running,open:()=>request("open"),stop};
+    }catch(error){await stop();throw error;}
+  } catch {
+    await fs.rm(staging,{recursive:true,force:true}).catch(()=>{});
+    throw invalid("Brain web view could not start. Check Python and the vault in Control Center.");
+  }
 }

@@ -34,7 +34,7 @@ type ControlApiOptions={
   confirmTelegramPairing?:Callback|null;cancelTelegramPairing?:Callback|null;testTelegram?:Callback|null;
   disconnectTelegram?:Callback|null;getHttpProfiles?:Callback|null;setHttpProfileManagement?:Callback|null;
   upsertHttpProfile?:Callback|null;testHttpProfile?:Callback|null;deleteHttpProfile?:Callback|null;
-  getPlugins?:Callback|null;connectBrain?:Callback|null;installBrain?:Callback|null;disconnectBrain?:Callback|null;setBrainSearch?:Callback|null;setBrainWrite?:Callback|null;setBrainLifecycle?:Callback|null;setBrainBrowserLifecycle?:Callback|null;syncBrain?:Callback|null;brainPreferences?:Callback|null;brainDiagnostics?:Callback|null;brainContextReview?:Callback|null;
+  getPlugins?:Callback|null;connectBrain?:Callback|null;installBrain?:Callback|null;disconnectBrain?:Callback|null;setBrainSearch?:Callback|null;setBrainWrite?:Callback|null;setBrainLifecycle?:Callback|null;setBrainBrowserLifecycle?:Callback|null;syncBrain?:Callback|null;brainPreferences?:Callback|null;brainDiagnostics?:Callback|null;brainContextReview?:Callback|null;openBrainWeb?:Callback|null;stopBrainWeb?:Callback|null;
   recordInternalError?:Callback|null;
 };
 type MutableControlState={
@@ -345,7 +345,7 @@ export function createEquinoxLocalControlApi({
   testTelegram = null,
   disconnectTelegram = null,
   getHttpProfiles = null,
-  getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null, setBrainSearch = null, setBrainWrite = null, setBrainLifecycle = null, setBrainBrowserLifecycle = null, syncBrain = null, brainPreferences = null, brainDiagnostics = null, brainContextReview = null,
+  getPlugins = null, connectBrain = null, installBrain = null, disconnectBrain = null, setBrainSearch = null, setBrainWrite = null, setBrainLifecycle = null, setBrainBrowserLifecycle = null, syncBrain = null, brainPreferences = null, brainDiagnostics = null, brainContextReview = null, openBrainWeb = null, stopBrainWeb = null,
   setHttpProfileManagement = null,
   upsertHttpProfile = null,
   testHttpProfile = null,
@@ -749,6 +749,12 @@ export function createEquinoxLocalControlApi({
         if(!brainContextReview||!body||typeof body!=="object"||Array.isArray(body)||Object.keys(body).some(k=>!["query","project"].includes(k))||typeof body.query!=="string"||!body.query.trim()||body.query.length>2000||(body.project!==undefined&&(typeof body.project!=="string"||!body.project.trim()||body.project.length>160)))throw badRequest("Invalid memory topic.");
         const context=await brainContextReview({query:body.query.trim(),...(body.project===undefined?{}:{project:body.project.trim()}),limit:5,budget:5000});send(200,{ok:true,context});return;
       }
+      if (method === "POST" && ["/api/v1/plugins/brain/web/open","/api/v1/plugins/brain/web/stop"].includes(pathname)) {
+        authorizeMutation();const action=pathname.endsWith("/open")?openBrainWeb:stopBrainWeb;
+        if(!action)throw badRequest("Brain web view is unavailable.");
+        const body=await readBody();if(!body||typeof body!=="object"||Array.isArray(body)||Object.keys(body).length)throw badRequest("Invalid web view request.");
+        const result=await action();send(200,{ok:true,...result});return;
+      }
       if (method === "POST" && pathname === "/api/v1/plugins/brain/diagnostics") {
         authorizeMutation(); if(!brainDiagnostics)throw badRequest("Brain diagnostics are unavailable.");
         const result=await brainDiagnostics(); send(200,{ok:true,...result}); return;
@@ -1040,7 +1046,7 @@ const UI_WRITE_PATHS: Readonly<Record<string, ReadonlySet<string>>> = {
     "/api/v1/integrations/telegram/test", "/api/v1/integrations/telegram/disconnect",
     "/api/v1/integrations/http-profiles/test", "/api/v1/integrations/http-profiles/delete",
     "/api/v1/plugins/brain/connect", "/api/v1/plugins/brain/install", "/api/v1/plugins/brain/disconnect",
-    "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access", "/api/v1/plugins/brain/preferences", "/api/v1/plugins/brain/diagnostics", "/api/v1/plugins/brain/lifecycle-access", "/api/v1/plugins/brain/context-review", "/api/v1/plugins/brain/browser-lifecycle-access",
+    "/api/v1/plugins/brain/search-access", "/api/v1/plugins/brain/sync", "/api/v1/plugins/brain/write-access", "/api/v1/plugins/brain/preferences", "/api/v1/plugins/brain/diagnostics", "/api/v1/plugins/brain/lifecycle-access", "/api/v1/plugins/brain/context-review", "/api/v1/plugins/brain/browser-lifecycle-access", "/api/v1/plugins/brain/web/open", "/api/v1/plugins/brain/web/stop",
   ]),
   PUT: new Set([
     "/api/v1/config", "/api/v1/turn-budget", "/api/v1/browser/settings",

@@ -7,7 +7,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { CONTROL_ORIGIN, isControlDocument, mutateControl, readControlJson, requestUiControlJson, returnToTaskConversation } from "./control-client.js";
+import { CONTROL_ORIGIN, isControlDocument, mutateControl, readControlJson, requestUiControlJson, requestBrainWeb, returnToTaskConversation } from "./control-client.js";
 import { controlPageURL, installControlAssets, registerControlScheme } from "./control-assets.js";
 import { createRuntimeOwner } from "./runtime-owner.js";
 import type { RuntimeLaunch, RuntimeOwnerState } from "./runtime-owner.js";
@@ -932,6 +932,18 @@ ipcMain.handle("equinox-shell:chat-avatar-remove", async (event) => {
   await fs.promises.rm(chatAvatarPath(), {force:true});
   chatAgentAvatar = null;
   return publishChatIdentity();
+});
+ipcMain.handle("equinox-shell:brain-web-open",async(event)=>{
+  if(!trustedSender(event)||quitting)throw new Error("Brain web view unavailable.");
+  const result=await requestBrainWeb("open");
+  if(!trustedSender(event)||quitting||typeof result.url!=="string"||!/^http:\/\/127\.0\.0\.1:\d{1,5}\/\?token=[A-Za-z0-9_-]{43}$/u.test(result.url))throw new Error("Brain web view launch could not be confirmed.");
+  const url=new URL(result.url);
+  if(Number(url.port)<1024||Number(url.port)>65535)throw new Error("Brain web view port is invalid.");
+  await shell.openExternal(url.href);return true;
+});
+ipcMain.handle("equinox-shell:brain-web-stop",async(event)=>{
+  if(!trustedSender(event)||quitting)throw new Error("Brain web view unavailable.");
+  await requestBrainWeb("stop");return true;
 });
 ipcMain.handle("equinox-shell:open-brain-vault", async (event) => {
   if (!trustedSender(event)) throw new Error("Untrusted vault request.");

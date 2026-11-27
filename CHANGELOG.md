@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+- Open and stop the original Avenox Brain read-only web view through native settings, with a verified engine, loopback-only binding and one-time browser session.
+- Remove the separate check/read race in the Windows native ACL verifier ABI marker using a bounded same-handle read and file identity verification.
+
 - Add bilingual, copyable proactive memory instructions and character counts in Equinox Brain settings, with clear guidance about ChatGPT hook limitations.
 
 - Introduce a native Plugins workspace and connected-only Control Center settings, beginning with Equinox Brain (Powered by Avenox Beyin). Connect existing V3 vaults or install the pinned SHA-256-verified V3.17.0 upstream release into an empty folder, without deleting vault data on disconnect.

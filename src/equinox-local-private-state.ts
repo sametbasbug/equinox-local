@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Stats } from "node:fs";
+import { readBoundedNormalFile } from "./equinox-local-safe-file.js";
 
 type PrivateType = "file" | "directory";
 type PrivateFs = Pick<typeof fs, "lstat">;
@@ -71,10 +72,12 @@ async function nativePrivateStateVerifier(): Promise<string | null> {
   const marker = path.join(folder, "desktop-runtime-v1.marker");
   const helper = path.join(folder, "equinox-local-job-object-helper.exe");
   try {
-    const stat = await fs.lstat(marker);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size !== Buffer.byteLength("equinox-desktop-runtime-v1\n") ||
-        (await fs.realpath(marker)).toLowerCase() !== marker.toLowerCase() ||
-        await fs.readFile(marker, "utf8") !== "equinox-desktop-runtime-v1\n") throw new Error("Native ACL verifier ABI is invalid.");
+    const expected = "equinox-desktop-runtime-v1\n";
+    const bytes = Buffer.byteLength(expected);
+    const {data,stat} = await readBoundedNormalFile(marker,{minBytes:bytes,maxBytes:bytes,encoding:"utf8",requireSingleLink:true});
+    const canonical=await fs.realpath(marker);
+    const current=await fs.lstat(marker);
+    if(data!==expected||canonical.toLowerCase()!==marker.toLowerCase()||!current.isFile()||current.isSymbolicLink()||current.nlink!==1||current.dev!==stat.dev||current.ino!==stat.ino)throw new Error("Native ACL verifier ABI is invalid.");
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return null;
     throw error;

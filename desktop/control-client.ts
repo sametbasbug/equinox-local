@@ -85,6 +85,13 @@ function allowedUiOperation(method: string, route: string): boolean {
   return Boolean(match && ((method === "PUT" && !match[1]) || (method === "POST" && match[1])));
 }
 
+// Only dedicated native handlers can request the single-use launch URL.
+// Keep these paths outside the renderer's generic operation allowlist.
+export async function requestBrainWeb(action:"open"|"stop") {
+  const result=await callAuthenticatedControlSocket({method:"POST",path:action==="open"?"/api/v1/plugins/brain/web/open":"/api/v1/plugins/brain/web/stop",body:"{}",backgroundRefresh:false});
+  if(result.status!==200||result.body.ok!==true)throw new Error("Brain web view could not be confirmed.");
+  return result.body;
+}
 type UiControlRequest = { path?: unknown; method?: unknown; body?: unknown; backgroundRefresh?: unknown };
 export async function requestUiControlJson(value: UiControlRequest): Promise<{ status: number; body: Record<string, any> }> {
   if (!value || typeof value !== "object" || Array.isArray(value) ||

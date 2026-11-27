@@ -13,6 +13,8 @@ if (process.isMainFrame && location.protocol === "equinox:" && location.hostname
         },
         pickFolder: () => ipcRenderer.invoke("equinox-shell:pick-folder"),
         openBrainVault: () => ipcRenderer.invoke("equinox-shell:open-brain-vault"),
+        openBrainWeb: () => ipcRenderer.invoke("equinox-shell:brain-web-open"),
+        stopBrainWeb: () => ipcRenderer.invoke("equinox-shell:brain-web-stop"),
         prepareBrainReview: (value) => ipcRenderer.invoke("equinox-shell:brain-review-prepare", value),
         appendBrainReview: (value) => ipcRenderer.invoke("equinox-shell:brain-review-append", value),
         cancelBrainReview: () => ipcRenderer.invoke("equinox-shell:brain-review-cancel"),
